@@ -1036,15 +1036,24 @@ def ensure_partner_table():
 def parse_partner_dataframe(df, source_name=""):
     records = []
     for _, row in df.iterrows():
+        sub_id = safe_text(row.get("SubId"))
+        player_id = safe_text(row.get("ID игрока"))
+        country = normalize_geo_value(row.get("Страна"))
+        if not sub_id or sub_id in {"SUBID", "ID ПАРТНЕРА", "ПЕРИОД", "ВАЛЮТА", "КАМПАНИЯ", "ТОЛЬКО НОВЫЕ ИГРОКИ", "ТОЛЬКО ИГРОКИ БЕЗ ДЕПОЗИТОВ"}:
+            continue
+        if not player_id or player_id == "ID игрока":
+            continue
+        if not country or country in {"СТРАНА"}:
+            continue
         deposit_amount = safe_number(row.get("Сумма депозитов"))
         company_income = safe_number(row.get("Доход компании (общий)"))
         cpa_amount = safe_number(row.get("CPA"))
         records.append(PartnerRow(
             source_name=source_name,
-            sub_id=safe_text(row.get("SubId")),
-            player_id=safe_text(row.get("ID игрока")),
+            sub_id=sub_id,
+            player_id=player_id,
             registration_date=safe_text(row.get("Дата регистрации")),
-            country=normalize_geo_value(row.get("Страна")),
+            country=country,
             deposit_amount=deposit_amount,
             bet_amount=safe_number(row.get("Сумма ставок")),
             company_income=company_income,
@@ -1117,11 +1126,13 @@ def get_partner_summary_by_buyer_geo():
         promo_key = (row.sub_id or "").strip().upper()
         matched_caps = caps_by_sub.get(promo_key, [])
         for cap in matched_caps:
-            buyer = (cap.buyer or "").strip()
-            geo = normalize_geo_value(cap.geo or row.country or "")
-            if not buyer or not geo:
+            flow_parts = [part.strip() for part in safe_text(cap.flow).split("/") if part.strip()]
+            platform = flow_parts[0] if len(flow_parts) > 0 else ""
+            manager = flow_parts[1] if len(flow_parts) > 1 else safe_text(cap.owner_name)
+            geo = normalize_geo_value(flow_parts[2] if len(flow_parts) > 2 else (cap.geo or row.country or ""))
+            if not platform or not manager or not geo:
                 continue
-            key = (buyer, geo)
+            key = (platform.lower(), manager.lower(), geo)
             info = summary.setdefault(key, {
                 "partner_ftd_total": 0.0,
                 "partner_qual_ftd": 0.0,
@@ -1309,7 +1320,11 @@ def aggregate_grouped_rows(rows):
     result = list(grouped.values())
     partner_summary = get_partner_summary_by_buyer_geo()
     for item in result:
-        partner_key = ((item.get("buyer") or "").strip(), normalize_geo_value(item.get("geo") or ""))
+        partner_key = (
+            safe_text(item.get("platform")).lower(),
+            safe_text(item.get("manager")).lower(),
+            normalize_geo_value(item.get("geo") or ""),
+        )
         partner_metrics = partner_summary.get(partner_key, {})
         item["partner_ftd_total"] = partner_metrics.get("partner_ftd_total", 0.0)
         item["partner_qual_ftd"] = partner_metrics.get("partner_qual_ftd", 0.0)
