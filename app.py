@@ -21,6 +21,8 @@ from datetime import datetime, timedelta
 DATABASE_URL = "sqlite:///./test.db"
 SESSION_COOKIE_NAME = "teambead_session"
 SESSION_DURATION_DAYS = 14
+DATA_UPLOAD_DIR = "./uploaded_data"
+FINANCE_UPLOAD_PATH = os.path.join(DATA_UPLOAD_DIR, "finance_latest.csv")
 DEFAULT_USERS = [
     {
         "username": os.getenv("TEAMBEAD_ADMIN1_LOGIN", "Ivan"),
@@ -171,6 +173,24 @@ class FinanceIncomeRow(Base):
     amount = Column(Float, default=0)
     wallet = Column(String, default="")
     reconciliation = Column(String, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class PartnerRow(Base):
+    __tablename__ = "partner_rows"
+
+    id = Column(Integer, primary_key=True, index=True)
+    source_name = Column(String, default="")
+    sub_id = Column(String, index=True, default="")
+    player_id = Column(String, default="")
+    registration_date = Column(String, default="")
+    country = Column(String, default="")
+    deposit_amount = Column(Float, default=0)
+    bet_amount = Column(Float, default=0)
+    company_income = Column(Float, default=0)
+    cpa_amount = Column(Float, default=0)
+    hold_time = Column(String, default="")
+    blocked = Column(String, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -638,6 +658,10 @@ def cap_fill_percent(current_ftd, cap_value):
     return (current_ftd / cap_value) * 100
 
 
+def ensure_upload_dir():
+    os.makedirs(DATA_UPLOAD_DIR, exist_ok=True)
+
+
 # =========================================
 # BLOCK 5 — DATA ACCESS
 # =========================================
@@ -869,7 +893,9 @@ def parse_money_value(value):
 
 
 def load_finance_snapshot():
-    source_path = "/Users/ivansviderko/Downloads/финансы.csv"
+    ensure_upload_dir()
+    default_path = "/Users/ivansviderko/Downloads/финансы.csv"
+    source_path = FINANCE_UPLOAD_PATH if os.path.exists(FINANCE_UPLOAD_PATH) else default_path
     result = {
         "source_path": source_path,
         "totals": {
@@ -1003,6 +1029,112 @@ def get_tasks_for_user(current_user, status_filter="", assignee_filter="", searc
     return filtered
 
 
+def ensure_partner_table():
+    Base.metadata.create_all(bind=engine, tables=[PartnerRow.__table__])
+
+
+def parse_partner_dataframe(df, source_name=""):
+    records = []
+    for _, row in df.iterrows():
+        deposit_amount = safe_number(row.get("Сумма депозитов"))
+        company_income = safe_number(row.get("Доход компании (общий)"))
+        cpa_amount = safe_number(row.get("CPA"))
+        records.append(PartnerRow(
+            source_name=source_name,
+            sub_id=safe_text(row.get("SubId")),
+            player_id=safe_text(row.get("ID игрока")),
+            registration_date=safe_text(row.get("Дата регистрации")),
+            country=normalize_geo_value(row.get("Страна")),
+            deposit_amount=deposit_amount,
+            bet_amount=safe_number(row.get("Сумма ставок")),
+            company_income=company_income,
+            cpa_amount=cpa_amount,
+            hold_time=safe_text(row.get("Hold time")),
+            blocked=safe_text(row.get("Заблокирован")),
+        ))
+    return records
+
+
+def replace_partner_rows(source_name, rows_to_insert):
+    ensure_partner_table()
+    db = SessionLocal()
+    try:
+        if source_name:
+            db.query(PartnerRow).filter(PartnerRow.source_name == source_name).delete()
+        else:
+            db.query(PartnerRow).delete()
+        db.commit()
+        for item in rows_to_insert:
+            db.add(item)
+        db.commit()
+    finally:
+        db.close()
+    refresh_cap_current_ftd_from_partner()
+
+
+def refresh_cap_current_ftd_from_partner():
+    ensure_partner_table()
+    Base.metadata.create_all(bind=engine, tables=[CapRow.__table__])
+    db = SessionLocal()
+    try:
+        caps = db.query(CapRow).all()
+        partner_rows = db.query(PartnerRow).all()
+        by_sub = {}
+        for row in partner_rows:
+            key = (row.sub_id or "").strip().upper()
+            if not key:
+                continue
+            by_sub.setdefault(key, []).append(row)
+        for cap in caps:
+            promo_key = (cap.promo_code or "").strip().upper()
+            matched = by_sub.get(promo_key, [])
+            cap.current_ftd = float(sum(1 for item in matched if safe_number(item.deposit_amount) > 0))
+            db.add(cap)
+        db.commit()
+    finally:
+        db.close()
+
+
+def get_partner_summary_by_buyer_geo():
+    ensure_partner_table()
+    Base.metadata.create_all(bind=engine, tables=[CapRow.__table__])
+    db = SessionLocal()
+    try:
+        caps = db.query(CapRow).all()
+        partner_rows = db.query(PartnerRow).all()
+    finally:
+        db.close()
+
+    caps_by_sub = {}
+    for cap in caps:
+        promo_key = (cap.promo_code or "").strip().upper()
+        if not promo_key:
+            continue
+        caps_by_sub.setdefault(promo_key, []).append(cap)
+
+    summary = {}
+    for row in partner_rows:
+        promo_key = (row.sub_id or "").strip().upper()
+        matched_caps = caps_by_sub.get(promo_key, [])
+        for cap in matched_caps:
+            buyer = (cap.buyer or "").strip()
+            geo = normalize_geo_value(cap.geo or row.country or "")
+            if not buyer or not geo:
+                continue
+            key = (buyer, geo)
+            info = summary.setdefault(key, {
+                "partner_ftd_total": 0.0,
+                "partner_qual_ftd": 0.0,
+                "partner_income": 0.0,
+            })
+            if safe_number(row.deposit_amount) > 0:
+                info["partner_ftd_total"] += 1
+            if safe_number(row.company_income) > 0 or safe_number(row.cpa_amount) > 0:
+                info["partner_qual_ftd"] += 1
+            info["partner_income"] += safe_number(row.company_income)
+    return summary
+
+
 def ensure_finance_tables():
     Base.metadata.create_all(bind=engine, tables=[
         FinanceWalletRow.__table__,
@@ -1020,6 +1152,89 @@ def load_manual_finance():
             "expenses": db.query(FinanceExpenseRow).order_by(FinanceExpenseRow.id.desc()).all(),
             "income": db.query(FinanceIncomeRow).order_by(FinanceIncomeRow.id.desc()).all(),
         }
+    finally:
+        db.close()
+
+
+def import_caps_dataframe(df):
+    Base.metadata.create_all(bind=engine, tables=[CapRow.__table__])
+    db = SessionLocal()
+    try:
+        existing_rows = db.query(CapRow).all()
+        existing_map = {
+            (
+                (item.buyer or "").strip().upper(),
+                (item.flow or "").strip().upper(),
+                (item.code or "").strip().upper(),
+                (item.geo or "").strip().upper(),
+                (item.promo_code or "").strip().upper(),
+            ): item
+            for item in existing_rows
+        }
+        for _, row in df.iterrows():
+            key = (
+                safe_text(row.get("Кабинет:")).upper(),
+                safe_text(row.get("Поток:")).upper(),
+                normalize_geo_value(row.get("CODE:")),
+                normalize_geo_value(row.get("GEO:")),
+                safe_text(row.get("Промокод:")).upper(),
+            )
+            item = existing_map.get(key)
+            if not item:
+                item = CapRow()
+                db.add(item)
+            item.advertiser = safe_text(row.get("Рекл:"))
+            item.owner_name = safe_text(row.get("Имя:"))
+            item.buyer = safe_text(row.get("Кабинет:"))
+            item.flow = safe_text(row.get("Поток:"))
+            item.code = normalize_geo_value(row.get("CODE:"))
+            item.geo = normalize_geo_value(row.get("GEO:"))
+            item.rate = safe_text(row.get("Ставка:"))
+            item.baseline = safe_text(row.get("БЛ:"))
+            item.cap_value = safe_cap_number(row.get("Капа:"))
+            item.promo_code = safe_text(row.get("Промокод:"))
+            item.kpi = safe_text(row.get("КПИ:"))
+            item.link = safe_text(row.get("Ссылка:"))
+            item.comments = safe_text(row.get("Коментарии:"))
+            item.agent = safe_text(row.get("Агент:"))
+        db.commit()
+    finally:
+        db.close()
+
+
+def import_tasks_dataframe(df, assigned_user, created_by_user):
+    Base.metadata.create_all(bind=engine, tables=[TaskRow.__table__])
+    db = SessionLocal()
+    try:
+        target_user = db.query(User).filter(User.username == assigned_user, User.is_active == 1).first()
+        if not target_user:
+            return False
+        for _, row in df.iterrows():
+            title = safe_text(row.get("Задача"))
+            if not title:
+                continue
+            existing = db.query(TaskRow).filter(
+                TaskRow.assigned_to_username == target_user.username,
+                TaskRow.title == title,
+            ).first()
+            item = existing or TaskRow()
+            if not existing:
+                db.add(item)
+            item.title = title
+            item.description = title
+            item.assigned_to_username = target_user.username
+            item.assigned_to_name = target_user.display_name or target_user.username
+            item.assigned_to_role = target_user.role or ""
+            item.created_by_username = created_by_user.get("username", "")
+            item.created_by_name = created_by_user.get("display_name", created_by_user.get("username", ""))
+            item.status = safe_text(row.get("Статус")) or "Не начато"
+            item.notes = safe_text(row.get("Примечания"))
+            item.due_at = parse_datetime_local(safe_text(row.get("Срок выполнения")).replace(" ", "T"))
+            item.updated_at = datetime.utcnow()
+            if not getattr(item, "created_at", None):
+                item.created_at = datetime.utcnow()
+        db.commit()
+        return True
     finally:
         db.close()
 
@@ -1092,7 +1307,15 @@ def aggregate_grouped_rows(rows):
         grouped[key]["rows_combined"] += 1
 
     result = list(grouped.values())
+    partner_summary = get_partner_summary_by_buyer_geo()
     for item in result:
+        partner_key = ((item.get("buyer") or "").strip(), normalize_geo_value(item.get("geo") or ""))
+        partner_metrics = partner_summary.get(partner_key, {})
+        item["partner_ftd_total"] = partner_metrics.get("partner_ftd_total", 0.0)
+        item["partner_qual_ftd"] = partner_metrics.get("partner_qual_ftd", 0.0)
+        item["partner_income"] = partner_metrics.get("partner_income", 0.0)
+        item["profit"] = item["partner_income"] - (item.get("spend") or 0)
+        item["roi"] = ((item["partner_income"] - (item.get("spend") or 0)) / item.get("spend")) * 100 if (item.get("spend") or 0) > 0 else 0
         item.update(calc_metrics(item["clicks"], item["reg"], item["ftd"], item["spend"], item["leads"]))
     return result
 
@@ -1105,7 +1328,12 @@ def aggregate_totals(rows):
         "reg": sum(r["reg"] for r in rows),
         "ftd": sum(r["ftd"] for r in rows),
         "spend": sum(r["spend"] for r in rows),
+        "partner_ftd_total": sum(r.get("partner_ftd_total", 0) for r in rows),
+        "partner_qual_ftd": sum(r.get("partner_qual_ftd", 0) for r in rows),
+        "partner_income": sum(r.get("partner_income", 0) for r in rows),
     }
+    totals["profit"] = totals["partner_income"] - totals["spend"]
+    totals["roi"] = (totals["profit"] / totals["spend"]) * 100 if totals["spend"] > 0 else 0
     totals.update(calc_metrics(totals["clicks"], totals["reg"], totals["ftd"], totals["spend"], totals["leads"]))
     return totals
 
@@ -1728,9 +1956,14 @@ def sort_link(label, field, current_sort, current_order, **params):
 def render_stats_cards(totals):
     cards = [
         ("Spend", format_money(totals["spend"])),
+        ("Income", format_money(totals.get("partner_income", 0))),
+        ("Profit", format_money(totals.get("profit", 0))),
+        ("ROI", format_percent(totals.get("roi", 0))),
         ("Leads", format_int_or_float(totals["leads"])),
         ("Reg", format_int_or_float(totals["reg"])),
         ("FTD", format_int_or_float(totals["ftd"])),
+        ("Partner FTD", format_int_or_float(totals.get("partner_ftd_total", 0))),
+        ("Qual FTD", format_int_or_float(totals.get("partner_qual_ftd", 0))),
         ("CPA", format_money(totals["cpa_real"])),
         ("L2FTD", format_percent(totals["l2ftd"])),
         ("R2D", format_percent(totals["r2d"])),
@@ -1976,6 +2209,12 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         <div class="panel">
             <div class="panel-title">{form_title}</div>
             <div class="panel-subtitle">Тут уже можно вести капы вручную и постепенно подвязать авто-прогресс из статистики.</div>
+            <form method="post" action="/caps/upload" enctype="multipart/form-data" class="caps-form" style="margin-top:14px; margin-bottom:14px;">
+                <label>Upload caps CSV / XLSX
+                    <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
+                </label>
+                <button type="submit" class="ghost-btn">Загрузить капы</button>
+            </form>
             <form method="post" action="/caps/save" class="caps-form" style="margin-top:14px;">
                 <input type="hidden" name="edit_id" value="{escape(current_edit_id)}">
                 <div class="caps-grid-2">
@@ -2282,6 +2521,12 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
     <div class="panel compact-panel">
         <div class="panel-title">Finance control</div>
         <div class="panel-subtitle">Кошельки, остатки, расход, приход, ожидание и перемещения. Источник: {escape(snapshot['source_path'])}</div>
+        <form method="post" action="/finance/upload" enctype="multipart/form-data" class="caps-form" style="margin-top:14px;">
+            <label>Upload finance CSV
+                <input type="file" name="file" accept=".csv" required>
+            </label>
+            <button type="submit" class="ghost-btn">Загрузить финансы</button>
+        </form>
     </div>
 
     <div class="panel compact-panel">
@@ -2426,6 +2671,15 @@ def tasks_page_html(current_user, rows, filter_values=None, form_data=None, succ
         <div class="panel">
             <div class="panel-title">Новая задача</div>
             <div class="panel-subtitle">Поставь задачу и сразу выбери дедлайн.</div>
+            <form method="post" action="/tasks/upload" enctype="multipart/form-data" class="tasks-form" style="margin-top:14px; margin-bottom:14px;">
+                <label>Импорт задач CSV
+                    <input type="file" name="file" accept=".csv" required>
+                </label>
+                <label>Кому
+                    <select name="assigned_to_username" required>{assign_options}</select>
+                </label>
+                <button type="submit" class="ghost-btn">Загрузить задачи</button>
+            </form>
             <form method="post" action="/tasks/save" class="tasks-form" style="margin-top:14px;">
                 <label>Кому
                     <select name="assigned_to_username" required>{assign_options}</select>
@@ -2672,6 +2926,28 @@ def save_task(
     return RedirectResponse(url="/tasks?message=Задача поставлена", status_code=303)
 
 
+@app.post("/tasks/upload")
+async def upload_tasks_file(
+    request: Request,
+    assigned_to_username: str = Form(...),
+    file: UploadFile = File(...),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    require_any_role(user, "superadmin", "admin")
+    filename = f"temp_tasks_{uuid.uuid4()}.csv"
+    try:
+        with open(filename, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        df = pd.read_csv(filename)
+        import_tasks_dataframe(df, assigned_to_username=assigned_to_username, created_by_user=user)
+        return RedirectResponse(url="/tasks?message=Задачи загружены", status_code=303)
+    finally:
+        if os.path.exists(filename):
+            os.remove(filename)
+
+
 @app.post("/tasks/delete")
 def delete_task(request: Request, task_id: str = Form(...)):
     user = get_current_user(request)
@@ -2853,6 +3129,30 @@ async def upload_file(request: Request, buyer: str = Form(...), file: UploadFile
             os.remove(filename)
 
 
+@app.post("/upload/partner")
+async def upload_partner_file(request: Request, file: UploadFile = File(...)):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    require_any_role(user, "superadmin", "admin")
+    ensure_partner_table()
+    original_name = file.filename or "partner.csv"
+    ext = os.path.splitext(original_name)[1].lower() or ".csv"
+    filename = f"temp_partner_{uuid.uuid4()}{ext}"
+    try:
+        with open(filename, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        if ext in [".xlsx", ".xls"]:
+            df = pd.read_excel(filename, skiprows=6)
+        else:
+            df = pd.read_csv(filename, skiprows=6)
+        replace_partner_rows(original_name, parse_partner_dataframe(df, source_name=original_name))
+        return RedirectResponse(url="/grouped", status_code=303)
+    finally:
+        if os.path.exists(filename):
+            os.remove(filename)
+
+
 # =========================================
 # BLOCK 9 — EXPORT
 # =========================================
@@ -2880,14 +3180,16 @@ def export_grouped_csv(
     writer = csv.writer(output)
     writer.writerow([
         "Buyer", "Ad Name", "Launch Date", "Platform", "Manager", "Geo", "Offer", "Creative",
-        "Rows", "Clicks", "Leads", "Reg", "FTD", "Spend", "CPC", "CPL", "CPA",
+        "Rows", "Clicks", "Leads", "Reg", "FTD", "Partner FTD", "Qual FTD", "Spend", "Income", "Profit", "ROI", "CPC", "CPL", "CPA",
         "L2FTD", "R2D", "Date Start", "Date End"
     ])
     for row in rows:
         writer.writerow([
             row["buyer"], row["ad_name"], row["launch_date"], row["platform"], row["manager"], row["geo"], row["offer"], row["creative"],
             format_int_or_float(row["rows_combined"]), format_int_or_float(row["clicks"]), format_int_or_float(row["leads"]),
-            format_int_or_float(row["reg"]), format_int_or_float(row["ftd"]), format_money(row["spend"]),
+            format_int_or_float(row["reg"]), format_int_or_float(row["ftd"]), format_int_or_float(row.get("partner_ftd_total", 0)),
+            format_int_or_float(row.get("partner_qual_ftd", 0)), format_money(row["spend"]), format_money(row.get("partner_income", 0)),
+            format_money(row.get("profit", 0)), format_percent(row.get("roi", 0)),
             format_money(row["cpc_real"]), format_money(row["cpl_real"]), format_money(row["cpa_real"]),
             format_percent(row["l2ftd"]), format_percent(row["r2d"]), row["date_start"], row["date_end"],
         ])
@@ -2948,7 +3250,8 @@ def show_grouped_table(
 
     allowed_sort_fields = {
         "buyer", "ad_name", "launch_date", "platform", "manager", "geo", "offer", "creative",
-        "rows_combined", "clicks", "leads", "reg", "ftd", "spend", "cpa_real", "l2ftd", "r2d",
+        "rows_combined", "clicks", "leads", "reg", "ftd", "partner_ftd_total", "partner_qual_ftd",
+        "spend", "partner_income", "profit", "roi", "cpa_real", "l2ftd", "r2d",
         "date_start", "date_end"
     }
     if sort_by not in allowed_sort_fields:
@@ -2978,7 +3281,12 @@ def show_grouped_table(
         ("leads", "Leads"),
         ("reg", "Reg"),
         ("ftd", "FTD"),
+        ("partner_ftd_total", "Partner FTD"),
+        ("partner_qual_ftd", "Qual FTD"),
         ("spend", "Spend"),
+        ("partner_income", "Income"),
+        ("profit", "Profit"),
+        ("roi", "ROI"),
         ("cpa_real", "CPA"),
         ("l2ftd", "L2FTD"),
         ("r2d", "R2D"),
@@ -3015,7 +3323,12 @@ def show_grouped_table(
             <td data-col="leads">{format_int_or_float(row["leads"])}</td>
             <td data-col="reg">{format_int_or_float(row["reg"])}</td>
             <td data-col="ftd">{format_int_or_float(row["ftd"])}</td>
+            <td data-col="partner_ftd_total">{format_int_or_float(row.get("partner_ftd_total", 0))}</td>
+            <td data-col="partner_qual_ftd">{format_int_or_float(row.get("partner_qual_ftd", 0))}</td>
             <td data-col="spend">{format_money(row["spend"])}</td>
+            <td data-col="partner_income">{format_money(row.get("partner_income", 0))}</td>
+            <td data-col="profit">{format_money(row.get("profit", 0))}</td>
+            <td data-col="roi">{format_percent(row.get("roi", 0))}</td>
             <td data-col="cpa_real">{format_money(row["cpa_real"])}</td>
             <td data-col="l2ftd">{format_percent(row["l2ftd"])}</td>
             <td data-col="r2d">{format_percent(row["r2d"])}</td>
@@ -3041,6 +3354,12 @@ def show_grouped_table(
                     <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
                 </label>
                 <button type="submit" class="upload-btn">Загрузить</button>
+            </form>
+            <form method="post" action="/upload/partner" enctype="multipart/form-data" class="upload-form" style="margin-top:12px;">
+                <label>Partner CSV
+                    <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
+                </label>
+                <button type="submit" class="ghost-btn">Загрузить партнерку</button>
             </form>
             <div class="hint">Если грузишь того же buyer повторно — старые строки заменяются новыми.</div>
         </div>
@@ -3095,7 +3414,7 @@ def show_grouped_table(
         <div class="table-wrap">
             <table id="groupedTable">
                 <thead><tr>{head_html}</tr></thead>
-                <tbody>{rows_html if rows_html else '<tr><td colspan="19">Нет данных</td></tr>'}</tbody>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="24">Нет данных</td></tr>'}</tbody>
             </table>
         </div>
     </div>
@@ -3393,6 +3712,18 @@ def save_finance_wallet(
     return RedirectResponse(url="/finance?message=Кошелек сохранен", status_code=303)
 
 
+@app.post("/finance/upload")
+async def upload_finance_file(request: Request, file: UploadFile = File(...)):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    require_any_role(user, "superadmin")
+    ensure_upload_dir()
+    with open(FINANCE_UPLOAD_PATH, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    return RedirectResponse(url="/finance?message=Финансы загружены", status_code=303)
+
+
 @app.post("/finance/expenses/save")
 def save_finance_expense(
     request: Request,
@@ -3655,6 +3986,30 @@ def save_cap(
         db.close()
 
     return RedirectResponse(url="/caps?message=Капа сохранена", status_code=303)
+
+
+@app.post("/caps/upload")
+async def upload_caps_file(request: Request, file: UploadFile = File(...)):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "caps")
+    original_name = file.filename or "caps.csv"
+    ext = os.path.splitext(original_name)[1].lower() or ".csv"
+    filename = f"temp_caps_{uuid.uuid4()}{ext}"
+    try:
+        with open(filename, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        if ext in [".xlsx", ".xls"]:
+            df = pd.read_excel(filename)
+        else:
+            df = pd.read_csv(filename)
+        import_caps_dataframe(df)
+        refresh_cap_current_ftd_from_partner()
+        return RedirectResponse(url="/caps?message=Капы загружены", status_code=303)
+    finally:
+        if os.path.exists(filename):
+            os.remove(filename)
 
 
 @app.post("/caps/delete")
