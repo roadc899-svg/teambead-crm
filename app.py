@@ -375,15 +375,12 @@ def page_shell(title, content, active_page="grouped", extra_scripts=""):
                 -webkit-background-clip: text;
                 -webkit-text-fill-color: transparent;
                 background-clip: text;
-            }}
-
-            .sidebar-brand {
                 display: flex;
                 align-items: center;
                 gap: 10px;
-            }
+            }}
 
-            .brand-mark {
+            .brand-mark {{
                 display: inline-flex;
                 align-items: center;
                 justify-content: center;
@@ -394,7 +391,7 @@ def page_shell(title, content, active_page="grouped", extra_scripts=""):
                 color: transparent;
                 box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
                 flex-shrink: 0;
-            }
+            }}
 
             .sidebar-group {{
                 background: var(--panel);
