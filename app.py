@@ -1,5 +1,5 @@
-from fastapi import FastAPI, UploadFile, File, Query, Form
-from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse
+from fastapi import FastAPI, UploadFile, File, Query, Form, Request
+from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse, Response
 from sqlalchemy import create_engine, Column, Integer, String, Float
 from sqlalchemy.orm import sessionmaker, declarative_base
 import pandas as pd
@@ -53,8 +53,10 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(title="TEAMbead CRM")
 
 
-@app.get("/")
-def home():
+@app.api_route("/", methods=["GET", "HEAD"])
+def home(request: Request):
+    if request.method == "HEAD":
+        return Response(status_code=200)
     return RedirectResponse(url="/grouped", status_code=302)
 
 
