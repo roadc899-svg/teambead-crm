@@ -4,3 +4,4 @@ gunicorn
 sqlalchemy
 pandas
 python-multipart
+openpyxl
