@@ -1,5 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, Query, Form, Request, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse, Response
+from fastapi.exception_handlers import http_exception_handler
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
 from sqlalchemy.orm import sessionmaker, declarative_base
 import pandas as pd
@@ -21,8 +22,20 @@ DATABASE_URL = "sqlite:///./test.db"
 SESSION_COOKIE_NAME = "teambead_session"
 SESSION_DURATION_DAYS = 14
 DEFAULT_USERS = [
-    {"username": os.getenv("TEAMBEAD_ADMIN1_LOGIN", "admin1"), "password": os.getenv("TEAMBEAD_ADMIN1_PASSWORD", "change_me_123"), "role": "superadmin", "display_name": os.getenv("TEAMBEAD_ADMIN1_NAME", "Admin 1")},
-    {"username": os.getenv("TEAMBEAD_ADMIN2_LOGIN", "admin2"), "password": os.getenv("TEAMBEAD_ADMIN2_PASSWORD", "change_me_456"), "role": "admin", "display_name": os.getenv("TEAMBEAD_ADMIN2_NAME", "Admin 2")},
+    {
+        "username": os.getenv("TEAMBEAD_ADMIN1_LOGIN", "Ivan"),
+        "password": os.getenv("TEAMBEAD_ADMIN1_PASSWORD", "12345"),
+        "role": "superadmin",
+        "display_name": os.getenv("TEAMBEAD_ADMIN1_NAME", "Ivan"),
+        "legacy_usernames": ["admin1"],
+    },
+    {
+        "username": os.getenv("TEAMBEAD_ADMIN2_LOGIN", "Dmytro"),
+        "password": os.getenv("TEAMBEAD_ADMIN2_PASSWORD", "12345"),
+        "role": "admin",
+        "display_name": os.getenv("TEAMBEAD_ADMIN2_NAME", "Dmytro"),
+        "legacy_usernames": ["admin2"],
+    },
 ]
 
 engine = create_engine(
@@ -92,6 +105,24 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(title="TEAMbead CRM")
 
 
+@app.exception_handler(HTTPException)
+async def custom_http_exception_handler(request: Request, exc: HTTPException):
+    if exc.status_code == 401:
+        return auth_redirect_response()
+    if exc.status_code == 403:
+        user = get_current_user(request)
+        content = """
+        <div class="empty-dev">
+            <div class="empty-dev-card">
+                <div class="big">Доступ запрещен</div>
+                <div class="muted">Для этой страницы или функции у вашей роли сейчас нет прав.</div>
+            </div>
+        </div>
+        """
+        return HTMLResponse(page_shell("Access denied", content, current_user=user), status_code=403)
+    return await http_exception_handler(request, exc)
+
+
 # =========================================
 # BLOCK 3.1 — AUTH HELPERS
 # =========================================
@@ -116,19 +147,24 @@ def ensure_default_users():
         for item in DEFAULT_USERS:
             username = (item.get("username") or "").strip()
             password = item.get("password") or ""
+            legacy_usernames = [value.strip() for value in item.get("legacy_usernames", []) if (value or "").strip()]
             if not username or not password:
                 continue
             existing = db.query(User).filter(User.username == username).first()
+            if not existing:
+                for legacy_username in legacy_usernames:
+                    existing = db.query(User).filter(User.username == legacy_username).first()
+                    if existing:
+                        old_username = existing.username
+                        existing.username = username
+                        db.query(UserSession).filter(UserSession.username == old_username).update({"username": username})
+                        break
             if existing:
-                changed = False
-                if not existing.display_name and item.get("display_name"):
-                    existing.display_name = item.get("display_name")
-                    changed = True
-                if not existing.role and item.get("role"):
-                    existing.role = item.get("role")
-                    changed = True
-                if changed:
-                    db.add(existing)
+                existing.display_name = item.get("display_name") or username
+                existing.role = item.get("role") or "admin"
+                existing.password_hash = hash_password(password)
+                existing.is_active = 1
+                db.add(existing)
                 continue
             db.add(User(
                 username=username,
@@ -204,16 +240,52 @@ def require_any_role(user, *roles):
         raise HTTPException(status_code=403)
 
 
+def is_admin_role(user) -> bool:
+    return (user or {}).get("role") in {"superadmin", "admin"}
+
+
+def can_access_page(user, page_key: str) -> bool:
+    role = (user or {}).get("role")
+    page_rules = {
+        "grouped": {"superadmin", "admin", "buyer", "operator"},
+        "hierarchy": {"superadmin", "admin", "buyer", "operator"},
+        "users": {"superadmin", "admin"},
+        "finance": {"superadmin", "admin"},
+        "caps": {"superadmin", "admin"},
+        "chatterfy": {"superadmin", "admin"},
+        "holdwager": {"superadmin", "admin"},
+    }
+    return role in page_rules.get(page_key, set())
+
+
+def enforce_page_access(user, page_key: str):
+    if not can_access_page(user, page_key):
+        raise HTTPException(status_code=403)
+
+
+def resolve_effective_buyer(user, buyer: str = "") -> str:
+    if (user or {}).get("role") == "buyer":
+        return ((user or {}).get("buyer_name") or "").strip()
+    return (buyer or "").strip()
+
+
+def get_scoped_filter_options(user):
+    buyer_scope = resolve_effective_buyer(user)
+    rows = get_filtered_data(buyer=buyer_scope)
+    return (
+        sorted({r.uploader for r in rows if r.uploader}),
+        sorted({r.manager for r in rows if r.manager}),
+        sorted({r.geo for r in rows if r.geo}),
+        sorted({r.offer for r in rows if r.offer}),
+    )
+
+
 def auth_redirect_response(url: str = "/login"):
     return RedirectResponse(url=url, status_code=302)
 
 
 def login_page_html(error_text: str = ""):
     error_html = f'<div class="login-error">{escape(error_text)}</div>' if error_text else ''
-    creds = ''.join([
-        f'<div class="cred-line"><strong>{escape(item["role"])}</strong> — {escape(item["username"])} / {escape(item["password"])}</div>'
-        for item in DEFAULT_USERS
-    ])
     return f"""
     <html>
     <head>
@@ -229,47 +301,30 @@ def login_page_html(error_text: str = ""):
             body {{ margin:0; min-height:100vh; display:grid; place-items:center; padding:24px; color:var(--text);
                 background: radial-gradient(circle at top right, rgba(56,189,248,.14), transparent 24%), var(--bg);
                 font-family: "Avenir Next", "Nunito", "Trebuchet MS", "Segoe UI", Arial, sans-serif; }}
-            .login-shell {{ width:min(100%, 1020px); display:grid; grid-template-columns: 1.05fr .95fr; gap:20px; }}
+            .login-shell {{ width:min(100%, 460px); }}
             .card {{ background:linear-gradient(180deg,var(--panel),var(--panel-2)); border:1px solid var(--border); border-radius:26px; box-shadow:var(--shadow); padding:28px; }}
-            .brand {{ display:flex; align-items:center; gap:12px; font-weight:900; font-size:28px; margin-bottom:12px; }}
+            .brand {{ display:flex; align-items:center; justify-content:center; gap:12px; font-weight:900; font-size:28px; margin-bottom:18px; }}
             .brand-mark {{ width:18px; height:18px; border-radius:999px; background:linear-gradient(135deg,var(--accent1),var(--accent2),var(--accent3)); box-shadow:0 0 0 5px rgba(56,189,248,.14); }}
-            .title {{ font-size:24px; font-weight:900; margin-bottom:8px; }}
-            .muted {{ color:var(--muted); line-height:1.5; }}
+            .title {{ font-size:24px; font-weight:900; margin-bottom:8px; text-align:center; }}
             form {{ display:grid; gap:14px; margin-top:14px; }}
             label {{ display:grid; gap:7px; font-size:13px; font-weight:800; }}
             input {{ border-radius:14px; border:1px solid var(--border); background:#16243c; color:var(--text); padding:13px 14px; font-size:15px; outline:none; }}
             button {{ border:1px solid var(--border); background:linear-gradient(90deg,var(--accent2),var(--accent1)); color:white; padding:13px 16px; border-radius:14px; font-weight:900; cursor:pointer; }}
             .login-error {{ margin-top:12px; padding:12px 14px; border-radius:14px; background:rgba(239,68,68,.14); border:1px solid rgba(239,68,68,.28); }}
-            .cred-box {{ margin-top:18px; padding:14px; border-radius:18px; background:rgba(56,189,248,.06); border:1px solid var(--border); }}
-            .cred-title {{ font-weight:900; margin-bottom:10px; }}
-            .cred-line {{ padding:8px 0; border-top:1px solid rgba(255,255,255,.06); }}
-            .cred-line:first-child {{ border-top:none; padding-top:0; }}
-            .pill {{ display:inline-flex; gap:8px; align-items:center; padding:8px 12px; border-radius:999px; border:1px solid var(--border); background:rgba(56,189,248,.08); font-size:12px; font-weight:900; margin-top:16px; }}
-            @media (max-width: 860px) {{ .login-shell {{ grid-template-columns:1fr; }} .brand{{font-size:22px;}} }}
+            @media (max-width: 860px) {{ .brand{{font-size:22px;}} }}
         </style>
     </head>
     <body>
         <div class="login-shell">
             <div class="card">
                 <div class="brand"><span class="brand-mark"></span><span>TEAMbead CRM</span></div>
-                <div class="title">Вход в систему</div>
-                <div class="muted">Сейчас добавлена базовая авторизация с ролями. Без входа CRM больше не открывается. Дальше сюда спокойно добавим Buyer, Operator и ограничения по разделам.</div>
-                <div class="pill">🔐 Роли готовы: superadmin / admin / buyer / operator</div>
-            </div>
-            <div class="card">
                 <div class="title">Login</div>
-                <div class="muted">Войди под админом. Потом уже сделаем отдельное управление пользователями внутри CRM.</div>
                 {error_html}
                 <form method="post" action="/login">
                     <label>Login<input type="text" name="username" autocomplete="username" required></label>
                     <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
                     <button type="submit">Войти</button>
                 </form>
-                <div class="cred-box">
-                    <div class="cred-title">Стартовые админы</div>
-                    <div class="muted" style="margin-bottom:10px;">После входа поменяешь их как удобно через код или позже через отдельный экран пользователей.</div>
-                    {creds}
-                </div>
             </div>
         </div>
     </body>
@@ -608,9 +663,10 @@ def aggregate_for_hierarchy(rows, keys):
 # =========================================
 # BLOCK 7 — UI HELPERS
 # =========================================
-def sidebar_html(active_page):
+def sidebar_html(active_page, current_user=None):
     items = [
         ("grouped", "/grouped", "📘", "FB", [("/grouped", "Export", active_page == "grouped"), ("/hierarchy", "Statistic", active_page == "hierarchy")]),
+        ("users", "/users", "🧑", "Users", []),
         ("finance", "/finance", "💸", "Finance", []),
         ("caps", "/caps", "🧢", "Caps", []),
         ("chatterfy", "/chatterfy", "💬", "Chatterfy", []),
@@ -626,6 +682,12 @@ def sidebar_html(active_page):
     '''
 
     for key, href, icon, title, children in items:
+        if key == "grouped":
+            if not can_access_page(current_user, "grouped"):
+                continue
+            children = [child for child in children if can_access_page(current_user, "hierarchy" if child[0] == "/hierarchy" else "grouped")]
+        elif not can_access_page(current_user, key):
+            continue
         if children:
             open_attr = "open" if active_page in ["grouped", "hierarchy"] else ""
             html += f'''
@@ -647,7 +709,7 @@ def sidebar_html(active_page):
 
 
 def page_shell(title, content, active_page="grouped", extra_scripts="", top_actions="", current_user=None):
-    sidebar = sidebar_html(active_page)
+    sidebar = sidebar_html(active_page, current_user=current_user)
     return f"""
     <html>
     <head>
@@ -821,6 +883,19 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             }}
             .upload-inline {{ display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }}
             .hint {{ color: var(--muted); font-size: 12px; margin-top: 8px; }}
+            .notice {{
+                padding: 12px 14px;
+                border-radius: 14px;
+                border: 1px solid var(--border);
+                background: var(--soft);
+                margin-bottom: 16px;
+                font-size: 13px;
+                font-weight: 800;
+            }}
+            .notice-danger {{
+                background: rgba(239,68,68,0.10);
+                border-color: rgba(239,68,68,0.25);
+            }}
             .stats-grid {{ display: grid; grid-template-columns: repeat(7, minmax(120px, 1fr)); gap: 12px; }}
             .stat-card {{
                 background: linear-gradient(180deg, var(--panel), var(--panel-3));
@@ -932,10 +1007,49 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .empty-dev {{ min-height: 58vh; display: flex; align-items: center; justify-content: center; text-align: center; }}
             .empty-dev-card {{ max-width: 540px; padding: 28px; border-radius: 24px; border: 1px solid var(--border); background: linear-gradient(180deg, var(--panel), var(--panel-2)); box-shadow: var(--shadow); }}
             .empty-dev-card .big {{ font-size: 22px; font-weight: 900; margin-bottom: 10px; }}
+            .users-layout {{ display:grid; grid-template-columns: minmax(320px, 420px) 1fr; gap:16px; align-items:start; }}
+            .users-form {{ display:grid; gap:12px; }}
+            .users-form label {{ display:grid; gap:6px; font-size:12px; font-weight:800; }}
+            .users-form input, .users-form select {{
+                width: 100%;
+                border-radius: 12px;
+                border: 1px solid var(--border);
+                background: var(--panel-3);
+                color: var(--text);
+                padding: 11px 12px;
+                outline: none;
+            }}
+            .role-grid {{ display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:8px; }}
+            .role-option {{
+                display:flex;
+                gap:8px;
+                align-items:flex-start;
+                padding:10px 12px;
+                border-radius:14px;
+                border:1px solid var(--border);
+                background: var(--chip);
+                font-size:13px;
+                font-weight:800;
+            }}
+            .role-option input {{ margin-top:2px; }}
+            .users-table {{ min-width: 980px; }}
+            .status-dot {{
+                width:10px;
+                height:10px;
+                border-radius:999px;
+                display:inline-block;
+                background:#22c55e;
+                box-shadow:0 0 0 4px rgba(34,197,94,0.12);
+            }}
+            .status-dot.off {{
+                background:#ef4444;
+                box-shadow:0 0 0 4px rgba(239,68,68,0.12);
+            }}
             .muted {{ color: var(--muted); }}
             @media (max-width: 1200px) {{
                 .stats-grid {{ grid-template-columns: repeat(3, minmax(130px, 1fr)); }}
                 .toolbar-grid {{ grid-template-columns: 1fr; }}
+                .users-layout {{ grid-template-columns: 1fr; }}
             }}
             @media (max-width: 900px) {{
                 .app {{ display: block; }}
@@ -1065,6 +1179,128 @@ def render_tree_nodes(nodes, level=1):
     return html
 
 
+def load_users():
+    db = SessionLocal()
+    try:
+        return db.query(User).order_by(User.username.asc()).all()
+    finally:
+        db.close()
+
+
+def users_page_html(current_user, error_text="", success_text="", form_data=None):
+    users = load_users()
+    form_data = form_data or {}
+    role_value = (form_data.get("role") or "buyer").strip() or "buyer"
+    active_checked = "checked" if str(form_data.get("is_active", "1")) == "1" else ""
+    current_edit_id = str(form_data.get("edit_user_id") or "")
+
+    role_cards = [
+        ("superadmin", "Полный доступ ко всем страницам и управлению пользователями."),
+        ("admin", "Доступ к CRM, загрузке CSV, экспорту и управлению пользователями."),
+        ("buyer", "Видит только свои данные по привязанному Buyer без загрузки и экспорта."),
+        ("operator", "Может смотреть FB страницы без доступа к загрузке, CSV и админке."),
+    ]
+    role_html = ""
+    for value, description in role_cards:
+        checked = "checked" if role_value == value else ""
+        role_html += f'''
+        <label class="role-option">
+            <input type="radio" name="role" value="{value}" {checked}>
+            <span><strong>{value}</strong><br><span class="muted">{description}</span></span>
+        </label>
+        '''
+
+    rows_html = ""
+    for item in users:
+        rows_html += f"""
+        <tr>
+            <td>{item.id}</td>
+            <td>{escape(item.display_name or item.username)}</td>
+            <td>{escape(item.username)}</td>
+            <td>{escape(item.role or "buyer")}</td>
+            <td>{escape(item.buyer_name or "—")}</td>
+            <td><span class="status-dot {'off' if not item.is_active else ''}"></span> {'Active' if item.is_active else 'Disabled'}</td>
+            <td>
+                <form method="get" action="/users">
+                    <input type="hidden" name="edit" value="{item.id}">
+                    <button type="submit" class="ghost-btn small-btn">Edit</button>
+                </form>
+            </td>
+        </tr>
+        """
+
+    mode_title = "Редактирование пользователя" if current_edit_id else "Новый пользователь"
+    submit_label = "Сохранить изменения" if current_edit_id else "Создать пользователя"
+    password_hint = "Оставь пустым, если пароль менять не нужно." if current_edit_id else "Минимум 4 символа."
+    message_html = ""
+    if error_text:
+        message_html += f'<div class="notice notice-danger">{escape(error_text)}</div>'
+    if success_text:
+        message_html += f'<div class="notice">{escape(success_text)}</div>'
+
+    content = f"""
+    {message_html}
+    <div class="users-layout">
+        <div class="panel">
+            <div class="panel-title">{mode_title}</div>
+            <div class="panel-subtitle">Роли и привязка Buyer теперь настраиваются прямо из CRM.</div>
+            <form method="post" action="/users/save" class="users-form" style="margin-top:14px;">
+                <input type="hidden" name="edit_user_id" value="{escape(current_edit_id)}">
+                <label>Display name
+                    <input type="text" name="display_name" value="{escape(form_data.get('display_name', ''))}" required placeholder="Например: Alex Teamlead">
+                </label>
+                <label>Username
+                    <input type="text" name="username" value="{escape(form_data.get('username', ''))}" required placeholder="Например: alex">
+                </label>
+                <label>Password
+                    <input type="password" name="password" value="" placeholder="{escape(password_hint)}">
+                </label>
+                <label>Buyer binding
+                    <input type="text" name="buyer_name" value="{escape(form_data.get('buyer_name', ''))}" placeholder="Например: TeamBead1">
+                </label>
+                <div>
+                    <div class="panel-title" style="margin-bottom:8px;">Роль</div>
+                    <div class="role-grid">{role_html}</div>
+                </div>
+                <label class="role-option">
+                    <input type="checkbox" name="is_active" value="1" {active_checked}>
+                    <span><strong>Активный пользователь</strong><br><span class="muted">Если выключить, логин перестанет работать.</span></span>
+                </label>
+                <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                    <button type="submit" class="btn">{submit_label}</button>
+                    <a href="/users" class="ghost-btn">Сбросить</a>
+                </div>
+            </form>
+        </div>
+
+        <div class="panel">
+            <div class="controls-line">
+                <div>
+                    <div class="panel-title" style="margin-bottom:4px;">Users access matrix</div>
+                    <div class="panel-subtitle">Buyer видит только свой buyer, operator только смотрит, admin управляет.</div>
+                </div>
+            </div>
+            <div class="table-wrap">
+                <table class="users-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Name</th>
+                            <th>Login</th>
+                            <th>Role</th>
+                            <th>Buyer</th>
+                            <th>Status</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>{rows_html}</tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    """
+    return page_shell("Users", content, active_page="users", current_user=current_user)
+
 
 def render_dev_page(title, emoji, active_page, current_user=None):
     content = f'''
@@ -1076,6 +1312,102 @@ def render_dev_page(title, emoji, active_page, current_user=None):
     </div>
     '''
     return page_shell(title, content, active_page=active_page, current_user=current_user)
+
+
+# =========================================
+# BLOCK 7.5 — USERS
+# =========================================
+@app.get("/users", response_class=HTMLResponse)
+def users_page(request: Request, edit: str = Query(default=""), message: str = Query(default="")):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "users")
+
+    form_data = {}
+    if edit:
+        db = SessionLocal()
+        try:
+            edit_user = db.query(User).filter(User.id == safe_number(edit)).first()
+            if edit_user:
+                form_data = {
+                    "edit_user_id": str(edit_user.id),
+                    "display_name": edit_user.display_name or "",
+                    "username": edit_user.username or "",
+                    "role": edit_user.role or "buyer",
+                    "buyer_name": edit_user.buyer_name or "",
+                    "is_active": "1" if edit_user.is_active else "0",
+                }
+        finally:
+            db.close()
+
+    return users_page_html(user, success_text=message, form_data=form_data)
+
+
+@app.post("/users/save")
+def save_user(
+    request: Request,
+    edit_user_id: str = Form(default=""),
+    display_name: str = Form(...),
+    username: str = Form(...),
+    password: str = Form(default=""),
+    role: str = Form(...),
+    buyer_name: str = Form(default=""),
+    is_active: str = Form(default="0"),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "users")
+
+    clean_display_name = display_name.strip()
+    clean_username = username.strip()
+    clean_role = (role or "").strip()
+    clean_buyer_name = buyer_name.strip()
+    form_data = {
+        "edit_user_id": edit_user_id,
+        "display_name": clean_display_name,
+        "username": clean_username,
+        "role": clean_role,
+        "buyer_name": clean_buyer_name,
+        "is_active": "1" if is_active == "1" else "0",
+    }
+
+    if clean_role not in {"superadmin", "admin", "buyer", "operator"}:
+        return HTMLResponse(users_page_html(user, error_text="Неизвестная роль.", form_data=form_data), status_code=400)
+    if not clean_display_name or not clean_username:
+        return HTMLResponse(users_page_html(user, error_text="Display name и username обязательны.", form_data=form_data), status_code=400)
+    if not edit_user_id and len(password.strip()) < 4:
+        return HTMLResponse(users_page_html(user, error_text="Для нового пользователя пароль должен быть минимум 4 символа.", form_data=form_data), status_code=400)
+    if clean_role == "buyer" and not clean_buyer_name:
+        return HTMLResponse(users_page_html(user, error_text="Для buyer нужно заполнить Buyer binding.", form_data=form_data), status_code=400)
+
+    db = SessionLocal()
+    try:
+        existing = db.query(User).filter(User.username == clean_username).first()
+        target_user = db.query(User).filter(User.id == safe_number(edit_user_id)).first() if edit_user_id else None
+        if existing and (not target_user or existing.id != target_user.id):
+            return HTMLResponse(users_page_html(user, error_text="Такой username уже существует.", form_data=form_data), status_code=400)
+
+        if not target_user:
+            target_user = User(
+                username=clean_username,
+                password_hash=hash_password(password.strip()),
+            )
+            db.add(target_user)
+        elif password.strip():
+            target_user.password_hash = hash_password(password.strip())
+
+        target_user.display_name = clean_display_name
+        target_user.username = clean_username
+        target_user.role = clean_role
+        target_user.buyer_name = clean_buyer_name if clean_role == "buyer" else ""
+        target_user.is_active = 1 if is_active == "1" else 0
+        db.commit()
+    finally:
+        db.close()
+
+    return RedirectResponse(url="/users?message=Пользователь сохранен", status_code=303)
 
 
 # =========================================
@@ -1138,8 +1470,8 @@ def export_grouped_csv(
     user = get_current_user(request)
     if not user:
         return auth_redirect_response()
-    if user.get("role") == "buyer" and user.get("buyer_name"):
-        buyer = user.get("buyer_name")
+    require_any_role(user, "superadmin", "admin")
+    buyer = resolve_effective_buyer(user, buyer)
     rows = aggregate_grouped_rows(get_filtered_data(buyer, manager, geo, offer, search))
     reverse = order.lower() != "asc"
     rows.sort(key=lambda x: x.get(sort_by, 0) if x.get(sort_by) is not None else 0, reverse=reverse)
@@ -1175,8 +1507,8 @@ def export_hierarchy_csv(
     user = get_current_user(request)
     if not user:
         return auth_redirect_response()
-    if user.get("role") == "buyer" and user.get("buyer_name"):
-        buyer = user.get("buyer_name")
+    require_any_role(user, "superadmin", "admin")
+    buyer = resolve_effective_buyer(user, buyer)
     rows = aggregate_grouped_rows(get_filtered_data(buyer, manager, geo, offer, search))
     output = io.StringIO()
     writer = csv.writer(output)
@@ -1208,11 +1540,11 @@ def show_grouped_table(
     user = get_current_user(request)
     if not user:
         return auth_redirect_response()
-    if user.get("role") == "buyer" and user.get("buyer_name"):
-        buyer = user.get("buyer_name")
+    enforce_page_access(user, "grouped")
+    buyer = resolve_effective_buyer(user, buyer)
     data = get_filtered_data(buyer, manager, geo, offer, search)
     rows = aggregate_grouped_rows(data)
-    all_buyers, all_managers, all_geos, all_offers = get_filter_options()
+    all_buyers, all_managers, all_geos, all_offers = get_scoped_filter_options(user)
 
     allowed_sort_fields = {
         "buyer", "ad_name", "launch_date", "platform", "manager", "geo", "offer", "creative",
@@ -1225,7 +1557,7 @@ def show_grouped_table(
     rows.sort(key=lambda x: x.get(sort_by, 0) if x.get(sort_by) is not None else 0, reverse=reverse)
 
     totals = aggregate_totals(rows)
-    buyer_options = make_options(all_buyers, buyer)
+    buyer_options = make_options(all_buyers, buyer) if is_admin_role(user) or user.get("role") == "operator" else f'<option value="{escape(buyer)}">{escape(buyer or "Мой buyer")}</option>'
     manager_options = make_options(all_managers, manager)
     geo_options = make_options(all_geos, geo)
     offer_options = make_options(all_offers, offer)
@@ -1296,8 +1628,9 @@ def show_grouped_table(
     for field, label in table_headers:
         column_chips += f'<label class="column-chip"><input type="checkbox" class="column-toggle" value="{field}" checked> {escape(label)}</label>'
 
-    content = f'''
-    <div class="toolbar-grid">
+    upload_block = ""
+    if is_admin_role(user):
+        upload_block = '''
         <div class="panel compact-panel">
             <div class="panel-title">Загрузка данных</div>
             <form method="post" action="/upload" enctype="multipart/form-data" class="upload-form">
@@ -1311,12 +1644,21 @@ def show_grouped_table(
             </form>
             <div class="hint">Если грузишь того же buyer повторно — старые строки заменяются новыми.</div>
         </div>
+        '''
+    elif user.get("role") == "buyer":
+        upload_block = '<div class="panel compact-panel"><div class="panel-title">Ваш доступ</div><div class="hint">Для buyer доступен только просмотр данных своего Buyer. Загрузка и CSV скрыты.</div></div>'
+    else:
+        upload_block = '<div class="panel compact-panel"><div class="panel-title">Ваш доступ</div><div class="hint">Для operator открыт только просмотр FB страниц без загрузки и CSV.</div></div>'
+
+    content = f'''
+    <div class="toolbar-grid">
+        {upload_block}
 
         <div class="panel compact-panel">
             <div class="panel-title">Фильтры</div>
             <div class="filters">
                 <form method="get" action="/grouped">
-                    <label>Buyer<select name="buyer">{buyer_options}</select></label>
+                    {'<label>Buyer<select name="buyer">' + buyer_options + '</select></label>' if is_admin_role(user) or user.get("role") == "operator" else ''}
                     <label>Manager<select name="manager">{manager_options}</select></label>
                     <label>Geo<select name="geo">{geo_options}</select></label>
                     <label>Offer<select name="offer">{offer_options}</select></label>
@@ -1516,7 +1858,7 @@ def show_grouped_table(
     </script>
     """
 
-    top_actions = f'<a class="small-btn" href="{export_link}">⬇ CSV</a>'
+    top_actions = f'<a class="small-btn" href="{export_link}">⬇ CSV</a>' if is_admin_role(user) else ""
     return page_shell("FB — Export", content, "grouped", extra_scripts, top_actions=top_actions, current_user=user)
 
 
@@ -1535,13 +1877,13 @@ def show_hierarchy(
     user = get_current_user(request)
     if not user:
         return auth_redirect_response()
-    if user.get("role") == "buyer" and user.get("buyer_name"):
-        buyer = user.get("buyer_name")
+    enforce_page_access(user, "hierarchy")
+    buyer = resolve_effective_buyer(user, buyer)
     data = get_filtered_data(buyer, manager, geo, offer, search)
     rows = aggregate_grouped_rows(data)
-    all_buyers, all_managers, all_geos, all_offers = get_filter_options()
+    all_buyers, all_managers, all_geos, all_offers = get_scoped_filter_options(user)
 
-    buyer_options = make_options(all_buyers, buyer)
+    buyer_options = make_options(all_buyers, buyer) if is_admin_role(user) or user.get("role") == "operator" else f'<option value="{escape(buyer)}">{escape(buyer or "Мой buyer")}</option>'
     manager_options = make_options(all_managers, manager)
     geo_options = make_options(all_geos, geo)
     offer_options = make_options(all_offers, offer)
@@ -1558,7 +1900,7 @@ def show_hierarchy(
     <div class="panel compact-panel filters">
         <div class="panel-title">Фильтры</div>
         <form method="get" action="/hierarchy">
-            <label>Buyer<select name="buyer">{buyer_options}</select></label>
+            {'<label>Buyer<select name="buyer">' + buyer_options + '</select></label>' if is_admin_role(user) or user.get("role") == "operator" else ''}
             <label>Manager<select name="manager">{manager_options}</select></label>
             <label>Geo<select name="geo">{geo_options}</select></label>
             <label>Offer<select name="offer">{offer_options}</select></label>
@@ -1578,7 +1920,7 @@ def show_hierarchy(
     <div class="tree-root">{tree_html}</div>
     '''
 
-    top_actions = f'<a class="small-btn" href="{export_link}">⬇ CSV</a>'
+    top_actions = f'<a class="small-btn" href="{export_link}">⬇ CSV</a>' if is_admin_role(user) else ""
     return page_shell("FB — Statistic", content, "hierarchy", top_actions=top_actions, current_user=user)
 
 
@@ -1590,6 +1932,7 @@ def finance_page(request: Request):
     user = get_current_user(request)
     if not user:
         return auth_redirect_response()
+    enforce_page_access(user, "finance")
     return render_dev_page("Finance", "💸", "finance", current_user=user)
 
 
@@ -1598,6 +1941,7 @@ def caps_page(request: Request):
     user = get_current_user(request)
     if not user:
         return auth_redirect_response()
+    enforce_page_access(user, "caps")
     return render_dev_page("Caps", "🧢", "caps", current_user=user)
 
 
@@ -1606,6 +1950,7 @@ def chatterfy_page(request: Request):
     user = get_current_user(request)
     if not user:
         return auth_redirect_response()
+    enforce_page_access(user, "chatterfy")
     return render_dev_page("Chatterfy", "💬", "chatterfy", current_user=user)
 
 
@@ -1614,4 +1959,5 @@ def hold_wager_page(request: Request):
     user = get_current_user(request)
     if not user:
         return auth_redirect_response()
+    enforce_page_access(user, "holdwager")
     return render_dev_page("Hold/Wager", "🎯", "holdwager", current_user=user)
