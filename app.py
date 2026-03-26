@@ -1146,6 +1146,84 @@ def get_partner_summary_by_buyer_geo():
     return summary
 
 
+def get_statistic_cap_partner_summary():
+    ensure_partner_table()
+    Base.metadata.create_all(bind=engine, tables=[CapRow.__table__])
+    db = SessionLocal()
+    try:
+        caps = db.query(CapRow).all()
+        partner_rows = db.query(PartnerRow).all()
+    finally:
+        db.close()
+
+    caps_by_sub = {}
+    for cap in caps:
+        promo_key = (cap.promo_code or "").strip().upper()
+        if not promo_key:
+            continue
+        caps_by_sub.setdefault(promo_key, []).append(cap)
+
+    summary = {}
+    for row in partner_rows:
+        promo_key = (row.sub_id or "").strip().upper()
+        matched_caps = caps_by_sub.get(promo_key, [])
+        for cap in matched_caps:
+            flow_parts = [part.strip() for part in safe_text(cap.flow).split("/") if part.strip()]
+            platform = flow_parts[0] if len(flow_parts) > 0 else ""
+            manager = flow_parts[1] if len(flow_parts) > 1 else safe_text(cap.owner_name)
+            geo_code = normalize_geo_value(flow_parts[2] if len(flow_parts) > 2 else (cap.code or ""))
+            if not platform or not manager or not geo_code:
+                continue
+            key = (platform.lower(), manager.lower(), geo_code)
+            info = summary.setdefault(key, {
+                "stat_total_ftd": 0.0,
+                "stat_qual_ftd": 0.0,
+                "stat_rate": safe_cap_number(cap.rate),
+                "stat_income": 0.0,
+                "stat_cap_limit": 0.0,
+                "stat_cap_fill": 0.0,
+                "stat_has_cap": 0.0,
+                "stat_promos": set(),
+            })
+            info["stat_has_cap"] = 1.0
+            info["stat_rate"] = safe_cap_number(cap.rate) or info["stat_rate"]
+            info["stat_cap_limit"] = max(info["stat_cap_limit"], safe_number(cap.cap_value))
+            if safe_number(row.deposit_amount) > 0:
+                info["stat_total_ftd"] += 1
+            if safe_number(row.company_income) > 0 or safe_number(row.cpa_amount) > 0:
+                info["stat_qual_ftd"] += 1
+            info["stat_promos"].add(cap.promo_code or "")
+
+    for info in summary.values():
+        info["stat_income"] = info["stat_qual_ftd"] * safe_number(info["stat_rate"])
+        info["stat_cap_fill"] = cap_fill_percent(info["stat_total_ftd"], info["stat_cap_limit"])
+    return summary
+
+
+def enrich_statistic_rows(rows):
+    summary = get_statistic_cap_partner_summary()
+    enriched = []
+    for item in rows:
+        key = (
+            safe_text(item.get("platform")).lower(),
+            safe_text(item.get("manager")).lower(),
+            normalize_geo_value(item.get("geo") or ""),
+        )
+        stat = summary.get(key, {})
+        clone = dict(item)
+        clone["stat_total_ftd"] = stat.get("stat_total_ftd", 0.0)
+        clone["stat_qual_ftd"] = stat.get("stat_qual_ftd", 0.0)
+        clone["stat_rate"] = stat.get("stat_rate", 0.0)
+        clone["stat_income"] = stat.get("stat_income", 0.0)
+        clone["stat_cap_limit"] = stat.get("stat_cap_limit", 0.0)
+        clone["stat_cap_fill"] = stat.get("stat_cap_fill", 0.0)
+        clone["stat_has_cap"] = stat.get("stat_has_cap", 0.0)
+        clone["stat_profit"] = clone["stat_income"] - (clone.get("spend") or 0)
+        clone["stat_roi"] = (clone["stat_profit"] / clone.get("spend")) * 100 if (clone.get("spend") or 0) > 0 else 0
+        enriched.append(clone)
+    return enriched
+
+
 def ensure_finance_tables():
     Base.metadata.create_all(bind=engine, tables=[
         FinanceWalletRow.__table__,
@@ -1318,19 +1396,7 @@ def aggregate_grouped_rows(rows):
         grouped[key]["rows_combined"] += 1
 
     result = list(grouped.values())
-    partner_summary = get_partner_summary_by_buyer_geo()
     for item in result:
-        partner_key = (
-            safe_text(item.get("platform")).lower(),
-            safe_text(item.get("manager")).lower(),
-            normalize_geo_value(item.get("geo") or ""),
-        )
-        partner_metrics = partner_summary.get(partner_key, {})
-        item["partner_ftd_total"] = partner_metrics.get("partner_ftd_total", 0.0)
-        item["partner_qual_ftd"] = partner_metrics.get("partner_qual_ftd", 0.0)
-        item["partner_income"] = partner_metrics.get("partner_income", 0.0)
-        item["profit"] = item["partner_income"] - (item.get("spend") or 0)
-        item["roi"] = ((item["partner_income"] - (item.get("spend") or 0)) / item.get("spend")) * 100 if (item.get("spend") or 0) > 0 else 0
         item.update(calc_metrics(item["clicks"], item["reg"], item["ftd"], item["spend"], item["leads"]))
     return result
 
@@ -1343,12 +1409,16 @@ def aggregate_totals(rows):
         "reg": sum(r["reg"] for r in rows),
         "ftd": sum(r["ftd"] for r in rows),
         "spend": sum(r["spend"] for r in rows),
-        "partner_ftd_total": sum(r.get("partner_ftd_total", 0) for r in rows),
-        "partner_qual_ftd": sum(r.get("partner_qual_ftd", 0) for r in rows),
-        "partner_income": sum(r.get("partner_income", 0) for r in rows),
+        "stat_total_ftd": sum(r.get("stat_total_ftd", 0) for r in rows),
+        "stat_qual_ftd": sum(r.get("stat_qual_ftd", 0) for r in rows),
+        "stat_income": sum(r.get("stat_income", 0) for r in rows),
+        "stat_cap_limit": sum(r.get("stat_cap_limit", 0) for r in rows),
+        "stat_has_cap": sum(r.get("stat_has_cap", 0) for r in rows),
     }
-    totals["profit"] = totals["partner_income"] - totals["spend"]
-    totals["roi"] = (totals["profit"] / totals["spend"]) * 100 if totals["spend"] > 0 else 0
+    totals["stat_profit"] = totals["stat_income"] - totals["spend"]
+    totals["stat_roi"] = (totals["stat_profit"] / totals["spend"]) * 100 if totals["spend"] > 0 else 0
+    totals["stat_rate"] = totals["stat_income"] / totals["stat_qual_ftd"] if totals["stat_qual_ftd"] > 0 else 0
+    totals["stat_cap_fill"] = cap_fill_percent(totals["stat_total_ftd"], totals["stat_cap_limit"])
     totals.update(calc_metrics(totals["clicks"], totals["reg"], totals["ftd"], totals["spend"], totals["leads"]))
     return totals
 
@@ -1971,17 +2041,31 @@ def sort_link(label, field, current_sort, current_order, **params):
 def render_stats_cards(totals):
     cards = [
         ("Spend", format_money(totals["spend"])),
-        ("Income", format_money(totals.get("partner_income", 0))),
-        ("Profit", format_money(totals.get("profit", 0))),
-        ("ROI", format_percent(totals.get("roi", 0))),
         ("Leads", format_int_or_float(totals["leads"])),
         ("Reg", format_int_or_float(totals["reg"])),
         ("FTD", format_int_or_float(totals["ftd"])),
-        ("Partner FTD", format_int_or_float(totals.get("partner_ftd_total", 0))),
-        ("Qual FTD", format_int_or_float(totals.get("partner_qual_ftd", 0))),
         ("CPA", format_money(totals["cpa_real"])),
         ("L2FTD", format_percent(totals["l2ftd"])),
         ("R2D", format_percent(totals["r2d"])),
+    ]
+    html = '<div class="panel compact-panel"><div class="stats-grid">'
+    for title, value in cards:
+        html += f'<div class="stat-card"><div class="name">{title}</div><div class="value">{value}</div></div>'
+    html += '</div></div>'
+    return html
+
+
+def render_statistic_cards(totals):
+    cards = [
+        ("Spend", format_money(totals["spend"])),
+        ("Income", format_money(totals.get("stat_income", 0))),
+        ("Profit", format_money(totals.get("stat_profit", 0))),
+        ("ROI", format_percent(totals.get("stat_roi", 0))),
+        ("FB FTD", format_int_or_float(totals["ftd"])),
+        ("Total FTD", format_int_or_float(totals.get("stat_total_ftd", 0))),
+        ("Qual FTD", format_int_or_float(totals.get("stat_qual_ftd", 0))),
+        ("Rate", format_money(totals.get("stat_rate", 0))),
+        ("Cap Fill", format_percent(totals.get("stat_cap_fill", 0))),
     ]
     html = '<div class="panel compact-panel"><div class="stats-grid">'
     for title, value in cards:
@@ -1996,7 +2080,7 @@ def render_tree_nodes(nodes, level=1):
     level_class = f"tree-level-{min(level, 5)}"
     for node in nodes:
         m = node["metrics"]
-        meta = f'<span class="tree-meta">Spend: {format_money(m["spend"])} · Leads: {format_int_or_float(m["leads"])} · Reg: {format_int_or_float(m["reg"])} · FTD: {format_int_or_float(m["ftd"])} · CPA: {format_money(m["cpa_real"])} · L2FTD: {format_percent(m["l2ftd"])} · R2D: {format_percent(m["r2d"])} </span>'
+        meta = f'<span class="tree-meta">Spend: {format_money(m["spend"])} · Income: {format_money(m.get("stat_income", 0))} · Profit: {format_money(m.get("stat_profit", 0))} · ROI: {format_percent(m.get("stat_roi", 0))} · Total FTD: {format_int_or_float(m.get("stat_total_ftd", 0))} · Qual FTD: {format_int_or_float(m.get("stat_qual_ftd", 0))} · Rate: {format_money(m.get("stat_rate", 0))} · Cap Fill: {format_percent(m.get("stat_cap_fill", 0))}</span>'
         if node["children"]:
             children_html = render_tree_nodes(node["children"], level + 1)
             html += f'''
@@ -2010,12 +2094,13 @@ def render_tree_nodes(nodes, level=1):
             <div class="tree-line {level_class}">
                 <div><strong>{escape(node["name"])}</strong> <span class="muted">({escape(node["key"])})</span></div>
                 <div>{format_money(m["spend"])}</div>
-                <div>{format_int_or_float(m["leads"])}</div>
-                <div>{format_int_or_float(m["reg"])}</div>
-                <div>{format_int_or_float(m["ftd"])}</div>
-                <div>{format_money(m["cpa_real"])}</div>
-                <div>{format_percent(m["l2ftd"])}</div>
-                <div>{format_percent(m["r2d"])} </div>
+                <div>{format_money(m.get("stat_income", 0))}</div>
+                <div>{format_money(m.get("stat_profit", 0))}</div>
+                <div>{format_percent(m.get("stat_roi", 0))}</div>
+                <div>{format_int_or_float(m.get("stat_total_ftd", 0))}</div>
+                <div>{format_int_or_float(m.get("stat_qual_ftd", 0))}</div>
+                <div>{format_money(m.get("stat_rate", 0))}</div>
+                <div>{format_percent(m.get("stat_cap_fill", 0))}</div>
             </div>
             '''
     return html
@@ -3162,7 +3247,7 @@ async def upload_partner_file(request: Request, file: UploadFile = File(...)):
         else:
             df = pd.read_csv(filename, skiprows=6)
         replace_partner_rows(original_name, parse_partner_dataframe(df, source_name=original_name))
-        return RedirectResponse(url="/grouped", status_code=303)
+        return RedirectResponse(url="/hierarchy", status_code=303)
     finally:
         if os.path.exists(filename):
             os.remove(filename)
@@ -3195,16 +3280,14 @@ def export_grouped_csv(
     writer = csv.writer(output)
     writer.writerow([
         "Buyer", "Ad Name", "Launch Date", "Platform", "Manager", "Geo", "Offer", "Creative",
-        "Rows", "Clicks", "Leads", "Reg", "FTD", "Partner FTD", "Qual FTD", "Spend", "Income", "Profit", "ROI", "CPC", "CPL", "CPA",
+        "Rows", "Clicks", "Leads", "Reg", "FTD", "Spend", "CPC", "CPL", "CPA",
         "L2FTD", "R2D", "Date Start", "Date End"
     ])
     for row in rows:
         writer.writerow([
             row["buyer"], row["ad_name"], row["launch_date"], row["platform"], row["manager"], row["geo"], row["offer"], row["creative"],
             format_int_or_float(row["rows_combined"]), format_int_or_float(row["clicks"]), format_int_or_float(row["leads"]),
-            format_int_or_float(row["reg"]), format_int_or_float(row["ftd"]), format_int_or_float(row.get("partner_ftd_total", 0)),
-            format_int_or_float(row.get("partner_qual_ftd", 0)), format_money(row["spend"]), format_money(row.get("partner_income", 0)),
-            format_money(row.get("profit", 0)), format_percent(row.get("roi", 0)),
+            format_int_or_float(row["reg"]), format_int_or_float(row["ftd"]), format_money(row["spend"]),
             format_money(row["cpc_real"]), format_money(row["cpl_real"]), format_money(row["cpa_real"]),
             format_percent(row["l2ftd"]), format_percent(row["r2d"]), row["date_start"], row["date_end"],
         ])
@@ -3226,15 +3309,16 @@ def export_hierarchy_csv(
         return auth_redirect_response()
     require_any_role(user, "superadmin", "admin")
     buyer = resolve_effective_buyer(user, buyer)
-    rows = aggregate_grouped_rows(get_filtered_data(buyer, manager, geo, offer, search))
+    rows = enrich_statistic_rows(aggregate_grouped_rows(get_filtered_data(buyer, manager, geo, offer, search)))
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Geo", "Platform", "Manager", "Offer", "Creative", "Ad Name", "Leads", "Reg", "FTD", "Spend", "CPA", "L2FTD", "R2D"])
+    writer.writerow(["Geo", "Platform", "Manager", "Offer", "Creative", "Ad Name", "Leads", "Reg", "FB FTD", "Total FTD", "Qual FTD", "Rate", "Spend", "Income", "Profit", "ROI"])
     for row in rows:
         writer.writerow([
             row["geo"], row["platform"], row["manager"], row["offer"], row["creative"], row["ad_name"],
             format_int_or_float(row["leads"]), format_int_or_float(row["reg"]), format_int_or_float(row["ftd"]),
-            format_money(row["spend"]), format_money(row["cpa_real"]), format_percent(row["l2ftd"]), format_percent(row["r2d"]),
+            format_int_or_float(row.get("stat_total_ftd", 0)), format_int_or_float(row.get("stat_qual_ftd", 0)), format_money(row.get("stat_rate", 0)),
+            format_money(row["spend"]), format_money(row.get("stat_income", 0)), format_money(row.get("stat_profit", 0)), format_percent(row.get("stat_roi", 0)),
         ])
     output.seek(0)
     return StreamingResponse(iter([output.getvalue()]), media_type="text/csv; charset=utf-8", headers={"Content-Disposition": "attachment; filename=teambead_statistic.csv"})
@@ -3265,8 +3349,7 @@ def show_grouped_table(
 
     allowed_sort_fields = {
         "buyer", "ad_name", "launch_date", "platform", "manager", "geo", "offer", "creative",
-        "rows_combined", "clicks", "leads", "reg", "ftd", "partner_ftd_total", "partner_qual_ftd",
-        "spend", "partner_income", "profit", "roi", "cpa_real", "l2ftd", "r2d",
+        "rows_combined", "clicks", "leads", "reg", "ftd", "spend", "cpa_real", "l2ftd", "r2d",
         "date_start", "date_end"
     }
     if sort_by not in allowed_sort_fields:
@@ -3296,12 +3379,7 @@ def show_grouped_table(
         ("leads", "Leads"),
         ("reg", "Reg"),
         ("ftd", "FTD"),
-        ("partner_ftd_total", "Partner FTD"),
-        ("partner_qual_ftd", "Qual FTD"),
         ("spend", "Spend"),
-        ("partner_income", "Income"),
-        ("profit", "Profit"),
-        ("roi", "ROI"),
         ("cpa_real", "CPA"),
         ("l2ftd", "L2FTD"),
         ("r2d", "R2D"),
@@ -3338,12 +3416,7 @@ def show_grouped_table(
             <td data-col="leads">{format_int_or_float(row["leads"])}</td>
             <td data-col="reg">{format_int_or_float(row["reg"])}</td>
             <td data-col="ftd">{format_int_or_float(row["ftd"])}</td>
-            <td data-col="partner_ftd_total">{format_int_or_float(row.get("partner_ftd_total", 0))}</td>
-            <td data-col="partner_qual_ftd">{format_int_or_float(row.get("partner_qual_ftd", 0))}</td>
             <td data-col="spend">{format_money(row["spend"])}</td>
-            <td data-col="partner_income">{format_money(row.get("partner_income", 0))}</td>
-            <td data-col="profit">{format_money(row.get("profit", 0))}</td>
-            <td data-col="roi">{format_percent(row.get("roi", 0))}</td>
             <td data-col="cpa_real">{format_money(row["cpa_real"])}</td>
             <td data-col="l2ftd">{format_percent(row["l2ftd"])}</td>
             <td data-col="r2d">{format_percent(row["r2d"])}</td>
@@ -3369,12 +3442,6 @@ def show_grouped_table(
                     <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
                 </label>
                 <button type="submit" class="upload-btn">Загрузить</button>
-            </form>
-            <form method="post" action="/upload/partner" enctype="multipart/form-data" class="upload-form" style="margin-top:12px;">
-                <label>Partner CSV
-                    <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
-                </label>
-                <button type="submit" class="ghost-btn">Загрузить партнерку</button>
             </form>
             <div class="hint">Если грузишь того же buyer повторно — старые строки заменяются новыми.</div>
         </div>
@@ -3429,7 +3496,7 @@ def show_grouped_table(
         <div class="table-wrap">
             <table id="groupedTable">
                 <thead><tr>{head_html}</tr></thead>
-                <tbody>{rows_html if rows_html else '<tr><td colspan="24">Нет данных</td></tr>'}</tbody>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="19">Нет данных</td></tr>'}</tbody>
             </table>
         </div>
     </div>
@@ -3614,7 +3681,7 @@ def show_hierarchy(
     enforce_page_access(user, "hierarchy")
     buyer = resolve_effective_buyer(user, buyer)
     data = get_filtered_data(buyer, manager, geo, offer, search)
-    rows = aggregate_grouped_rows(data)
+    rows = enrich_statistic_rows(aggregate_grouped_rows(data))
     all_buyers, all_managers, all_geos, all_offers = get_scoped_filter_options(user)
 
     buyer_options = make_options(all_buyers, buyer) if is_admin_role(user) or user.get("role") == "operator" else f'<option value="{escape(buyer)}">{escape(buyer or "Мой buyer")}</option>'
@@ -3631,6 +3698,17 @@ def show_hierarchy(
     export_link = f"/export/hierarchy?{export_qs}" if export_qs else "/export/hierarchy"
 
     content = f'''
+    <div class="panel compact-panel">
+        <div class="panel-title">Загрузка статистики</div>
+        <div class="panel-subtitle">Сюда загружается партнерка. Дальше она склеивается с капами и попадает в статистику.</div>
+        <form method="post" action="/upload/partner" enctype="multipart/form-data" class="upload-form" style="margin-top:14px;">
+            <label>Partner CSV
+                <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
+            </label>
+            <button type="submit" class="upload-btn">Загрузить партнерку</button>
+        </form>
+    </div>
+
     <div class="panel compact-panel filters">
         <div class="panel-title">Фильтры</div>
         <form method="get" action="/hierarchy">
@@ -3644,11 +3722,11 @@ def show_hierarchy(
         </form>
     </div>
 
-    {render_stats_cards(totals)}
+    {render_statistic_cards(totals)}
 
     <div class="panel compact-panel">
         <div class="panel-title">Statistic</div>
-        <div class="panel-subtitle">Порядок уровней: Geo → Platform → Manager → Offer → Creative → Ad Name</div>
+        <div class="panel-subtitle">Доход и квал считаются через капу: promo/subid из партнерки → капа → flow → FB. Если капа не найдена, доход по строке будет 0.</div>
     </div>
 
     <div class="tree-root">{tree_html}</div>
