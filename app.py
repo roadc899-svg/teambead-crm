@@ -117,6 +117,26 @@ class CapRow(Base):
     current_ftd = Column(Float, default=0)
 
 
+class TaskRow(Base):
+    __tablename__ = "task_rows"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, default="")
+    description = Column(String, default="")
+    assigned_to_username = Column(String, index=True, default="")
+    assigned_to_name = Column(String, default="")
+    assigned_to_role = Column(String, default="")
+    created_by_username = Column(String, default="")
+    created_by_name = Column(String, default="")
+    status = Column(String, default="Не начато")
+    due_at = Column(DateTime, nullable=True)
+    response_text = Column(String, default="")
+    notes = Column(String, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+    answered_at = Column(DateTime, nullable=True)
+
+
 Base.metadata.create_all(bind=engine)
 
 
@@ -270,8 +290,9 @@ def can_access_page(user, page_key: str) -> bool:
     page_rules = {
         "grouped": {"superadmin", "admin", "buyer", "operator"},
         "hierarchy": {"superadmin", "admin", "buyer", "operator"},
+        "tasks": {"superadmin", "admin", "buyer", "operator", "finance"},
         "users": {"superadmin", "admin"},
-        "finance": {"superadmin", "admin"},
+        "finance": {"superadmin"},
         "caps": {"superadmin", "admin"},
         "chatterfy": {"superadmin", "admin"},
         "holdwager": {"superadmin", "admin"},
@@ -721,6 +742,181 @@ def import_caps_from_csv_if_needed():
         db.close()
 
 
+def parse_datetime_local(value: str):
+    text = (value or "").strip()
+    if not text:
+        return None
+    for pattern in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(text, pattern)
+        except Exception:
+            continue
+    return None
+
+
+def format_datetime_local(value):
+    if not value:
+        return ""
+    try:
+        return value.strftime("%Y-%m-%dT%H:%M")
+    except Exception:
+        return ""
+
+
+def format_datetime_human(value):
+    if not value:
+        return "Без срока"
+    try:
+        return value.strftime("%d.%m.%Y %H:%M")
+    except Exception:
+        return "Без срока"
+
+
+def parse_money_value(value):
+    text = safe_text(value).replace("$", "").replace("\xa0", "").replace(" ", "").replace(",", ".")
+    if not text:
+        return 0.0
+    try:
+        return float(text)
+    except Exception:
+        return 0.0
+
+
+def load_finance_snapshot():
+    source_path = "/Users/ivansviderko/Downloads/финансы.csv"
+    result = {
+        "source_path": source_path,
+        "totals": {
+            "wallets": 0.0,
+            "expenses": 0.0,
+            "income": 0.0,
+            "pending": 0.0,
+            "transfers": 0.0,
+        },
+        "wallets": [],
+        "expenses": [],
+        "income": [],
+        "pending": [],
+        "transfers": [],
+    }
+    if not os.path.exists(source_path):
+        return result
+
+    with open(source_path, "r", encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.reader(f))
+    if len(rows) < 2:
+        return result
+
+    header_totals = rows[0]
+    result["totals"] = {
+        "wallets": parse_money_value(header_totals[4] if len(header_totals) > 4 else ""),
+        "expenses": parse_money_value(header_totals[8] if len(header_totals) > 8 else ""),
+        "income": parse_money_value(header_totals[15] if len(header_totals) > 15 else ""),
+        "pending": parse_money_value(header_totals[22] if len(header_totals) > 22 else ""),
+        "transfers": parse_money_value(header_totals[27] if len(header_totals) > 27 else ""),
+    }
+
+    for row in rows[2:]:
+        row = row + [""] * (31 - len(row))
+        if any(safe_text(x) for x in row[0:5]):
+            result["wallets"].append({
+                "category": safe_text(row[0]),
+                "description": safe_text(row[1]),
+                "owner": safe_text(row[2]),
+                "wallet": safe_text(row[3]),
+                "amount": parse_money_value(row[4]),
+            })
+        if any(safe_text(x) for x in row[5:11]):
+            result["expenses"].append({
+                "section": safe_text(row[5]) or "Расход",
+                "date": safe_text(row[6]),
+                "category": safe_text(row[7]),
+                "amount": parse_money_value(row[8]),
+                "paid_by": safe_text(row[9]),
+                "comment": safe_text(row[10]),
+            })
+        if any(safe_text(x) for x in row[11:18]):
+            result["income"].append({
+                "section": safe_text(row[11]) or "Приход",
+                "date": safe_text(row[12]),
+                "category": safe_text(row[13]),
+                "description": safe_text(row[14]),
+                "amount": parse_money_value(row[15]),
+                "wallet": safe_text(row[16]),
+                "reconciliation": safe_text(row[17]),
+            })
+        if any(safe_text(x) for x in row[18:25]):
+            result["pending"].append({
+                "section": safe_text(row[18]) or "Ожидаем",
+                "date": safe_text(row[19]),
+                "category": safe_text(row[20]),
+                "description": safe_text(row[21]),
+                "amount": parse_money_value(row[22]),
+                "wallet": safe_text(row[23]),
+                "reconciliation": safe_text(row[24]),
+            })
+        if any(safe_text(x) for x in row[25:31]):
+            result["transfers"].append({
+                "section": safe_text(row[25]) or "Перемещение",
+                "date": safe_text(row[26]),
+                "amount": parse_money_value(row[27]),
+                "from_wallet": safe_text(row[28]),
+                "to_wallet": safe_text(row[29]),
+                "comment": safe_text(row[30]),
+            })
+
+    return result
+
+
+def get_task_status_options():
+    return ["Не начато", "В работе", "Ожидает ответ", "Заблокировано", "Выполнено"]
+
+
+def get_assignable_users():
+    db = SessionLocal()
+    try:
+        return db.query(User).filter(User.is_active == 1, User.role.in_(["buyer", "operator", "finance"])).order_by(User.display_name.asc(), User.username.asc()).all()
+    finally:
+        db.close()
+
+
+def get_tasks_for_user(current_user, status_filter="", assignee_filter="", search=""):
+    Base.metadata.create_all(bind=engine, tables=[TaskRow.__table__])
+    db = SessionLocal()
+    try:
+        query = db.query(TaskRow)
+        if is_admin_role(current_user):
+            if assignee_filter:
+                query = query.filter(TaskRow.assigned_to_username == assignee_filter)
+        else:
+            query = query.filter(TaskRow.assigned_to_username == (current_user or {}).get("username"))
+        if status_filter:
+            query = query.filter(TaskRow.status == status_filter)
+        rows = query.order_by(TaskRow.due_at.asc().nulls_last(), TaskRow.updated_at.desc(), TaskRow.id.desc()).all()
+    finally:
+        db.close()
+
+    search_lower = (search or "").strip().lower()
+    if not search_lower:
+        return rows
+
+    filtered = []
+    for row in rows:
+        haystack = " | ".join([
+            row.title or "",
+            row.description or "",
+            row.assigned_to_name or "",
+            row.assigned_to_role or "",
+            row.created_by_name or "",
+            row.notes or "",
+            row.response_text or "",
+            row.status or "",
+        ]).lower()
+        if search_lower in haystack:
+            filtered.append(row)
+    return filtered
+
+
 # =========================================
 # BLOCK 6 — AGGREGATION
 # =========================================
@@ -806,11 +1002,12 @@ def aggregate_for_hierarchy(rows, keys):
 def sidebar_html(active_page, current_user=None):
     items = [
         ("grouped", "/grouped", "📘", "FB", [("/grouped", "Export", active_page == "grouped"), ("/hierarchy", "Statistic", active_page == "hierarchy")]),
-        ("users", "/users", "🧑", "Users", []),
+        ("tasks", "/tasks", "✅", "Tasks", []),
         ("finance", "/finance", "💸", "Finance", []),
         ("caps", "/caps", "🧢", "Caps", []),
         ("chatterfy", "/chatterfy", "💬", "Chatterfy", []),
         ("holdwager", "/hold-wager", "🎯", "Hold/Wager", []),
+        ("users", "/users", "🧑", "Users", []),
     ]
 
     html = '''
@@ -1200,11 +1397,29 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .caps-form textarea {{ min-height: 110px; resize: vertical; }}
             .caps-grid-2 {{ display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:10px; }}
             .caps-table {{ min-width: 1580px; }}
+            .caps-table th, .caps-table td {{
+                white-space: normal;
+                overflow: visible;
+                text-overflow: initial;
+                vertical-align: top;
+            }}
+            .caps-table .comment-col {{ min-width: 260px; }}
+            .caps-table .agent-col {{ min-width: 140px; }}
+            .caps-actions {{ display:flex; gap:8px; flex-wrap:wrap; min-width:140px; }}
             .progress-shell {{
                 min-width: 130px;
                 display:grid;
                 gap:6px;
             }}
+            .finance-grid {{ display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:16px; }}
+            .finance-table {{ min-width: 980px; }}
+            .finance-table th, .finance-table td {{
+                white-space: normal;
+                overflow: visible;
+                text-overflow: initial;
+                vertical-align: top;
+            }}
+            .wallet-code {{ font-family: "Menlo", "Monaco", monospace; font-size: 12px; line-height: 1.45; }}
             .progress-bar {{
                 width:100%;
                 height:10px;
@@ -1218,12 +1433,75 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 border-radius:999px;
                 background: linear-gradient(90deg, var(--accent3), var(--accent1));
             }}
+            .tasks-layout {{ display:grid; grid-template-columns: minmax(360px, 430px) 1fr; gap:16px; align-items:start; }}
+            .tasks-form {{ display:grid; gap:12px; }}
+            .tasks-form label {{ display:grid; gap:6px; font-size:12px; font-weight:800; }}
+            .tasks-form input, .tasks-form textarea, .tasks-form select {{
+                width:100%;
+                border-radius:12px;
+                border:1px solid var(--border);
+                background: var(--panel-3);
+                color: var(--text);
+                padding:11px 12px;
+                outline:none;
+            }}
+            .tasks-form textarea {{ min-height: 110px; resize: vertical; }}
+            .task-stack {{ display:grid; gap:14px; }}
+            .task-card {{
+                border:1px solid var(--border);
+                border-radius:18px;
+                background: linear-gradient(180deg, var(--panel), var(--panel-2));
+                box-shadow: var(--shadow);
+                padding:16px;
+            }}
+            .task-head {{
+                display:flex;
+                justify-content:space-between;
+                gap:12px;
+                align-items:flex-start;
+                flex-wrap:wrap;
+                margin-bottom:10px;
+            }}
+            .task-title {{ font-size:18px; font-weight:900; margin-bottom:6px; }}
+            .task-meta {{ display:flex; gap:8px; flex-wrap:wrap; }}
+            .task-chip {{
+                display:inline-flex;
+                align-items:center;
+                gap:6px;
+                border-radius:999px;
+                border:1px solid var(--border);
+                background: var(--chip);
+                padding:7px 11px;
+                font-size:12px;
+                font-weight:900;
+            }}
+            .task-body {{
+                display:grid;
+                grid-template-columns: 1.15fr .85fr;
+                gap:14px;
+                margin-top:10px;
+            }}
+            .task-note {{
+                border:1px solid var(--border);
+                background: rgba(255,255,255,0.02);
+                border-radius:14px;
+                padding:12px 14px;
+                white-space:pre-wrap;
+                line-height:1.45;
+            }}
+            .task-answer-empty {{
+                color: var(--muted);
+                font-weight: 800;
+            }}
             .muted {{ color: var(--muted); }}
             @media (max-width: 1200px) {{
                 .stats-grid {{ grid-template-columns: repeat(3, minmax(130px, 1fr)); }}
                 .toolbar-grid {{ grid-template-columns: 1fr; }}
                 .users-layout {{ grid-template-columns: 1fr; }}
                 .caps-layout {{ grid-template-columns: 1fr; }}
+                .tasks-layout {{ grid-template-columns: 1fr; }}
+                .task-body {{ grid-template-columns: 1fr; }}
+                .finance-grid {{ grid-template-columns: 1fr; }}
             }}
             @media (max-width: 900px) {{
                 .app {{ display: block; }}
@@ -1373,6 +1651,7 @@ def users_page_html(current_user, error_text="", success_text="", form_data=None
         ("admin", "Доступ к CRM, загрузке CSV, экспорту и управлению пользователями."),
         ("buyer", "Видит только свои данные по привязанному Buyer без загрузки и экспорта."),
         ("operator", "Может смотреть FB страницы без доступа к загрузке, CSV и админке."),
+        ("finance", "Получает задачи от админов и работает как отдельный исполнитель."),
     ]
     role_html = ""
     for value, description in role_cards:
@@ -1518,17 +1797,19 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 </div>
             </td>
             <td>{escape(row.promo_code or "")}</td>
-            <td>{escape((row.agent or "")[:22])}</td>
-            <td>{escape((row.comments or "")[:22])}</td>
-            <td style="display:flex; gap:8px; flex-wrap:wrap;">
-                <form method="get" action="/caps">
-                    <input type="hidden" name="edit" value="{row.id}">
-                    <button type="submit" class="ghost-btn small-btn">Edit</button>
-                </form>
-                <form method="post" action="/caps/delete" onsubmit="return confirm('Удалить эту капу?');">
-                    <input type="hidden" name="cap_id" value="{row.id}">
-                    <button type="submit" class="ghost-btn small-btn">Delete</button>
-                </form>
+            <td class="agent-col">{escape(row.agent or "")}</td>
+            <td class="comment-col">{escape(row.comments or "")}</td>
+            <td>
+                <div class="caps-actions">
+                    <form method="get" action="/caps">
+                        <input type="hidden" name="edit" value="{row.id}">
+                        <button type="submit" class="ghost-btn small-btn">Edit</button>
+                    </form>
+                    <form method="post" action="/caps/delete" onsubmit="return confirm('Удалить эту капу?');">
+                        <input type="hidden" name="cap_id" value="{row.id}">
+                        <button type="submit" class="ghost-btn small-btn">Delete</button>
+                    </form>
+                </div>
             </td>
         </tr>
         """
@@ -1676,6 +1957,272 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     return page_shell("Caps", content, active_page="caps", current_user=current_user)
 
 
+def render_finance_table(title, subtitle, headers, rows_html, min_width="980px"):
+    return f"""
+    <div class="panel compact-panel">
+        <div class="controls-line">
+            <div>
+                <div class="panel-title" style="margin-bottom:4px;">{escape(title)}</div>
+                <div class="panel-subtitle">{escape(subtitle)}</div>
+            </div>
+        </div>
+        <div class="table-wrap">
+            <table class="finance-table" style="min-width:{escape(min_width)};">
+                <thead><tr>{headers}</tr></thead>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="6">Нет данных</td></tr>'}</tbody>
+            </table>
+        </div>
+    </div>
+    """
+
+
+def finance_page_html(current_user):
+    snapshot = load_finance_snapshot()
+
+    wallet_rows = ""
+    for item in snapshot["wallets"]:
+        wallet_rows += f"""
+        <tr>
+            <td>{escape(item['category'])}</td>
+            <td>{escape(item['description'])}</td>
+            <td>{escape(item['owner'])}</td>
+            <td class="wallet-code">{escape(item['wallet'])}</td>
+            <td>{format_money(item['amount'])}</td>
+        </tr>
+        """
+
+    expense_rows = ""
+    for item in snapshot["expenses"]:
+        expense_rows += f"""
+        <tr>
+            <td>{escape(item['date'])}</td>
+            <td>{escape(item['category'])}</td>
+            <td>{format_money(item['amount'])}</td>
+            <td class="wallet-code">{escape(item['paid_by'])}</td>
+            <td>{escape(item['comment'])}</td>
+        </tr>
+        """
+
+    income_rows = ""
+    for item in snapshot["income"]:
+        income_rows += f"""
+        <tr>
+            <td>{escape(item['date'])}</td>
+            <td>{escape(item['category'])}</td>
+            <td>{escape(item['description'])}</td>
+            <td>{format_money(item['amount'])}</td>
+            <td class="wallet-code">{escape(item['wallet'])}</td>
+            <td>{escape(item['reconciliation'])}</td>
+        </tr>
+        """
+
+    pending_rows = ""
+    for item in snapshot["pending"]:
+        pending_rows += f"""
+        <tr>
+            <td>{escape(item['date'])}</td>
+            <td>{escape(item['category'])}</td>
+            <td>{escape(item['description'])}</td>
+            <td>{format_money(item['amount'])}</td>
+            <td class="wallet-code">{escape(item['wallet'])}</td>
+            <td>{escape(item['reconciliation'])}</td>
+        </tr>
+        """
+
+    transfer_rows = ""
+    for item in snapshot["transfers"]:
+        transfer_rows += f"""
+        <tr>
+            <td>{escape(item['date'])}</td>
+            <td>{format_money(item['amount'])}</td>
+            <td class="wallet-code">{escape(item['from_wallet'])}</td>
+            <td class="wallet-code">{escape(item['to_wallet'])}</td>
+            <td>{escape(item['comment'])}</td>
+        </tr>
+        """
+
+    content = f"""
+    <div class="panel compact-panel">
+        <div class="panel-title">Finance control</div>
+        <div class="panel-subtitle">Кошельки, остатки, расход, приход, ожидание и перемещения. Источник: {escape(snapshot['source_path'])}</div>
+    </div>
+
+    <div class="panel compact-panel">
+        <div class="stats-grid">
+            <div class="stat-card"><div class="name">Wallet Balance</div><div class="value">{format_money(snapshot['totals']['wallets'])}</div></div>
+            <div class="stat-card"><div class="name">Expenses</div><div class="value">{format_money(snapshot['totals']['expenses'])}</div></div>
+            <div class="stat-card"><div class="name">Income</div><div class="value">{format_money(snapshot['totals']['income'])}</div></div>
+            <div class="stat-card"><div class="name">Pending</div><div class="value">{format_money(snapshot['totals']['pending'])}</div></div>
+            <div class="stat-card"><div class="name">Transfers</div><div class="value">{format_money(snapshot['totals']['transfers'])}</div></div>
+        </div>
+    </div>
+
+    {render_finance_table("Wallets", "Текущие кошельки и остатки", '<th>Категория</th><th>Описание</th><th>Метка</th><th>Кошелек</th><th>Сумма</th>', wallet_rows, "1150px")}
+
+    <div class="finance-grid">
+        {render_finance_table("Расход", "Кто и за что оплачивал", '<th>Дата</th><th>Категория</th><th>Сумма</th><th>Кто оплатил</th><th>Комментарий</th>', expense_rows)}
+        {render_finance_table("Приход", "Подтвержденные входящие суммы", '<th>Дата</th><th>Категория</th><th>Описание</th><th>Сумма</th><th>Кошель</th><th>Сверка</th>', income_rows)}
+    </div>
+
+    <div class="finance-grid">
+        {render_finance_table("Ожидаем", "Ожидаемые поступления", '<th>Дата</th><th>Категория</th><th>Описание</th><th>Сумма</th><th>Кошель</th><th>Сверка</th>', pending_rows)}
+        {render_finance_table("Перемещения", "Переводы между кошельками", '<th>Дата</th><th>Сумма</th><th>Откуда</th><th>Куда</th><th>Комментарий</th>', transfer_rows)}
+    </div>
+    """
+    return page_shell("Finance", content, active_page="finance", current_user=current_user)
+
+
+def tasks_page_html(current_user, rows, filter_values=None, form_data=None, success_text="", error_text=""):
+    filter_values = filter_values or {}
+    form_data = form_data or {}
+    status_options = get_task_status_options()
+    assignable_users = get_assignable_users()
+
+    my_open = len([row for row in rows if row.status != "Выполнено"])
+    answered = len([row for row in rows if (row.response_text or "").strip()])
+    overdue = len([row for row in rows if row.due_at and row.due_at < datetime.utcnow() and row.status != "Выполнено"])
+
+    message_html = ""
+    if success_text:
+        message_html += f'<div class="notice">{escape(success_text)}</div>'
+    if error_text:
+        message_html += f'<div class="notice notice-danger">{escape(error_text)}</div>'
+
+    status_options_html = make_options(status_options, filter_values.get("status", ""))
+    assignee_options_html = make_options(
+        [f"{item.username}|||{item.display_name or item.username}|||{item.role or ''}" for item in assignable_users],
+        filter_values.get("assignee", ""),
+    )
+    assignee_filter_rendered = ""
+    if is_admin_role(current_user):
+        clean_html = '<option value="">Все</option>'
+        for item in assignable_users:
+            selected = "selected" if filter_values.get("assignee", "") == item.username else ""
+            clean_html += f'<option value="{escape(item.username)}" {selected}>{escape((item.display_name or item.username) + " · " + (item.role or ""))}</option>'
+        assignee_filter_rendered = f'<label>Кому<select name="assignee">{clean_html}</select></label>'
+
+    assign_options = ""
+    for item in assignable_users:
+        selected = "selected" if form_data.get("assigned_to_username", "") == item.username else ""
+        assign_options += f'<option value="{escape(item.username)}" {selected}>{escape((item.display_name or item.username) + " · " + (item.role or ""))}</option>'
+
+    create_block = ""
+    if is_admin_role(current_user):
+        create_block = f"""
+        <div class="panel">
+            <div class="panel-title">Новая задача</div>
+            <div class="panel-subtitle">Поставь задачу buyer / operator / finance и сразу зафиксируй дедлайн и ожидание по ответу.</div>
+            <form method="post" action="/tasks/save" class="tasks-form" style="margin-top:14px;">
+                <label>Кому
+                    <select name="assigned_to_username" required>{assign_options}</select>
+                </label>
+                <label>Задача
+                    <input type="text" name="title" value="{escape(form_data.get('title', ''))}" required placeholder="Например: Проверить KPI по Peru">
+                </label>
+                <label>Описание
+                    <textarea name="description" placeholder="Что нужно сделать, какой результат ожидается">{escape(form_data.get('description', ''))}</textarea>
+                </label>
+                <label>Срок выполнения
+                    <input type="datetime-local" name="due_at" value="{escape(form_data.get('due_at', ''))}">
+                </label>
+                <label>Примечания
+                    <textarea name="notes" placeholder="Дополнительный контекст, ссылки, договоренности">{escape(form_data.get('notes', ''))}</textarea>
+                </label>
+                <button type="submit" class="btn">Добавить задачу</button>
+            </form>
+        </div>
+        """
+
+    task_cards = ""
+    for row in rows:
+        response_html = f'<div class="task-note">{escape(row.response_text)}</div>' if (row.response_text or "").strip() else '<div class="task-answer-empty">Ответа пока нет</div>'
+        due_text = format_datetime_human(row.due_at)
+        answered_text = format_datetime_human(row.answered_at) if row.answered_at else "Нет ответа"
+        admin_controls = ""
+        if is_admin_role(current_user):
+            admin_controls = f'<div class="task-chip">Исполнитель: {escape(row.assigned_to_name or row.assigned_to_username)} · {escape(row.assigned_to_role or "")}</div>'
+        respond_block = ""
+        if row.assigned_to_username == (current_user or {}).get("username") or is_admin_role(current_user):
+            respond_block = f"""
+            <form method="post" action="/tasks/respond" class="tasks-form" style="margin-top:14px;">
+                <input type="hidden" name="task_id" value="{row.id}">
+                <label>Статус
+                    <select name="status">
+                        {''.join([f'<option value="{escape(option)}" {"selected" if row.status == option else ""}>{escape(option)}</option>' for option in status_options])}
+                    </select>
+                </label>
+                <label>Ответ
+                    <textarea name="response_text" placeholder="Что сделано, какой апдейт, где блокер">{escape(row.response_text or '')}</textarea>
+                </label>
+                <button type="submit" class="btn">Сохранить ответ</button>
+            </form>
+            """
+        task_cards += f"""
+        <div class="task-card">
+            <div class="task-head">
+                <div>
+                    <div class="task-title">{escape(row.title or "Без названия")}</div>
+                    <div class="muted">{escape(row.description or "Без описания")}</div>
+                </div>
+                <div class="task-meta">
+                    <div class="task-chip">Статус: {escape(row.status or "Не начато")}</div>
+                    <div class="task-chip">Срок: {escape(due_text)}</div>
+                    <div class="task-chip">Ответ: {escape(answered_text)}</div>
+                    {admin_controls}
+                </div>
+            </div>
+            <div class="task-body">
+                <div>
+                    <div class="panel-subtitle" style="margin-bottom:8px;">Постановка</div>
+                    <div class="task-note">{escape(row.notes or "Без доп. примечаний")}</div>
+                </div>
+                <div>
+                    <div class="panel-subtitle" style="margin-bottom:8px;">Ответ исполнителя</div>
+                    {response_html}
+                </div>
+            </div>
+            <div class="muted" style="margin-top:12px;">От {escape(row.created_by_name or row.created_by_username)} · создано {escape(format_datetime_human(row.created_at))}</div>
+            {respond_block}
+        </div>
+        """
+
+    subtitle = "Ставь задачи, следи за ответами и сроками в одном месте." if is_admin_role(current_user) else "Здесь живут только твои задачи. Обновляй статус и оставляй ответ прямо в карточке."
+    content = f"""
+    {message_html}
+    <div class="panel compact-panel">
+        <div class="panel-title">Tasks center</div>
+        <div class="panel-subtitle">{subtitle}</div>
+    </div>
+
+    <div class="panel compact-panel">
+        <div class="stats-grid">
+            <div class="stat-card"><div class="name">Tasks</div><div class="value">{len(rows)}</div></div>
+            <div class="stat-card"><div class="name">Open</div><div class="value">{my_open}</div></div>
+            <div class="stat-card"><div class="name">Answered</div><div class="value">{answered}</div></div>
+            <div class="stat-card"><div class="name">Overdue</div><div class="value">{overdue}</div></div>
+        </div>
+    </div>
+
+    <div class="tasks-layout">
+        {create_block}
+        <div>
+            <div class="panel compact-panel filters">
+                <div class="panel-title">Фильтры</div>
+                <form method="get" action="/tasks">
+                    {assignee_filter_rendered}
+                    <label>Статус<select name="status">{status_options_html}</select></label>
+                    <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="Поиск по задачам"></label>
+                    <button type="submit">Фильтровать</button>
+                    <a href="/tasks" class="ghost-btn">Сбросить</a>
+                </form>
+            </div>
+            <div class="task-stack">{task_cards if task_cards else '<div class="panel">Нет задач</div>'}</div>
+        </div>
+    </div>
+    """
+    return page_shell("Tasks", content, active_page="tasks", current_user=current_user)
+
+
 def render_dev_page(title, emoji, active_page, current_user=None):
     content = f'''
     <div class="empty-dev">
@@ -1718,6 +2265,118 @@ def users_page(request: Request, edit: str = Query(default=""), message: str = Q
     return users_page_html(user, success_text=message, form_data=form_data)
 
 
+@app.get("/tasks", response_class=HTMLResponse)
+def tasks_page(
+    request: Request,
+    status: str = Query(default=""),
+    assignee: str = Query(default=""),
+    search: str = Query(default=""),
+    message: str = Query(default=""),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "tasks")
+    rows = get_tasks_for_user(user, status_filter=status, assignee_filter=assignee, search=search)
+    return tasks_page_html(
+        user,
+        rows,
+        filter_values={"status": status, "assignee": assignee, "search": search},
+        success_text=message,
+    )
+
+
+@app.post("/tasks/save")
+def save_task(
+    request: Request,
+    assigned_to_username: str = Form(...),
+    title: str = Form(...),
+    description: str = Form(default=""),
+    due_at: str = Form(default=""),
+    notes: str = Form(default=""),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    require_any_role(user, "superadmin", "admin")
+    Base.metadata.create_all(bind=engine, tables=[TaskRow.__table__])
+
+    clean_title = safe_text(title)
+    clean_assignee = safe_text(assigned_to_username)
+    form_data = {
+        "assigned_to_username": clean_assignee,
+        "title": title,
+        "description": description,
+        "due_at": due_at,
+        "notes": notes,
+    }
+    if not clean_title or not clean_assignee:
+        rows = get_tasks_for_user(user)
+        return HTMLResponse(tasks_page_html(user, rows, form_data=form_data, error_text="Заполни задачу и выбери исполнителя."), status_code=400)
+
+    db = SessionLocal()
+    try:
+        target_user = db.query(User).filter(User.username == clean_assignee, User.is_active == 1).first()
+        if not target_user or target_user.role not in {"buyer", "operator", "finance"}:
+            rows = get_tasks_for_user(user)
+            return HTMLResponse(tasks_page_html(user, rows, form_data=form_data, error_text="Можно ставить задачи только buyer, operator или finance."), status_code=400)
+        now = datetime.utcnow()
+        db.add(TaskRow(
+            title=clean_title,
+            description=safe_text(description),
+            assigned_to_username=target_user.username,
+            assigned_to_name=target_user.display_name or target_user.username,
+            assigned_to_role=target_user.role or "",
+            created_by_username=user.get("username", ""),
+            created_by_name=user.get("display_name", user.get("username", "")),
+            status="Не начато",
+            due_at=parse_datetime_local(due_at),
+            response_text="",
+            notes=safe_text(notes),
+            created_at=now,
+            updated_at=now,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    return RedirectResponse(url="/tasks?message=Задача поставлена", status_code=303)
+
+
+@app.post("/tasks/respond")
+def respond_task(
+    request: Request,
+    task_id: str = Form(...),
+    status: str = Form(...),
+    response_text: str = Form(default=""),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "tasks")
+    Base.metadata.create_all(bind=engine, tables=[TaskRow.__table__])
+    if status not in get_task_status_options():
+        return RedirectResponse(url="/tasks?message=Неизвестный статус", status_code=303)
+
+    db = SessionLocal()
+    try:
+        task = db.query(TaskRow).filter(TaskRow.id == safe_number(task_id)).first()
+        if not task:
+            return RedirectResponse(url="/tasks?message=Задача не найдена", status_code=303)
+        if not is_admin_role(user) and task.assigned_to_username != user.get("username"):
+            raise HTTPException(status_code=403)
+        task.status = status
+        task.response_text = safe_text(response_text)
+        task.updated_at = datetime.utcnow()
+        task.answered_at = datetime.utcnow() if task.response_text else None
+        db.add(task)
+        db.commit()
+    finally:
+        db.close()
+
+    return RedirectResponse(url="/tasks?message=Ответ сохранен", status_code=303)
+
+
 @app.post("/users/save")
 def save_user(
     request: Request,
@@ -1747,7 +2406,7 @@ def save_user(
         "is_active": "1" if is_active == "1" else "0",
     }
 
-    if clean_role not in {"superadmin", "admin", "buyer", "operator"}:
+    if clean_role not in {"superadmin", "admin", "buyer", "operator", "finance"}:
         return HTMLResponse(users_page_html(user, error_text="Неизвестная роль.", form_data=form_data), status_code=400)
     if not clean_display_name or not clean_username:
         return HTMLResponse(users_page_html(user, error_text="Display name и username обязательны.", form_data=form_data), status_code=400)
@@ -2306,8 +2965,8 @@ def finance_page(request: Request):
     user = get_current_user(request)
     if not user:
         return auth_redirect_response()
-    enforce_page_access(user, "finance")
-    return render_dev_page("Finance", "💸", "finance", current_user=user)
+    require_any_role(user, "superadmin")
+    return finance_page_html(user)
 
 
 @app.get("/caps", response_class=HTMLResponse)
