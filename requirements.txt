@@ -1,2 +1,6 @@
-flask
+fastapi
+uvicorn
 gunicorn
+sqlalchemy
+pandas
+python-multipart
