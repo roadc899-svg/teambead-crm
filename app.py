@@ -137,6 +137,43 @@ class TaskRow(Base):
     answered_at = Column(DateTime, nullable=True)
 
 
+class FinanceWalletRow(Base):
+    __tablename__ = "finance_wallet_rows"
+
+    id = Column(Integer, primary_key=True, index=True)
+    category = Column(String, default="")
+    description = Column(String, default="")
+    owner_name = Column(String, default="")
+    wallet = Column(String, default="")
+    amount = Column(Float, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class FinanceExpenseRow(Base):
+    __tablename__ = "finance_expense_rows"
+
+    id = Column(Integer, primary_key=True, index=True)
+    expense_date = Column(String, default="")
+    category = Column(String, default="")
+    amount = Column(Float, default=0)
+    paid_by = Column(String, default="")
+    comment = Column(String, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class FinanceIncomeRow(Base):
+    __tablename__ = "finance_income_rows"
+
+    id = Column(Integer, primary_key=True, index=True)
+    income_date = Column(String, default="")
+    category = Column(String, default="")
+    description = Column(String, default="")
+    amount = Column(Float, default=0)
+    wallet = Column(String, default="")
+    reconciliation = Column(String, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 Base.metadata.create_all(bind=engine)
 
 
@@ -772,6 +809,55 @@ def format_datetime_human(value):
         return "Без срока"
 
 
+def build_task_datetime_selects(prefix: str, selected_value: str = ""):
+    selected_dt = parse_datetime_local(selected_value) if selected_value else None
+    today = datetime(2026, 3, 26, 12, 0)
+    default_dt = selected_dt or today
+
+    year_html = ""
+    for year in [2026, 2027]:
+        selected = "selected" if default_dt.year == year else ""
+        year_html += f'<option value="{year}" {selected}>{year}</option>'
+
+    month_html = ""
+    for month in range(1, 13):
+        selected = "selected" if default_dt.month == month else ""
+        month_html += f'<option value="{month}" {selected}>{month:02d}</option>'
+
+    day_html = ""
+    for day in range(1, 32):
+        selected = "selected" if default_dt.day == day else ""
+        day_html += f'<option value="{day}" {selected}>{day:02d}</option>'
+
+    hour_html = ""
+    for hour in range(0, 24):
+        selected = "selected" if default_dt.hour == hour else ""
+        hour_html += f'<option value="{hour}" {selected}>{hour:02d}</option>'
+
+    minute_html = ""
+    for minute in [0, 15, 30, 45]:
+        selected = "selected" if default_dt.minute == minute else ""
+        minute_html += f'<option value="{minute}" {selected}>{minute:02d}</option>'
+
+    return f"""
+    <div class="datetime-grid">
+        <label>Год<select name="{prefix}_year">{year_html}</select></label>
+        <label>Месяц<select name="{prefix}_month">{month_html}</select></label>
+        <label>День<select name="{prefix}_day">{day_html}</select></label>
+        <label>Час<select name="{prefix}_hour">{hour_html}</select></label>
+        <label>Мин<select name="{prefix}_minute">{minute_html}</select></label>
+    </div>
+    """
+
+
+def compose_task_datetime_from_form(year: str, month: str, day: str, hour: str, minute: str):
+    try:
+        dt = datetime(int(year), int(month), int(day), int(hour), int(minute))
+    except Exception:
+        return ""
+    return dt.strftime("%Y-%m-%dT%H:%M")
+
+
 def parse_money_value(value):
     text = safe_text(value).replace("$", "").replace("\xa0", "").replace(" ", "").replace(",", ".")
     if not text:
@@ -917,6 +1003,60 @@ def get_tasks_for_user(current_user, status_filter="", assignee_filter="", searc
     return filtered
 
 
+def ensure_finance_tables():
+    Base.metadata.create_all(bind=engine, tables=[
+        FinanceWalletRow.__table__,
+        FinanceExpenseRow.__table__,
+        FinanceIncomeRow.__table__,
+    ])
+
+
+def load_manual_finance():
+    ensure_finance_tables()
+    db = SessionLocal()
+    try:
+        return {
+            "wallets": db.query(FinanceWalletRow).order_by(FinanceWalletRow.id.desc()).all(),
+            "expenses": db.query(FinanceExpenseRow).order_by(FinanceExpenseRow.id.desc()).all(),
+            "income": db.query(FinanceIncomeRow).order_by(FinanceIncomeRow.id.desc()).all(),
+        }
+    finally:
+        db.close()
+
+
+def build_finance_form_data(wallet_item=None, expense_item=None, income_item=None):
+    data = {}
+    if wallet_item:
+        data.update({
+            "wallet_edit_id": str(wallet_item.id),
+            "wallet_category": wallet_item.category or "",
+            "wallet_description": wallet_item.description or "",
+            "wallet_owner_name": wallet_item.owner_name or "",
+            "wallet_wallet": wallet_item.wallet or "",
+            "wallet_amount": format_int_or_float(wallet_item.amount),
+        })
+    if expense_item:
+        data.update({
+            "expense_edit_id": str(expense_item.id),
+            "expense_date": expense_item.expense_date or "",
+            "expense_category": expense_item.category or "",
+            "expense_amount": format_int_or_float(expense_item.amount),
+            "expense_paid_by": expense_item.paid_by or "",
+            "expense_comment": expense_item.comment or "",
+        })
+    if income_item:
+        data.update({
+            "income_edit_id": str(income_item.id),
+            "income_date": income_item.income_date or "",
+            "income_category": income_item.category or "",
+            "income_description": income_item.description or "",
+            "income_amount": format_int_or_float(income_item.amount),
+            "income_wallet": income_item.wallet or "",
+            "income_reconciliation": income_item.reconciliation or "",
+        })
+    return data
+
+
 # =========================================
 # BLOCK 6 — AGGREGATION
 # =========================================
@@ -1002,11 +1142,11 @@ def aggregate_for_hierarchy(rows, keys):
 def sidebar_html(active_page, current_user=None):
     items = [
         ("grouped", "/grouped", "📘", "FB", [("/grouped", "Export", active_page == "grouped"), ("/hierarchy", "Statistic", active_page == "hierarchy")]),
-        ("tasks", "/tasks", "✅", "Tasks", []),
         ("finance", "/finance", "💸", "Finance", []),
         ("caps", "/caps", "🧢", "Caps", []),
         ("chatterfy", "/chatterfy", "💬", "Chatterfy", []),
         ("holdwager", "/hold-wager", "🎯", "Hold/Wager", []),
+        ("tasks", "/tasks", "✅", "Tasks", []),
         ("users", "/users", "🧑", "Users", []),
     ]
 
@@ -1446,6 +1586,7 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 outline:none;
             }}
             .tasks-form textarea {{ min-height: 110px; resize: vertical; }}
+            .datetime-grid {{ display:grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap:10px; }}
             .task-stack {{ display:grid; gap:14px; }}
             .task-card {{
                 border:1px solid var(--border);
@@ -1502,6 +1643,7 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 .tasks-layout {{ grid-template-columns: 1fr; }}
                 .task-body {{ grid-template-columns: 1fr; }}
                 .finance-grid {{ grid-template-columns: 1fr; }}
+                .datetime-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
             }}
             @media (max-width: 900px) {{
                 .app {{ display: block; }}
@@ -1645,26 +1787,28 @@ def users_page_html(current_user, error_text="", success_text="", form_data=None
     role_value = (form_data.get("role") or "buyer").strip() or "buyer"
     active_checked = "checked" if str(form_data.get("is_active", "1")) == "1" else ""
     current_edit_id = str(form_data.get("edit_user_id") or "")
-
-    role_cards = [
-        ("superadmin", "Полный доступ ко всем страницам и управлению пользователями."),
-        ("admin", "Доступ к CRM, загрузке CSV, экспорту и управлению пользователями."),
-        ("buyer", "Видит только свои данные по привязанному Buyer без загрузки и экспорта."),
-        ("operator", "Может смотреть FB страницы без доступа к загрузке, CSV и админке."),
-        ("finance", "Получает задачи от админов и работает как отдельный исполнитель."),
+    role_options = [
+        ("superadmin", "superadmin"),
+        ("admin", "admin"),
+        ("buyer", "buyer"),
+        ("operator", "operator"),
+        ("finance", "finance"),
     ]
-    role_html = ""
-    for value, description in role_cards:
-        checked = "checked" if role_value == value else ""
-        role_html += f'''
-        <label class="role-option">
-            <input type="radio" name="role" value="{value}" {checked}>
-            <span><strong>{value}</strong><br><span class="muted">{description}</span></span>
-        </label>
-        '''
+    role_html = "".join([
+        f'<option value="{value}" {"selected" if role_value == value else ""}>{label}</option>'
+        for value, label in role_options
+    ])
 
     rows_html = ""
     for item in users:
+        delete_form = ""
+        if item.username != (current_user or {}).get("username"):
+            delete_form = f"""
+            <form method="post" action="/users/delete" onsubmit="return confirm('Удалить пользователя?');">
+                <input type="hidden" name="user_id" value="{item.id}">
+                <button type="submit" class="ghost-btn small-btn">Delete</button>
+            </form>
+            """
         rows_html += f"""
         <tr>
             <td>{item.id}</td>
@@ -1674,10 +1818,13 @@ def users_page_html(current_user, error_text="", success_text="", form_data=None
             <td>{escape(item.buyer_name or "—")}</td>
             <td><span class="status-dot {'off' if not item.is_active else ''}"></span> {'Active' if item.is_active else 'Disabled'}</td>
             <td>
-                <form method="get" action="/users">
-                    <input type="hidden" name="edit" value="{item.id}">
-                    <button type="submit" class="ghost-btn small-btn">Edit</button>
-                </form>
+                <div class="caps-actions">
+                    <form method="get" action="/users">
+                        <input type="hidden" name="edit" value="{item.id}">
+                        <button type="submit" class="ghost-btn small-btn">Edit</button>
+                    </form>
+                    {delete_form}
+                </div>
             </td>
         </tr>
         """
@@ -1696,7 +1843,7 @@ def users_page_html(current_user, error_text="", success_text="", form_data=None
     <div class="users-layout">
         <div class="panel">
             <div class="panel-title">{mode_title}</div>
-            <div class="panel-subtitle">Роли и привязка Buyer теперь настраиваются прямо из CRM.</div>
+            <div class="panel-subtitle">Роль, логин и buyer в одном месте.</div>
             <form method="post" action="/users/save" class="users-form" style="margin-top:14px;">
                 <input type="hidden" name="edit_user_id" value="{escape(current_edit_id)}">
                 <label>Display name
@@ -1711,13 +1858,12 @@ def users_page_html(current_user, error_text="", success_text="", form_data=None
                 <label>Buyer binding
                     <input type="text" name="buyer_name" value="{escape(form_data.get('buyer_name', ''))}" placeholder="Например: TeamBead1">
                 </label>
-                <div>
-                    <div class="panel-title" style="margin-bottom:8px;">Роль</div>
-                    <div class="role-grid">{role_html}</div>
-                </div>
+                <label>Role
+                    <select name="role">{role_html}</select>
+                </label>
                 <label class="role-option">
                     <input type="checkbox" name="is_active" value="1" {active_checked}>
-                    <span><strong>Активный пользователь</strong><br><span class="muted">Если выключить, логин перестанет работать.</span></span>
+                    <span><strong>Активный</strong><br><span class="muted">Можно войти в систему.</span></span>
                 </label>
                 <div style="display:flex; gap:10px; flex-wrap:wrap;">
                     <button type="submit" class="btn">{submit_label}</button>
@@ -1729,8 +1875,8 @@ def users_page_html(current_user, error_text="", success_text="", form_data=None
         <div class="panel">
             <div class="controls-line">
                 <div>
-                    <div class="panel-title" style="margin-bottom:4px;">Users access matrix</div>
-                    <div class="panel-subtitle">Buyer видит только свой buyer, operator только смотрит, admin управляет.</div>
+                    <div class="panel-title" style="margin-bottom:4px;">Users</div>
+                    <div class="panel-subtitle">Список сотрудников и доступов.</div>
                 </div>
             </div>
             <div class="table-wrap">
@@ -1976,8 +2122,10 @@ def render_finance_table(title, subtitle, headers, rows_html, min_width="980px")
     """
 
 
-def finance_page_html(current_user):
+def finance_page_html(current_user, success_text="", error_text="", form_data=None):
     snapshot = load_finance_snapshot()
+    manual = load_manual_finance()
+    form_data = form_data or {}
 
     wallet_rows = ""
     for item in snapshot["wallets"]:
@@ -2041,7 +2189,96 @@ def finance_page_html(current_user):
         </tr>
         """
 
+    manual_wallet_rows = ""
+    for item in manual["wallets"]:
+        manual_wallet_rows += f"""
+        <tr>
+            <td>{item.id}</td>
+            <td>{escape(item.category or "")}</td>
+            <td>{escape(item.description or "")}</td>
+            <td>{escape(item.owner_name or "")}</td>
+            <td class="wallet-code">{escape(item.wallet or "")}</td>
+            <td>{format_money(item.amount)}</td>
+            <td>
+                <div class="caps-actions">
+                    <form method="get" action="/finance">
+                        <input type="hidden" name="edit_wallet" value="{item.id}">
+                        <button type="submit" class="ghost-btn small-btn">Edit</button>
+                    </form>
+                    <form method="post" action="/finance/wallets/delete" onsubmit="return confirm('Удалить кошелек?');">
+                        <input type="hidden" name="wallet_id" value="{item.id}">
+                        <button type="submit" class="ghost-btn small-btn">Delete</button>
+                    </form>
+                </div>
+            </td>
+        </tr>
+        """
+
+    manual_expense_rows = ""
+    for item in manual["expenses"]:
+        manual_expense_rows += f"""
+        <tr>
+            <td>{item.id}</td>
+            <td>{escape(item.expense_date or "")}</td>
+            <td>{escape(item.category or "")}</td>
+            <td>{format_money(item.amount)}</td>
+            <td>{escape(item.paid_by or "")}</td>
+            <td>{escape(item.comment or "")}</td>
+            <td>
+                <div class="caps-actions">
+                    <form method="get" action="/finance">
+                        <input type="hidden" name="edit_expense" value="{item.id}">
+                        <button type="submit" class="ghost-btn small-btn">Edit</button>
+                    </form>
+                    <form method="post" action="/finance/expenses/delete" onsubmit="return confirm('Удалить расход?');">
+                        <input type="hidden" name="expense_id" value="{item.id}">
+                        <button type="submit" class="ghost-btn small-btn">Delete</button>
+                    </form>
+                </div>
+            </td>
+        </tr>
+        """
+
+    manual_income_rows = ""
+    for item in manual["income"]:
+        manual_income_rows += f"""
+        <tr>
+            <td>{item.id}</td>
+            <td>{escape(item.income_date or "")}</td>
+            <td>{escape(item.category or "")}</td>
+            <td>{escape(item.description or "")}</td>
+            <td>{format_money(item.amount)}</td>
+            <td class="wallet-code">{escape(item.wallet or "")}</td>
+            <td>{escape(item.reconciliation or "")}</td>
+            <td>
+                <div class="caps-actions">
+                    <form method="get" action="/finance">
+                        <input type="hidden" name="edit_income" value="{item.id}">
+                        <button type="submit" class="ghost-btn small-btn">Edit</button>
+                    </form>
+                    <form method="post" action="/finance/income/delete" onsubmit="return confirm('Удалить приход?');">
+                        <input type="hidden" name="income_id" value="{item.id}">
+                        <button type="submit" class="ghost-btn small-btn">Delete</button>
+                    </form>
+                </div>
+            </td>
+        </tr>
+        """
+
+    manual_wallet_total = sum(safe_number(item.amount) for item in manual["wallets"])
+    manual_expense_total = sum(safe_number(item.amount) for item in manual["expenses"])
+    manual_income_total = sum(safe_number(item.amount) for item in manual["income"])
+    wallet_submit_label = "Сохранить изменения" if form_data.get("wallet_edit_id") else "Сохранить кошелек"
+    expense_submit_label = "Сохранить изменения" if form_data.get("expense_edit_id") else "Сохранить расход"
+    income_submit_label = "Сохранить изменения" if form_data.get("income_edit_id") else "Сохранить приход"
+    message_html = ""
+    if success_text:
+        message_html += f'<div class="notice">{escape(success_text)}</div>'
+    if error_text:
+        message_html += f'<div class="notice notice-danger">{escape(error_text)}</div>'
+
     content = f"""
+    {message_html}
     <div class="panel compact-panel">
         <div class="panel-title">Finance control</div>
         <div class="panel-subtitle">Кошельки, остатки, расход, приход, ожидание и перемещения. Источник: {escape(snapshot['source_path'])}</div>
@@ -2058,6 +2295,82 @@ def finance_page_html(current_user):
     </div>
 
     {render_finance_table("Wallets", "Текущие кошельки и остатки", '<th>Категория</th><th>Описание</th><th>Метка</th><th>Кошелек</th><th>Сумма</th>', wallet_rows, "1150px")}
+
+    <div class="panel compact-panel">
+        <div class="panel-title">Manual finance</div>
+        <div class="panel-subtitle">Пока можно все вносить руками: кошельки, расходы и приходы.</div>
+    </div>
+
+    <div class="finance-grid">
+        <div class="panel">
+            <div class="panel-title">{'Редактировать кошелек' if form_data.get('wallet_edit_id') else 'Добавить кошелек'}</div>
+            <form method="post" action="/finance/wallets/save" class="caps-form" style="margin-top:14px;">
+                <input type="hidden" name="edit_id" value="{escape(form_data.get('wallet_edit_id', ''))}">
+                <label>Категория<input type="text" name="category" value="{escape(form_data.get('wallet_category', ''))}" placeholder="Binance"></label>
+                <label>Описание<input type="text" name="description" value="{escape(form_data.get('wallet_description', ''))}" placeholder="Банк"></label>
+                <label>Метка<input type="text" name="owner_name" value="{escape(form_data.get('wallet_owner_name', ''))}" placeholder="Ivan"></label>
+                <label>Кошелек<input type="text" name="wallet" value="{escape(form_data.get('wallet_wallet', ''))}" placeholder="Адрес кошелька"></label>
+                <label>Сумма<input type="number" step="0.01" name="amount" value="{escape(form_data.get('wallet_amount', ''))}" placeholder="0.00"></label>
+                <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                    <button type="submit" class="btn">{wallet_submit_label}</button>
+                    <a href="/finance" class="ghost-btn">Сбросить</a>
+                </div>
+            </form>
+        </div>
+        <div class="panel">
+            <div class="panel-title">{'Редактировать расход' if form_data.get('expense_edit_id') else 'Добавить расход'}</div>
+            <form method="post" action="/finance/expenses/save" class="caps-form" style="margin-top:14px;">
+                <input type="hidden" name="edit_id" value="{escape(form_data.get('expense_edit_id', ''))}">
+                <label>Дата<input type="text" name="expense_date" value="{escape(form_data.get('expense_date', ''))}" placeholder="26.03"></label>
+                <label>Категория<input type="text" name="category" value="{escape(form_data.get('expense_category', ''))}" placeholder="Сервисы"></label>
+                <label>Сумма<input type="number" step="0.01" name="amount" value="{escape(form_data.get('expense_amount', ''))}" placeholder="0.00"></label>
+                <label>Кто оплатил<input type="text" name="paid_by" value="{escape(form_data.get('expense_paid_by', ''))}" placeholder="Кошелек или человек"></label>
+                <label>Комментарий<textarea name="comment">{escape(form_data.get('expense_comment', ''))}</textarea></label>
+                <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                    <button type="submit" class="btn">{expense_submit_label}</button>
+                    <a href="/finance" class="ghost-btn">Сбросить</a>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-title">{'Редактировать приход' if form_data.get('income_edit_id') else 'Добавить приход'}</div>
+        <form method="post" action="/finance/income/save" class="caps-form" style="margin-top:14px;">
+            <input type="hidden" name="edit_id" value="{escape(form_data.get('income_edit_id', ''))}">
+            <div class="caps-grid-2">
+                <label>Дата<input type="text" name="income_date" value="{escape(form_data.get('income_date', ''))}" placeholder="26.03"></label>
+                <label>Категория<input type="text" name="category" value="{escape(form_data.get('income_category', ''))}" placeholder="TeamBead"></label>
+            </div>
+            <div class="caps-grid-2">
+                <label>Описание<input type="text" name="description" value="{escape(form_data.get('income_description', ''))}" placeholder="PE, CO"></label>
+                <label>Сумма<input type="number" step="0.01" name="amount" value="{escape(form_data.get('income_amount', ''))}" placeholder="0.00"></label>
+            </div>
+            <div class="caps-grid-2">
+                <label>Кошелек<input type="text" name="wallet" value="{escape(form_data.get('income_wallet', ''))}" placeholder="Куда пришло"></label>
+                <label>Сверка<input type="text" name="reconciliation" value="{escape(form_data.get('income_reconciliation', ''))}" placeholder="OK / pending"></label>
+            </div>
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                <button type="submit" class="btn">{income_submit_label}</button>
+                <a href="/finance" class="ghost-btn">Сбросить</a>
+            </div>
+        </form>
+    </div>
+
+    <div class="panel compact-panel">
+        <div class="stats-grid">
+            <div class="stat-card"><div class="name">Manual Wallets</div><div class="value">{format_money(manual_wallet_total)}</div></div>
+            <div class="stat-card"><div class="name">Manual Expenses</div><div class="value">{format_money(manual_expense_total)}</div></div>
+            <div class="stat-card"><div class="name">Manual Income</div><div class="value">{format_money(manual_income_total)}</div></div>
+        </div>
+    </div>
+
+    {render_finance_table("Manual wallets", "Ручной список кошельков", '<th>ID</th><th>Категория</th><th>Описание</th><th>Метка</th><th>Кошелек</th><th>Сумма</th><th>Action</th>', manual_wallet_rows, "1240px")}
+
+    <div class="finance-grid">
+        {render_finance_table("Manual expenses", "Ручные расходы", '<th>ID</th><th>Дата</th><th>Категория</th><th>Сумма</th><th>Кто оплатил</th><th>Комментарий</th><th>Action</th>', manual_expense_rows, "1160px")}
+        {render_finance_table("Manual income", "Ручные приходы", '<th>ID</th><th>Дата</th><th>Категория</th><th>Описание</th><th>Сумма</th><th>Кошель</th><th>Сверка</th><th>Action</th>', manual_income_rows, "1240px")}
+    </div>
 
     <div class="finance-grid">
         {render_finance_table("Расход", "Кто и за что оплачивал", '<th>Дата</th><th>Категория</th><th>Сумма</th><th>Кто оплатил</th><th>Комментарий</th>', expense_rows)}
@@ -2108,10 +2421,11 @@ def tasks_page_html(current_user, rows, filter_values=None, form_data=None, succ
 
     create_block = ""
     if is_admin_role(current_user):
+        due_selects = build_task_datetime_selects("due", form_data.get("due_at", ""))
         create_block = f"""
         <div class="panel">
             <div class="panel-title">Новая задача</div>
-            <div class="panel-subtitle">Поставь задачу buyer / operator / finance и сразу зафиксируй дедлайн и ожидание по ответу.</div>
+            <div class="panel-subtitle">Поставь задачу и сразу выбери дедлайн.</div>
             <form method="post" action="/tasks/save" class="tasks-form" style="margin-top:14px;">
                 <label>Кому
                     <select name="assigned_to_username" required>{assign_options}</select>
@@ -2122,9 +2436,10 @@ def tasks_page_html(current_user, rows, filter_values=None, form_data=None, succ
                 <label>Описание
                     <textarea name="description" placeholder="Что нужно сделать, какой результат ожидается">{escape(form_data.get('description', ''))}</textarea>
                 </label>
-                <label>Срок выполнения
-                    <input type="datetime-local" name="due_at" value="{escape(form_data.get('due_at', ''))}">
-                </label>
+                <div>
+                    <div class="panel-subtitle" style="margin-bottom:8px;">Срок выполнения</div>
+                    {due_selects}
+                </div>
                 <label>Примечания
                     <textarea name="notes" placeholder="Дополнительный контекст, ссылки, договоренности">{escape(form_data.get('notes', ''))}</textarea>
                 </label>
@@ -2143,6 +2458,14 @@ def tasks_page_html(current_user, rows, filter_values=None, form_data=None, succ
             admin_controls = f'<div class="task-chip">Исполнитель: {escape(row.assigned_to_name or row.assigned_to_username)} · {escape(row.assigned_to_role or "")}</div>'
         respond_block = ""
         if row.assigned_to_username == (current_user or {}).get("username") or is_admin_role(current_user):
+            delete_block = ""
+            if is_admin_role(current_user):
+                delete_block = f"""
+                <form method="post" action="/tasks/delete" style="margin-top:10px;" onsubmit="return confirm('Удалить задачу?');">
+                    <input type="hidden" name="task_id" value="{row.id}">
+                    <button type="submit" class="ghost-btn small-btn">Delete task</button>
+                </form>
+                """
             respond_block = f"""
             <form method="post" action="/tasks/respond" class="tasks-form" style="margin-top:14px;">
                 <input type="hidden" name="task_id" value="{row.id}">
@@ -2156,6 +2479,7 @@ def tasks_page_html(current_user, rows, filter_values=None, form_data=None, succ
                 </label>
                 <button type="submit" class="btn">Сохранить ответ</button>
             </form>
+            {delete_block}
             """
         task_cards += f"""
         <div class="task-card">
@@ -2292,7 +2616,11 @@ def save_task(
     assigned_to_username: str = Form(...),
     title: str = Form(...),
     description: str = Form(default=""),
-    due_at: str = Form(default=""),
+    due_year: str = Form(default="2026"),
+    due_month: str = Form(default="3"),
+    due_day: str = Form(default="26"),
+    due_hour: str = Form(default="12"),
+    due_minute: str = Form(default="0"),
     notes: str = Form(default=""),
 ):
     user = get_current_user(request)
@@ -2303,6 +2631,7 @@ def save_task(
 
     clean_title = safe_text(title)
     clean_assignee = safe_text(assigned_to_username)
+    due_at = compose_task_datetime_from_form(due_year, due_month, due_day, due_hour, due_minute)
     form_data = {
         "assigned_to_username": clean_assignee,
         "title": title,
@@ -2341,6 +2670,22 @@ def save_task(
         db.close()
 
     return RedirectResponse(url="/tasks?message=Задача поставлена", status_code=303)
+
+
+@app.post("/tasks/delete")
+def delete_task(request: Request, task_id: str = Form(...)):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    require_any_role(user, "superadmin", "admin")
+    Base.metadata.create_all(bind=engine, tables=[TaskRow.__table__])
+    db = SessionLocal()
+    try:
+        db.query(TaskRow).filter(TaskRow.id == safe_number(task_id)).delete()
+        db.commit()
+    finally:
+        db.close()
+    return RedirectResponse(url="/tasks?message=Задача удалена", status_code=303)
 
 
 @app.post("/tasks/respond")
@@ -2441,6 +2786,28 @@ def save_user(
         db.close()
 
     return RedirectResponse(url="/users?message=Пользователь сохранен", status_code=303)
+
+
+@app.post("/users/delete")
+def delete_user(request: Request, user_id: str = Form(...)):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "users")
+    db = SessionLocal()
+    try:
+        target_user = db.query(User).filter(User.id == safe_number(user_id)).first()
+        if not target_user:
+            return RedirectResponse(url="/users?message=Пользователь не найден", status_code=303)
+        if target_user.username == user.get("username"):
+            return RedirectResponse(url="/users?message=Нельзя удалить самого себя", status_code=303)
+        db.query(UserSession).filter(UserSession.username == target_user.username).delete()
+        db.query(TaskRow).filter(TaskRow.assigned_to_username == target_user.username).delete()
+        db.delete(target_user)
+        db.commit()
+    finally:
+        db.close()
+    return RedirectResponse(url="/users?message=Пользователь удален", status_code=303)
 
 
 # =========================================
@@ -2961,12 +3328,202 @@ def show_hierarchy(
 # BLOCK 12 — PLACEHOLDERS
 # =========================================
 @app.get("/finance", response_class=HTMLResponse)
-def finance_page(request: Request):
+def finance_page(
+    request: Request,
+    message: str = Query(default=""),
+    edit_wallet: str = Query(default=""),
+    edit_expense: str = Query(default=""),
+    edit_income: str = Query(default=""),
+):
     user = get_current_user(request)
     if not user:
         return auth_redirect_response()
     require_any_role(user, "superadmin")
-    return finance_page_html(user)
+    ensure_finance_tables()
+    form_data = {}
+    db = SessionLocal()
+    try:
+        wallet_item = db.query(FinanceWalletRow).filter(FinanceWalletRow.id == safe_number(edit_wallet)).first() if edit_wallet else None
+        expense_item = db.query(FinanceExpenseRow).filter(FinanceExpenseRow.id == safe_number(edit_expense)).first() if edit_expense else None
+        income_item = db.query(FinanceIncomeRow).filter(FinanceIncomeRow.id == safe_number(edit_income)).first() if edit_income else None
+        form_data = build_finance_form_data(wallet_item=wallet_item, expense_item=expense_item, income_item=income_item)
+    finally:
+        db.close()
+    return finance_page_html(user, success_text=message, form_data=form_data)
+
+
+@app.post("/finance/wallets/save")
+def save_finance_wallet(
+    request: Request,
+    edit_id: str = Form(default=""),
+    category: str = Form(default=""),
+    description: str = Form(default=""),
+    owner_name: str = Form(default=""),
+    wallet: str = Form(default=""),
+    amount: str = Form(default="0"),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    require_any_role(user, "superadmin")
+    ensure_finance_tables()
+    form_data = {
+        "wallet_category": category,
+        "wallet_description": description,
+        "wallet_owner_name": owner_name,
+        "wallet_wallet": wallet,
+        "wallet_amount": amount,
+    }
+    if not safe_text(wallet):
+        return HTMLResponse(finance_page_html(user, error_text="Укажи кошелек.", form_data=form_data), status_code=400)
+    db = SessionLocal()
+    try:
+        item = db.query(FinanceWalletRow).filter(FinanceWalletRow.id == safe_number(edit_id)).first() if edit_id else None
+        if not item:
+            item = FinanceWalletRow()
+            db.add(item)
+        item.category = safe_text(category)
+        item.description = safe_text(description)
+        item.owner_name = safe_text(owner_name)
+        item.wallet = safe_text(wallet)
+        item.amount = safe_cap_number(amount)
+        db.commit()
+    finally:
+        db.close()
+    return RedirectResponse(url="/finance?message=Кошелек сохранен", status_code=303)
+
+
+@app.post("/finance/expenses/save")
+def save_finance_expense(
+    request: Request,
+    edit_id: str = Form(default=""),
+    expense_date: str = Form(default=""),
+    category: str = Form(default=""),
+    amount: str = Form(default="0"),
+    paid_by: str = Form(default=""),
+    comment: str = Form(default=""),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    require_any_role(user, "superadmin")
+    ensure_finance_tables()
+    form_data = {
+        "expense_date": expense_date,
+        "expense_category": category,
+        "expense_amount": amount,
+        "expense_paid_by": paid_by,
+        "expense_comment": comment,
+    }
+    if safe_cap_number(amount) <= 0:
+        return HTMLResponse(finance_page_html(user, error_text="Сумма расхода должна быть больше 0.", form_data=form_data), status_code=400)
+    db = SessionLocal()
+    try:
+        item = db.query(FinanceExpenseRow).filter(FinanceExpenseRow.id == safe_number(edit_id)).first() if edit_id else None
+        if not item:
+            item = FinanceExpenseRow()
+            db.add(item)
+        item.expense_date = safe_text(expense_date)
+        item.category = safe_text(category)
+        item.amount = safe_cap_number(amount)
+        item.paid_by = safe_text(paid_by)
+        item.comment = safe_text(comment)
+        db.commit()
+    finally:
+        db.close()
+    return RedirectResponse(url="/finance?message=Расход сохранен", status_code=303)
+
+
+@app.post("/finance/income/save")
+def save_finance_income(
+    request: Request,
+    edit_id: str = Form(default=""),
+    income_date: str = Form(default=""),
+    category: str = Form(default=""),
+    description: str = Form(default=""),
+    amount: str = Form(default="0"),
+    wallet: str = Form(default=""),
+    reconciliation: str = Form(default=""),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    require_any_role(user, "superadmin")
+    ensure_finance_tables()
+    form_data = {
+        "income_date": income_date,
+        "income_category": category,
+        "income_description": description,
+        "income_amount": amount,
+        "income_wallet": wallet,
+        "income_reconciliation": reconciliation,
+    }
+    if safe_cap_number(amount) <= 0:
+        return HTMLResponse(finance_page_html(user, error_text="Сумма прихода должна быть больше 0.", form_data=form_data), status_code=400)
+    db = SessionLocal()
+    try:
+        item = db.query(FinanceIncomeRow).filter(FinanceIncomeRow.id == safe_number(edit_id)).first() if edit_id else None
+        if not item:
+            item = FinanceIncomeRow()
+            db.add(item)
+        item.income_date = safe_text(income_date)
+        item.category = safe_text(category)
+        item.description = safe_text(description)
+        item.amount = safe_cap_number(amount)
+        item.wallet = safe_text(wallet)
+        item.reconciliation = safe_text(reconciliation)
+        db.commit()
+    finally:
+        db.close()
+    return RedirectResponse(url="/finance?message=Приход сохранен", status_code=303)
+
+
+@app.post("/finance/wallets/delete")
+def delete_finance_wallet(request: Request, wallet_id: str = Form(...)):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    require_any_role(user, "superadmin")
+    ensure_finance_tables()
+    db = SessionLocal()
+    try:
+        db.query(FinanceWalletRow).filter(FinanceWalletRow.id == safe_number(wallet_id)).delete()
+        db.commit()
+    finally:
+        db.close()
+    return RedirectResponse(url="/finance?message=Кошелек удален", status_code=303)
+
+
+@app.post("/finance/expenses/delete")
+def delete_finance_expense(request: Request, expense_id: str = Form(...)):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    require_any_role(user, "superadmin")
+    ensure_finance_tables()
+    db = SessionLocal()
+    try:
+        db.query(FinanceExpenseRow).filter(FinanceExpenseRow.id == safe_number(expense_id)).delete()
+        db.commit()
+    finally:
+        db.close()
+    return RedirectResponse(url="/finance?message=Расход удален", status_code=303)
+
+
+@app.post("/finance/income/delete")
+def delete_finance_income(request: Request, income_id: str = Form(...)):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    require_any_role(user, "superadmin")
+    ensure_finance_tables()
+    db = SessionLocal()
+    try:
+        db.query(FinanceIncomeRow).filter(FinanceIncomeRow.id == safe_number(income_id)).delete()
+        db.commit()
+    finally:
+        db.close()
+    return RedirectResponse(url="/finance?message=Приход удален", status_code=303)
 
 
 @app.get("/caps", response_class=HTMLResponse)
