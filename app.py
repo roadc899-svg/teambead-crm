@@ -51,7 +51,7 @@ app = FastAPI()
 
 @app.get("/")
 def home():
-    return {"message": "TEAMbead CRM работает"}
+    return RedirectResponse(url="/grouped", status_code=302)
 
 
 def safe_number(value):
