@@ -6,9 +6,10 @@ import pandas as pd
 import shutil
 import uuid
 import os
+from urllib.parse import quote_plus
+from html import escape
 import io
 import csv
-from html import escape
 
 DATABASE_URL = "sqlite:///./test.db"
 
@@ -66,7 +67,7 @@ def safe_number(value):
         if isinstance(value, str):
             value = value.replace(" ", "").replace(",", ".").replace("$", "")
         return float(value)
-    except Exception:
+    except:
         return 0.0
 
 
@@ -78,21 +79,25 @@ def format_int_or_float(value):
         if value.is_integer():
             return str(int(value))
         return f"{value:.2f}".rstrip("0").rstrip(".")
-    except Exception:
+    except:
         return str(value)
 
 
 def format_money(value):
+    if value is None:
+        value = 0
     try:
-        return f"${float(value or 0):,.2f}"
-    except Exception:
+        return f"${float(value):,.2f}"
+    except:
         return "$0.00"
 
 
 def format_percent(value):
+    if value is None:
+        value = 0
     try:
-        return f"{float(value or 0):.2f}%"
-    except Exception:
+        return f"{float(value):.2f}%"
+    except:
         return "0.00%"
 
 
@@ -120,17 +125,16 @@ def parse_ad_name(ad_name):
 
 
 def calc_metrics(clicks, reg, ftd, spend):
-    clicks = float(clicks or 0)
-    reg = float(reg or 0)
-    ftd = float(ftd or 0)
-    spend = float(spend or 0)
-    leads = 0.0
+    clicks = clicks or 0
+    reg = reg or 0
+    ftd = ftd or 0
+    spend = spend or 0
 
     cpc_real = spend / clicks if clicks > 0 else 0
-    cpl_real = spend / leads if leads > 0 else 0
+    cpl_real = spend / reg if reg > 0 else 0
     cpa_real = spend / ftd if ftd > 0 else 0
-    cr_reg = (reg / clicks * 100) if clicks > 0 else 0
-    cr_ftd = (ftd / reg * 100) if reg > 0 else 0
+    cr_reg = (reg / clicks) * 100 if clicks > 0 else 0
+    cr_ftd = (ftd / clicks) * 100 if clicks > 0 else 0
 
     return {
         "cpc_real": cpc_real,
@@ -143,10 +147,9 @@ def calc_metrics(clicks, reg, ftd, spend):
 
 def get_all_rows():
     db = SessionLocal()
-    try:
-        return db.query(FBRow).all()
-    finally:
-        db.close()
+    data = db.query(FBRow).all()
+    db.close()
+    return data
 
 
 def get_filtered_data(uploader="", manager="", geo="", offer="", search=""):
@@ -231,9 +234,7 @@ def aggregate_grouped_rows(rows):
     result = list(grouped.values())
 
     for item in result:
-        metrics = calc_metrics(item["clicks"], item["reg"], item["ftd"], item["spend"])
-        item.update(metrics)
-        item["cpl_real"] = item["spend"] / item["leads"] if item["leads"] > 0 else 0
+        item.update(calc_metrics(item["clicks"], item["reg"], item["ftd"], item["spend"]))
 
     return result
 
@@ -253,8 +254,7 @@ def aggregate_totals(rows):
         "reg": total_reg,
         "ftd": total_ftd,
         "spend": total_spend,
-        "cpl_real": (total_spend / total_leads) if total_leads > 0 else 0,
-        **metrics,
+        **metrics
     }
 
 
@@ -264,13 +264,13 @@ def sidebar_html(active_page):
 
     return f"""
     <aside class="sidebar">
-        <div class="sidebar-brand">TEAMbead CRM</div>
+        <div class="sidebar-brand"><span class="brand-mark">◉</span><span>TEAMbead CRM</span></div>
 
         <details class="sidebar-group" open>
             <summary>FB</summary>
             <div class="sidebar-links">
-                <a href="/grouped" class="{grouped_active}">Сводка</a>
-                <a href="/hierarchy" class="{hierarchy_active}">Иерархия</a>
+                <a href="/grouped" class="{grouped_active}">Выгрузка</a>
+                <a href="/hierarchy" class="{hierarchy_active}">Статистика</a>
             </div>
         </details>
     </aside>
@@ -281,11 +281,9 @@ def page_shell(title, content, active_page="grouped", extra_scripts=""):
     sidebar = sidebar_html(active_page)
 
     return f"""
-    <!DOCTYPE html>
-    <html lang="ru">
+    <html>
     <head>
         <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>{title}</title>
         <style>
             :root {{
@@ -314,15 +312,41 @@ def page_shell(title, content, active_page="grouped", extra_scripts=""):
                 --lvl6: #f8fafc;
             }}
 
+            body.dark {{
+                --bg: #0b1220;
+                --panel: #111827;
+                --panel-2: #172033;
+                --text: #f8fafc;
+                --muted: #94a3b8;
+                --border: #243244;
+                --shadow: 0 8px 24px rgba(0,0,0,0.35);
+                --accent1: #a855f7;
+                --accent2: #22d3ee;
+                --accent3: #34d399;
+                --table-head: #020617;
+                --table-head-text: #ffffff;
+                --row-even: #0f172a;
+                --good: #14532d;
+                --warn: #78350f;
+                --bad: #7f1d1d;
+
+                --lvl1: #172554;
+                --lvl2: #3b0764;
+                --lvl3: #713f12;
+                --lvl4: #14532d;
+                --lvl5: #4c0519;
+                --lvl6: #1e293b;
+            }}
+
             * {{
                 box-sizing: border-box;
             }}
 
             body {{
                 margin: 0;
-                font-family: Arial, sans-serif;
-                background: var(--bg);
+                background: linear-gradient(180deg, var(--bg), #ffffff00 400px), var(--bg);
                 color: var(--text);
+                font-family: "Trebuchet MS", "Segoe UI", Arial, sans-serif;
             }}
 
             .app {{
@@ -331,155 +355,245 @@ def page_shell(title, content, active_page="grouped", extra_scripts=""):
             }}
 
             .sidebar {{
-                width: 240px;
-                background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
-                color: #fff;
-                padding: 20px 14px;
+                width: 260px;
+                background: linear-gradient(180deg, var(--panel), var(--panel-2));
+                border-right: 1px solid var(--border);
+                padding: 20px 16px;
                 box-shadow: var(--shadow);
+                position: sticky;
+                top: 0;
+                height: 100vh;
             }}
 
             .sidebar-brand {{
-                font-size: 24px;
-                font-weight: 800;
+                font-size: 26px;
+                font-weight: 900;
                 margin-bottom: 20px;
-                background: linear-gradient(90deg, #60a5fa, #22d3ee, #4ade80);
+                background: linear-gradient(90deg, var(--accent1), var(--accent2), var(--accent3));
                 -webkit-background-clip: text;
                 -webkit-text-fill-color: transparent;
+                background-clip: text;
+            }}
+
+            .sidebar-brand {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+            }
+
+            .brand-mark {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 18px;
+                height: 18px;
+                border-radius: 999px;
+                background: linear-gradient(135deg, var(--accent1), var(--accent2), var(--accent3));
+                color: transparent;
+                box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
+                flex-shrink: 0;
+            }
+
+            .sidebar-group {{
+                background: var(--panel);
+                border: 1px solid var(--border);
+                border-radius: 14px;
+                padding: 10px 12px;
             }}
 
             .sidebar-group summary {{
                 cursor: pointer;
-                font-weight: 700;
-                padding: 10px 12px;
-                border-radius: 12px;
-                background: rgba(255,255,255,0.06);
-                margin-bottom: 10px;
+                font-weight: bold;
+                font-size: 15px;
+                color: var(--text);
+                list-style: none;
+            }}
+
+            .sidebar-group summary::-webkit-details-marker {{
+                display: none;
             }}
 
             .sidebar-links {{
+                margin-top: 10px;
                 display: flex;
                 flex-direction: column;
                 gap: 8px;
-                margin-top: 10px;
             }}
 
             .sidebar-links a {{
-                color: #cbd5e1;
+                display: block;
                 text-decoration: none;
+                color: var(--text);
                 padding: 10px 12px;
                 border-radius: 10px;
-                transition: 0.2s;
+                background: transparent;
+                border: 1px solid transparent;
+                font-weight: 600;
             }}
 
-            .sidebar-links a:hover,
-            .sidebar-links a.active-link {{
-                background: rgba(96, 165, 250, 0.18);
-                color: #fff;
+            .sidebar-links a:hover {{
+                background: var(--panel-2);
+                border-color: var(--border);
+            }}
+
+            .active-link {{
+                background: linear-gradient(90deg, var(--accent1), var(--accent2));
+                color: white !important;
+                font-weight: bold;
             }}
 
             .main {{
                 flex: 1;
                 padding: 24px;
+                overflow-x: auto;
             }}
 
-            .card {{
+            .topbar {{
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                gap: 16px;
+                margin-bottom: 20px;
+                flex-wrap: wrap;
+            }}
+
+            .page-title {{
+                font-size: 36px;
+                font-weight: 900;
+                background: linear-gradient(90deg, var(--accent1), var(--accent2), var(--accent3));
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+                background-clip: text;
+            }}
+
+            .subtitle {{
+                color: var(--muted);
+                font-size: 14px;
+                margin-top: 6px;
+            }}
+
+            .top-actions {{
+                display: flex;
+                gap: 10px;
+                flex-wrap: wrap;
+            }}
+
+            .theme-toggle {{
+                border: 1px solid var(--border);
+                background: var(--panel);
+                color: var(--text);
+                padding: 10px 14px;
+                border-radius: 12px;
+                cursor: pointer;
+                box-shadow: var(--shadow);
+                font-weight: bold;
+            }}
+
+            .panel {{
                 background: var(--panel);
                 border: 1px solid var(--border);
                 border-radius: 18px;
                 box-shadow: var(--shadow);
-                padding: 18px;
+                padding: 16px;
                 margin-bottom: 18px;
             }}
 
-            h1 {{
-                margin-top: 0;
-                margin-bottom: 8px;
-                font-size: 28px;
-            }}
-
-            .muted {{
-                color: var(--muted);
-            }}
-
-            .filters {{
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-                gap: 12px;
-                margin-top: 16px;
-            }}
-
-            .filters input,
-            .filters select,
-            .filters button {{
-                width: 100%;
-                padding: 10px 12px;
-                border-radius: 12px;
-                border: 1px solid var(--border);
-                background: var(--panel-2);
-                font-size: 14px;
-            }}
-
-            .filters button {{
-                background: linear-gradient(90deg, var(--accent1), var(--accent2));
-                color: white;
-                border: none;
-                cursor: pointer;
-                font-weight: 700;
-            }}
-
-            .upload-form {{
+            .filters form {{
                 display: flex;
-                flex-wrap: wrap;
                 gap: 12px;
+                flex-wrap: wrap;
                 align-items: end;
             }}
 
-            .upload-form .field {{
-                flex: 1;
-                min-width: 180px;
-            }}
-
-            .upload-form label {{
-                display: block;
+            .filters label {{
+                display: flex;
+                flex-direction: column;
                 font-size: 13px;
-                color: var(--muted);
-                margin-bottom: 6px;
+                font-weight: bold;
+                color: var(--text);
             }}
 
-            .upload-form input,
-            .upload-form button {{
-                width: 100%;
+            .filters input, .filters select {{
+                margin-top: 6px;
                 padding: 10px 12px;
+                min-width: 170px;
                 border-radius: 12px;
                 border: 1px solid var(--border);
+                background: var(--panel-2);
+                color: var(--text);
             }}
 
-            .upload-form button {{
-                background: linear-gradient(90deg, var(--accent3), #16a34a);
-                color: white;
+            .filters button, .filters a, .small-btn {{
+                padding: 11px 16px;
                 border: none;
+                background: linear-gradient(90deg, var(--accent1), var(--accent2));
+                color: white;
+                text-decoration: none;
                 cursor: pointer;
-                font-weight: 700;
+                border-radius: 12px;
+                font-size: 14px;
+                font-weight: bold;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+            }}
+
+            .small-btn {{
+                padding: 8px 12px;
+                font-size: 13px;
+            }}
+
+            .stats {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+                gap: 12px;
+            }}
+
+            .card {{
+                background: linear-gradient(180deg, var(--panel), var(--panel-2));
+                border: 1px solid var(--border);
+                padding: 15px;
+                border-radius: 14px;
+            }}
+
+            .card-title {{
+                font-size: 13px;
+                color: var(--muted);
+                margin-bottom: 8px;
+            }}
+
+            .card-value {{
+                font-size: 24px;
+                font-weight: bold;
+                color: var(--text);
             }}
 
             .table-wrap {{
                 overflow: auto;
-                border-radius: 16px;
+                border-radius: 18px;
                 border: 1px solid var(--border);
-            }}
-
-            table {{
-                width: 100%;
-                border-collapse: collapse;
+                box-shadow: var(--shadow);
                 background: var(--panel);
             }}
 
+            table {{
+                border-collapse: collapse;
+                width: 100%;
+                min-width: 1900px;
+                table-layout: fixed;
+                background: var(--panel);
+                color: var(--text);
+            }}
+
             th, td {{
-                padding: 12px 10px;
+                border-right: 1px solid var(--border);
                 border-bottom: 1px solid var(--border);
+                padding: 10px 12px;
                 text-align: left;
+                font-size: 14px;
                 white-space: nowrap;
-                vertical-align: top;
+                overflow: hidden;
+                text-overflow: ellipsis;
             }}
 
             th {{
@@ -487,95 +601,158 @@ def page_shell(title, content, active_page="grouped", extra_scripts=""):
                 color: var(--table-head-text);
                 position: sticky;
                 top: 0;
-                z-index: 1;
+                z-index: 2;
+                user-select: none;
+            }}
+
+            th a {{
+                color: inherit;
+                text-decoration: none;
             }}
 
             tbody tr:nth-child(even) {{
                 background: var(--row-even);
             }}
 
-            .totals {{
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            tr.good-row {{
+                background: var(--good);
+            }}
+
+            tr.warn-row {{
+                background: var(--warn);
+            }}
+
+            tr.bad-row {{
+                background: var(--bad);
+            }}
+
+            body.hide-row-colors tr.good-row,
+            body.hide-row-colors tr.warn-row,
+            body.hide-row-colors tr.bad-row {{
+                background: transparent !important;
+            }}
+
+            .controls-row {{
+                display: flex;
                 gap: 12px;
-                margin-top: 14px;
+                flex-wrap: wrap;
+                align-items: center;
+                justify-content: space-between;
+                margin-bottom: 12px;
             }}
 
-            .metric {{
-                background: var(--panel-2);
+            .column-panel {{
+                background: var(--panel);
                 border: 1px solid var(--border);
-                border-radius: 14px;
-                padding: 12px;
+                border-radius: 18px;
+                box-shadow: var(--shadow);
+                padding: 16px;
+                margin-bottom: 18px;
             }}
 
-            .metric .label {{
-                font-size: 12px;
-                color: var(--muted);
-                margin-bottom: 6px;
+            .column-panel-title {{
+                font-size: 16px;
+                font-weight: bold;
+                margin-bottom: 12px;
             }}
 
-            .metric .value {{
-                font-size: 20px;
-                font-weight: 700;
+            .column-list {{
+                display: flex;
+                flex-wrap: wrap;
+                gap: 10px 18px;
             }}
 
-            .tree details {{
-                margin-bottom: 10px;
-                border: 1px solid var(--border);
-                border-radius: 12px;
-                overflow: hidden;
-                background: white;
-            }}
-
-            .tree summary {{
-                cursor: pointer;
-                list-style: none;
-                padding: 12px 14px;
-                font-weight: 700;
-            }}
-
-            .tree summary::-webkit-details-marker {{
-                display: none;
-            }}
-
-            .lvl1 > summary {{ background: var(--lvl1); }}
-            .lvl2 > summary {{ background: var(--lvl2); }}
-            .lvl3 > summary {{ background: var(--lvl3); }}
-            .lvl4 > summary {{ background: var(--lvl4); }}
-            .lvl5 > summary {{ background: var(--lvl5); }}
-            .lvl6 > summary {{ background: var(--lvl6); }}
-
-            .node-content {{
-                padding: 10px 14px 14px;
-            }}
-
-            .node-grid {{
-                display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            .column-list label {{
+                display: inline-flex;
+                align-items: center;
                 gap: 8px;
+                font-size: 14px;
+                color: var(--text);
+            }}
+
+            .hint {{
+                color: var(--muted);
+                font-size: 13px;
                 margin-top: 10px;
             }}
 
-            .pill {{
-                display: inline-block;
-                padding: 4px 8px;
-                border-radius: 999px;
-                background: var(--panel-2);
-                border: 1px solid var(--border);
-                font-size: 12px;
-                color: var(--muted);
+            th.resizable {{
+                position: sticky;
             }}
 
-            @media (max-width: 900px) {{
-                .app {{
-                    flex-direction: column;
-                }}
-                .sidebar {{
-                    width: 100%;
-                }}
-                .main {{
-                    padding: 14px;
-                }}
+            .resize-handle {{
+                position: absolute;
+                top: 0;
+                right: 0;
+                width: 8px;
+                height: 100%;
+                cursor: col-resize;
+            }}
+
+            .drag-handle {{
+                margin-right: 8px;
+                cursor: grab;
+                opacity: 0.75;
+                font-weight: bold;
+            }}
+
+            .dragging {{
+                opacity: 0.5;
+            }}
+
+            .tree-root details {{
+                margin-bottom: 10px;
+                border: 1px solid var(--border);
+                border-radius: 14px;
+                overflow: hidden;
+                background: var(--panel);
+            }}
+
+            .tree-root summary {{
+                cursor: pointer;
+                font-weight: bold;
+                color: var(--text);
+                list-style: none;
+                display: flex;
+                justify-content: space-between;
+                gap: 12px;
+                flex-wrap: wrap;
+                padding: 12px 14px;
+            }}
+
+            .tree-root summary::-webkit-details-marker {{
+                display: none;
+            }}
+
+            .tree-line {{
+                display: grid;
+                grid-template-columns: 2.6fr 1fr 1fr 1fr 1fr 1fr 1fr 1fr;
+                gap: 10px;
+                padding: 10px 14px;
+                border-top: 1px solid var(--border);
+                align-items: center;
+                font-size: 14px;
+                background: var(--panel);
+            }}
+
+            .tree-header {{
+                font-weight: bold;
+                color: var(--muted);
+                background: transparent;
+                border: none;
+                padding-left: 0;
+                margin-bottom: 8px;
+            }}
+
+            .tree-level-1 > summary {{ background: var(--lvl1); font-size: 18px; }}
+            .tree-level-2 > summary {{ background: var(--lvl2); font-size: 16px; }}
+            .tree-level-3 > summary {{ background: var(--lvl3); font-size: 15px; }}
+            .tree-level-4 > summary {{ background: var(--lvl4); font-size: 14px; }}
+            .tree-level-5 > summary {{ background: var(--lvl5); font-size: 14px; }}
+            .tree-level-6 > .tree-line {{ background: var(--lvl6); }}
+
+            .tree-name {{
+                font-weight: bold;
             }}
         </style>
     </head>
@@ -583,32 +760,55 @@ def page_shell(title, content, active_page="grouped", extra_scripts=""):
         <div class="app">
             {sidebar}
             <main class="main">
+                <div class="topbar">
+                    <div>
+                        <div class="page-title">{title}</div>
+                        <div class="subtitle">TEAMbead CRM — Facebook аналитика, структура и полный контроль</div>
+                    </div>
+                    <div class="top-actions">
+                        <button class="theme-toggle" onclick="toggleRowColors()">🎨 Цвета строк</button>
+                        <button class="theme-toggle" onclick="toggleTheme()">🌙 / ☀️ Тема</button>
+                    </div>
+                </div>
+
                 {content}
             </main>
         </div>
+
+        <script>
+            function toggleTheme() {{
+                const body = document.body;
+                body.classList.toggle('dark');
+                localStorage.setItem('teambead-theme', body.classList.contains('dark') ? 'dark' : 'light');
+            }}
+
+            (function initTheme() {{
+                const savedTheme = localStorage.getItem('teambead-theme');
+                if (savedTheme === 'dark') {{
+                    document.body.classList.add('dark');
+                }}
+            }})();
+
+            function toggleRowColors() {{
+                const body = document.body;
+                body.classList.toggle('hide-row-colors');
+                localStorage.setItem(
+                    'teambead-row-colors',
+                    body.classList.contains('hide-row-colors') ? 'off' : 'on'
+                );
+            }}
+
+            (function initRowColors() {{
+                const saved = localStorage.getItem('teambead-row-colors');
+                if (saved === 'off') {{
+                    document.body.classList.add('hide-row-colors');
+                }}
+            }})();
+        </script>
         {extra_scripts}
     </body>
     </html>
     """
-
-
-def build_query_string(uploader="", manager="", geo="", offer="", search="", sort_by="", order=""):
-    params = []
-    if uploader:
-        params.append(f"uploader={uploader}")
-    if manager:
-        params.append(f"manager={manager}")
-    if geo:
-        params.append(f"geo={geo}")
-    if offer:
-        params.append(f"offer={offer}")
-    if search:
-        params.append(f"search={search}")
-    if sort_by:
-        params.append(f"sort_by={sort_by}")
-    if order:
-        params.append(f"order={order}")
-    return "&".join(params)
 
 
 @app.post("/upload")
@@ -618,19 +818,19 @@ async def upload_file(
 ):
     original_name = file.filename or ""
     ext = os.path.splitext(original_name)[1].lower()
-    temp_name = f"temp_{uuid.uuid4()}{ext or '.csv'}"
+    filename = f"temp_{uuid.uuid4()}{ext or '.csv'}"
 
     try:
-        with open(temp_name, "wb") as buffer:
+        with open(filename, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
         if ext in [".xlsx", ".xls"]:
-            df = pd.read_excel(temp_name)
+            df = pd.read_excel(filename)
         else:
             try:
-                df = pd.read_csv(temp_name)
+                df = pd.read_csv(filename)
             except Exception:
-                df = pd.read_csv(temp_name, sep=";")
+                df = pd.read_csv(filename, sep=";")
 
         db = SessionLocal()
         try:
@@ -659,6 +859,7 @@ async def upload_file(
                     date_start=str(row.get("Дата начала отчетности") or ""),
                     date_end=str(row.get("Дата окончания отчетности") or ""),
                 )
+
                 db.add(item)
 
             db.commit()
@@ -668,8 +869,35 @@ async def upload_file(
         return RedirectResponse(url="/grouped", status_code=303)
 
     finally:
-        if os.path.exists(temp_name):
-            os.remove(temp_name)
+        if os.path.exists(filename):
+            os.remove(filename)
+
+
+@app.get("/data")
+def get_data():
+    data = get_all_rows()
+
+    result = []
+    for row in data:
+        result.append({
+            "id": row.id,
+            "uploader": row.uploader,
+            "ad_name": row.ad_name,
+            "launch_date": row.launch_date,
+            "platform": row.platform,
+            "manager": row.manager,
+            "geo": row.geo,
+            "offer": row.offer,
+            "creative": row.creative,
+            "leads": row.leads,
+            "reg": row.reg,
+            "ftd": row.ftd,
+            "clicks": row.clicks,
+            "spend": row.spend,
+            "date_start": row.date_start,
+            "date_end": row.date_end,
+        })
+    return result
 
 
 @app.get("/export/grouped")
@@ -680,16 +908,33 @@ def export_grouped_csv(
     offer: str = Query(default=""),
     search: str = Query(default="")
 ):
-    raw_data = get_filtered_data(uploader, manager, geo, offer, search)
-    rows = aggregate_grouped_rows(raw_data)
+    data = get_filtered_data(uploader, manager, geo, offer, search)
+    rows = aggregate_grouped_rows(data)
 
     output = io.StringIO()
     writer = csv.writer(output)
 
     writer.writerow([
-        "Uploader", "Ad Name", "Platform", "Manager", "Geo", "Offer", "Creative",
-        "Rows Combined", "Clicks", "Leads", "REG", "FTD", "Spend",
-        "CPC", "CPL", "CPA", "CR REG", "CR FTD", "Date Start", "Date End"
+        "Uploader",
+        "Ad Name",
+        "Platform",
+        "Manager",
+        "Geo",
+        "Offer",
+        "Creative",
+        "Rows",
+        "Clicks",
+        "Leads",
+        "REG",
+        "FTD",
+        "Spend",
+        "Real CPC",
+        "Real CPL",
+        "Real CPA",
+        "CR REG",
+        "CR FTD",
+        "Date Start",
+        "Date End",
     ])
 
     for row in rows:
@@ -706,12 +951,12 @@ def export_grouped_csv(
             format_int_or_float(row["leads"]),
             format_int_or_float(row["reg"]),
             format_int_or_float(row["ftd"]),
-            format_money(row["spend"]),
-            format_money(row["cpc_real"]),
-            format_money(row["cpl_real"]),
-            format_money(row["cpa_real"]),
-            format_percent(row["cr_reg"]),
-            format_percent(row["cr_ftd"]),
+            row["spend"],
+            row["cpc_real"],
+            row["cpl_real"],
+            row["cpa_real"],
+            row["cr_reg"],
+            row["cr_ftd"],
             row["date_start"] or "",
             row["date_end"] or "",
         ])
@@ -763,11 +1008,11 @@ def export_hierarchy_csv(
             row["offer"] or "",
             row["creative"] or "",
             row["ad_name"] or "",
-            format_int_or_float(row["clicks"]),
-            format_int_or_float(row["leads"]),
-            format_int_or_float(row["reg"]),
-            format_int_or_float(row["ftd"]),
-            format_money(row["spend"]),
+            row["clicks"],
+            row["leads"],
+            row["reg"],
+            row["ftd"],
+            row["spend"],
         ])
 
     output.seek(0)
@@ -798,7 +1043,8 @@ def show_grouped_table(
     allowed_sort_fields = {
         "uploader", "ad_name", "manager", "platform", "geo", "offer",
         "rows_combined", "clicks", "leads", "reg", "ftd",
-        "spend", "cpc_real", "cpl_real", "cpa_real", "cr_reg", "cr_ftd"
+        "spend", "cpc_real", "cpl_real", "cpa_real",
+        "cr_reg", "cr_ftd"
     }
 
     if sort_by not in allowed_sort_fields:
@@ -810,150 +1056,381 @@ def show_grouped_table(
     )
 
     totals = aggregate_totals(rows)
-    qs = build_query_string(uploader, manager, geo, offer, search, sort_by, order)
-    export_url = f"/export/grouped?{qs}" if qs else "/export/grouped"
+
+    def sort_link(field_name):
+        next_order = "asc"
+        if sort_by == field_name and order == "asc":
+            next_order = "desc"
+
+        return (
+            f"/grouped?"
+            f"uploader={quote_plus(uploader)}&"
+            f"manager={quote_plus(manager)}&"
+            f"geo={quote_plus(geo)}&"
+            f"offer={quote_plus(offer)}&"
+            f"search={quote_plus(search)}&"
+            f"sort_by={field_name}&"
+            f"order={next_order}"
+        )
+
+    export_grouped_link = (
+        f"/export/grouped?"
+        f"uploader={quote_plus(uploader)}&"
+        f"manager={quote_plus(manager)}&"
+        f"geo={quote_plus(geo)}&"
+        f"offer={quote_plus(offer)}&"
+        f"search={quote_plus(search)}"
+    )
+
+    uploader_options = make_options(all_uploaders, uploader)
+    manager_options = make_options(all_managers, manager)
+    geo_options = make_options(all_geos, geo)
+    offer_options = make_options(all_offers, offer)
 
     rows_html = ""
     for row in rows:
+        row_class = ""
+        if row["ftd"] > 0:
+            row_class = "good-row"
+        elif row["reg"] > 0 and row["ftd"] == 0:
+            row_class = "warn-row"
+        elif row["spend"] > 0 and row["reg"] == 0:
+            row_class = "bad-row"
+
         rows_html += f"""
-        <tr>
-            <td>{escape(row["uploader"] or "")}</td>
-            <td>{escape(row["ad_name"] or "")}</td>
-            <td>{escape(row["platform"] or "")}</td>
-            <td>{escape(row["manager"] or "")}</td>
-            <td>{escape(row["geo"] or "")}</td>
-            <td>{escape(row["offer"] or "")}</td>
-            <td>{escape(row["creative"] or "")}</td>
-            <td>{format_int_or_float(row["rows_combined"])}</td>
-            <td>{format_int_or_float(row["clicks"])}</td>
-            <td>{format_int_or_float(row["leads"])}</td>
-            <td>{format_int_or_float(row["reg"])}</td>
-            <td>{format_int_or_float(row["ftd"])}</td>
-            <td>{format_money(row["spend"])}</td>
-            <td>{format_money(row["cpc_real"])}</td>
-            <td>{format_money(row["cpl_real"])}</td>
-            <td>{format_money(row["cpa_real"])}</td>
-            <td>{format_percent(row["cr_reg"])}</td>
-            <td>{format_percent(row["cr_ftd"])}</td>
-            <td>{escape(row["date_start"] or "")}</td>
-            <td>{escape(row["date_end"] or "")}</td>
+        <tr class="{row_class}">
+            <td class="col-uploader">{escape(row['uploader'] or '')}</td>
+            <td class="col-ad_name">{escape(row['ad_name'] or '')}</td>
+            <td class="col-platform">{escape(row['platform'] or '')}</td>
+            <td class="col-manager">{escape(row['manager'] or '')}</td>
+            <td class="col-geo">{escape(row['geo'] or '')}</td>
+            <td class="col-offer">{escape(row['offer'] or '')}</td>
+            <td class="col-creative">{escape(row['creative'] or '')}</td>
+            <td class="col-rows">{format_int_or_float(row['rows_combined'])}</td>
+            <td class="col-clicks">{format_int_or_float(row['clicks'])}</td>
+            <td class="col-leads">{format_int_or_float(row['leads'])}</td>
+            <td class="col-reg">{format_int_or_float(row['reg'])}</td>
+            <td class="col-ftd">{format_int_or_float(row['ftd'])}</td>
+            <td class="col-spend">{format_money(row['spend'])}</td>
+            <td class="col-cpc">{format_money(row['cpc_real'])}</td>
+            <td class="col-cpl">{format_money(row['cpl_real'])}</td>
+            <td class="col-cpa">{format_money(row['cpa_real'])}</td>
+            <td class="col-cr_reg">{format_percent(row['cr_reg'])}</td>
+            <td class="col-cr_ftd">{format_percent(row['cr_ftd'])}</td>
+            <td class="col-date_start">{escape(row['date_start'] or '')}</td>
+            <td class="col-date_end">{escape(row['date_end'] or '')}</td>
         </tr>
         """
 
     content = f"""
-    <div class="card">
-        <h1>FB — Сводка</h1>
-        <div class="muted">Загрузка, фильтрация и общая сводка по объявлениям</div>
+    <div class="panel">
+        <div class="controls-row">
+            <div class="column-panel-title">Экспорт</div>
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                <a class="small-btn" href="{export_grouped_link}">⬇ Выгрузить CSV</a>
+            </div>
+        </div>
     </div>
 
-    <div class="card">
-        <form class="upload-form" action="/upload" method="post" enctype="multipart/form-data">
-            <div class="field">
-                <label>Кто загружает</label>
-                <input type="text" name="uploader" placeholder="Например: Road / Dima / Buyer 1" required>
-            </div>
-            <div class="field">
-                <label>Файл CSV или Excel</label>
-                <input type="file" name="file" required>
-            </div>
-            <div class="field" style="max-width:220px;">
-                <label>&nbsp;</label>
-                <button type="submit">Загрузить</button>
-            </div>
-        </form>
-    </div>
-
-    <div class="card">
+    <div class="panel filters">
         <form method="get" action="/grouped">
-            <div class="filters">
-                <select name="uploader">{make_options(all_uploaders, uploader)}</select>
-                <select name="manager">{make_options(all_managers, manager)}</select>
-                <select name="geo">{make_options(all_geos, geo)}</select>
-                <select name="offer">{make_options(all_offers, offer)}</select>
-                <input type="text" name="search" value="{escape(search)}" placeholder="Поиск по названию объявления">
-                <select name="sort_by">
-                    {make_options(sorted(list(allowed_sort_fields)), sort_by)}
-                </select>
-                <select name="order">
-                    <option value="desc" {"selected" if order=="desc" else ""}>DESC</option>
-                    <option value="asc" {"selected" if order=="asc" else ""}>ASC</option>
-                </select>
-                <button type="submit">Применить</button>
-            </div>
+            <label>
+                Uploader
+                <select name="uploader">{uploader_options}</select>
+            </label>
+
+            <label>
+                Manager
+                <select name="manager">{manager_options}</select>
+            </label>
+
+            <label>
+                Geo
+                <select name="geo">{geo_options}</select>
+            </label>
+
+            <label>
+                Offer
+                <select name="offer">{offer_options}</select>
+            </label>
+
+            <label>
+                Search
+                <input type="text" name="search" value="{escape(search)}">
+            </label>
+
+            <input type="hidden" name="sort_by" value="{sort_by}">
+            <input type="hidden" name="order" value="{order}">
+
+            <button type="submit">Фильтровать</button>
+            <a href="/grouped">Сбросить</a>
         </form>
     </div>
 
-    <div class="card">
-        <a class="pill" href="{export_url}">Экспорт CSV</a>
+    <div class="column-panel">
+        <div class="controls-row">
+            <div class="column-panel-title">Колонки</div>
+            <button type="button" class="small-btn" onclick="resetColumnSettings()">Сбросить колонки</button>
+        </div>
+        <div class="column-list" id="columnToggles">
+            <label><input type="checkbox" data-col="col-uploader" checked> Uploader</label>
+            <label><input type="checkbox" data-col="col-ad_name" checked> Ad Name</label>
+            <label><input type="checkbox" data-col="col-platform" checked> Platform</label>
+            <label><input type="checkbox" data-col="col-manager" checked> Manager</label>
+            <label><input type="checkbox" data-col="col-geo" checked> Geo</label>
+            <label><input type="checkbox" data-col="col-offer" checked> Offer</label>
+            <label><input type="checkbox" data-col="col-creative" checked> Creative</label>
+            <label><input type="checkbox" data-col="col-rows" checked> Rows</label>
+            <label><input type="checkbox" data-col="col-clicks" checked> Clicks</label>
+            <label><input type="checkbox" data-col="col-leads" checked> Leads</label>
+            <label><input type="checkbox" data-col="col-reg" checked> REG</label>
+            <label><input type="checkbox" data-col="col-ftd" checked> FTD</label>
+            <label><input type="checkbox" data-col="col-spend" checked> Spend</label>
+            <label><input type="checkbox" data-col="col-cpc" checked> Real CPC</label>
+            <label><input type="checkbox" data-col="col-cpl" checked> Real CPL</label>
+            <label><input type="checkbox" data-col="col-cpa" checked> Real CPA</label>
+            <label><input type="checkbox" data-col="col-cr_reg" checked> CR REG</label>
+            <label><input type="checkbox" data-col="col-cr_ftd" checked> CR FTD</label>
+            <label><input type="checkbox" data-col="col-date_start" checked> Date Start</label>
+            <label><input type="checkbox" data-col="col-date_end" checked> Date End</label>
+        </div>
+        <div class="hint">Можно скрывать колонки, менять их ширину и перетаскивать порядок прямо в таблице.</div>
+    </div>
 
-        <div class="totals">
-            <div class="metric"><div class="label">Клики</div><div class="value">{format_int_or_float(totals["clicks"])}</div></div>
-            <div class="metric"><div class="label">Лиды</div><div class="value">{format_int_or_float(totals["leads"])}</div></div>
-            <div class="metric"><div class="label">REG</div><div class="value">{format_int_or_float(totals["reg"])}</div></div>
-            <div class="metric"><div class="label">FTD</div><div class="value">{format_int_or_float(totals["ftd"])}</div></div>
-            <div class="metric"><div class="label">Spend</div><div class="value">{format_money(totals["spend"])}</div></div>
-            <div class="metric"><div class="label">CPC</div><div class="value">{format_money(totals["cpc_real"])}</div></div>
-            <div class="metric"><div class="label">CPL</div><div class="value">{format_money(totals["cpl_real"])}</div></div>
-            <div class="metric"><div class="label">CPA</div><div class="value">{format_money(totals["cpa_real"])}</div></div>
-            <div class="metric"><div class="label">CR REG</div><div class="value">{format_percent(totals["cr_reg"])}</div></div>
-            <div class="metric"><div class="label">CR FTD</div><div class="value">{format_percent(totals["cr_ftd"])}</div></div>
+    <div class="panel">
+        <div class="stats">
+            <div class="card"><div class="card-title">Total Spend</div><div class="card-value">{format_money(totals['spend'])}</div></div>
+            <div class="card"><div class="card-title">Total Clicks</div><div class="card-value">{format_int_or_float(totals['clicks'])}</div></div>
+            <div class="card"><div class="card-title">Total Leads</div><div class="card-value">{format_int_or_float(totals['leads'])}</div></div>
+            <div class="card"><div class="card-title">Total REG</div><div class="card-value">{format_int_or_float(totals['reg'])}</div></div>
+            <div class="card"><div class="card-title">Total FTD</div><div class="card-value">{format_int_or_float(totals['ftd'])}</div></div>
+            <div class="card"><div class="card-title">Real CPC</div><div class="card-value">{format_money(totals['cpc_real'])}</div></div>
+            <div class="card"><div class="card-title">Real CPL</div><div class="card-value">{format_money(totals['cpl_real'])}</div></div>
+            <div class="card"><div class="card-title">Real CPA</div><div class="card-value">{format_money(totals['cpa_real'])}</div></div>
+            <div class="card"><div class="card-title">CR REG</div><div class="card-value">{format_percent(totals['cr_reg'])}</div></div>
+            <div class="card"><div class="card-title">CR FTD</div><div class="card-value">{format_percent(totals['cr_ftd'])}</div></div>
         </div>
     </div>
 
-    <div class="card">
-        <div class="table-wrap">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Uploader</th>
-                        <th>Ad Name</th>
-                        <th>Platform</th>
-                        <th>Manager</th>
-                        <th>Geo</th>
-                        <th>Offer</th>
-                        <th>Creative</th>
-                        <th>Rows</th>
-                        <th>Clicks</th>
-                        <th>Leads</th>
-                        <th>REG</th>
-                        <th>FTD</th>
-                        <th>Spend</th>
-                        <th>CPC</th>
-                        <th>CPL</th>
-                        <th>CPA</th>
-                        <th>CR REG</th>
-                        <th>CR FTD</th>
-                        <th>Date Start</th>
-                        <th>Date End</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {rows_html if rows_html else '<tr><td colspan="20">Нет данных</td></tr>'}
-                </tbody>
-            </table>
-        </div>
+    <div class="table-wrap">
+        <table id="crmTable">
+            <thead>
+                <tr>
+                    <th draggable="true" class="resizable col-uploader"><span class="drag-handle">⋮⋮</span><a href="{sort_link('uploader')}">Uploader</a><div class="resize-handle"></div></th>
+                    <th draggable="true" class="resizable col-ad_name"><span class="drag-handle">⋮⋮</span><a href="{sort_link('ad_name')}">Ad Name</a><div class="resize-handle"></div></th>
+                    <th draggable="true" class="resizable col-platform"><span class="drag-handle">⋮⋮</span><a href="{sort_link('platform')}">Platform</a><div class="resize-handle"></div></th>
+                    <th draggable="true" class="resizable col-manager"><span class="drag-handle">⋮⋮</span><a href="{sort_link('manager')}">Manager</a><div class="resize-handle"></div></th>
+                    <th draggable="true" class="resizable col-geo"><span class="drag-handle">⋮⋮</span><a href="{sort_link('geo')}">Geo</a><div class="resize-handle"></div></th>
+                    <th draggable="true" class="resizable col-offer"><span class="drag-handle">⋮⋮</span><a href="{sort_link('offer')}">Offer</a><div class="resize-handle"></div></th>
+                    <th draggable="true" class="resizable col-creative"><span class="drag-handle">⋮⋮</span>Creative<div class="resize-handle"></div></th>
+                    <th draggable="true" class="resizable col-rows"><span class="drag-handle">⋮⋮</span><a href="{sort_link('rows_combined')}">Rows</a><div class="resize-handle"></div></th>
+                    <th draggable="true" class="resizable col-clicks"><span class="drag-handle">⋮⋮</span><a href="{sort_link('clicks')}">Clicks</a><div class="resize-handle"></div></th>
+                    <th draggable="true" class="resizable col-leads"><span class="drag-handle">⋮⋮</span><a href="{sort_link('leads')}">Leads</a><div class="resize-handle"></div></th>
+                    <th draggable="true" class="resizable col-reg"><span class="drag-handle">⋮⋮</span><a href="{sort_link('reg')}">REG</a><div class="resize-handle"></div></th>
+                    <th draggable="true" class="resizable col-ftd"><span class="drag-handle">⋮⋮</span><a href="{sort_link('ftd')}">FTD</a><div class="resize-handle"></div></th>
+                    <th draggable="true" class="resizable col-spend"><span class="drag-handle">⋮⋮</span><a href="{sort_link('spend')}">Spend</a><div class="resize-handle"></div></th>
+                    <th draggable="true" class="resizable col-cpc"><span class="drag-handle">⋮⋮</span><a href="{sort_link('cpc_real')}">Real CPC</a><div class="resize-handle"></div></th>
+                    <th draggable="true" class="resizable col-cpl"><span class="drag-handle">⋮⋮</span><a href="{sort_link('cpl_real')}">Real CPL</a><div class="resize-handle"></div></th>
+                    <th draggable="true" class="resizable col-cpa"><span class="drag-handle">⋮⋮</span><a href="{sort_link('cpa_real')}">Real CPA</a><div class="resize-handle"></div></th>
+                    <th draggable="true" class="resizable col-cr_reg"><span class="drag-handle">⋮⋮</span><a href="{sort_link('cr_reg')}">CR REG</a><div class="resize-handle"></div></th>
+                    <th draggable="true" class="resizable col-cr_ftd"><span class="drag-handle">⋮⋮</span><a href="{sort_link('cr_ftd')}">CR FTD</a><div class="resize-handle"></div></th>
+                    <th draggable="true" class="resizable col-date_start"><span class="drag-handle">⋮⋮</span>Date Start<div class="resize-handle"></div></th>
+                    <th draggable="true" class="resizable col-date_end"><span class="drag-handle">⋮⋮</span>Date End<div class="resize-handle"></div></th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows_html if rows_html else '<tr><td colspan="20">Нет данных</td></tr>'}
+            </tbody>
+        </table>
     </div>
     """
 
-    return page_shell("FB — Сводка", content, "grouped")
+    extra_scripts = """
+    <script>
+        const toggleStorageKey = 'teambead-columns-v2';
+        const widthStorageKey = 'teambead-column-widths-v2';
+        const orderStorageKey = 'teambead-column-order-v2';
 
+        function resetColumnSettings() {
+            localStorage.removeItem(toggleStorageKey);
+            localStorage.removeItem(widthStorageKey);
+            localStorage.removeItem(orderStorageKey);
+            location.reload();
+        }
 
-def render_node(title, metrics, level_class, children_html=""):
-    return f"""
-    <details class="{level_class}" open>
-        <summary>{escape(title)}</summary>
-        <div class="node-content">
-            <div class="node-grid">
-                <div class="metric"><div class="label">Клики</div><div class="value">{format_int_or_float(metrics["clicks"])}</div></div>
-                <div class="metric"><div class="label">Лиды</div><div class="value">{format_int_or_float(metrics["leads"])}</div></div>
-                <div class="metric"><div class="label">REG</div><div class="value">{format_int_or_float(metrics["reg"])}</div></div>
-                <div class="metric"><div class="label">FTD</div><div class="value">{format_int_or_float(metrics["ftd"])}</div></div>
-                <div class="metric"><div class="label">Spend</div><div class="value">{format_money(metrics["spend"])}</div></div>
-            </div>
-            {children_html}
-        </div>
-    </details>
+        function applyColumnVisibility() {
+            const saved = JSON.parse(localStorage.getItem(toggleStorageKey) || '{}');
+            document.querySelectorAll('#columnToggles input[type="checkbox"]').forEach(cb => {
+                const colClass = cb.dataset.col;
+                if (saved[colClass] !== undefined) {
+                    cb.checked = saved[colClass];
+                }
+                document.querySelectorAll('.' + colClass).forEach(el => {
+                    el.style.display = cb.checked ? '' : 'none';
+                });
+            });
+        }
+
+        document.querySelectorAll('#columnToggles input[type="checkbox"]').forEach(cb => {
+            cb.addEventListener('change', () => {
+                const saved = JSON.parse(localStorage.getItem(toggleStorageKey) || '{}');
+                saved[cb.dataset.col] = cb.checked;
+                localStorage.setItem(toggleStorageKey, JSON.stringify(saved));
+                applyColumnVisibility();
+            });
+        });
+
+        function loadSavedWidths() {
+            const saved = JSON.parse(localStorage.getItem(widthStorageKey) || '{}');
+            Object.keys(saved).forEach(colClass => {
+                document.querySelectorAll('.' + colClass).forEach(el => {
+                    el.style.width = saved[colClass] + 'px';
+                    el.style.minWidth = saved[colClass] + 'px';
+                    el.style.maxWidth = saved[colClass] + 'px';
+                });
+            });
+        }
+
+        function saveWidth(colClass, width) {
+            const saved = JSON.parse(localStorage.getItem(widthStorageKey) || '{}');
+            saved[colClass] = width;
+            localStorage.setItem(widthStorageKey, JSON.stringify(saved));
+        }
+
+        function setupResize() {
+            document.querySelectorAll('th.resizable').forEach(th => {
+                const handle = th.querySelector('.resize-handle');
+                const colClass = Array.from(th.classList).find(cls => cls.startsWith('col-'));
+                if (!handle || !colClass) return;
+
+                let startX = 0;
+                let startWidth = 0;
+                let resizing = false;
+
+                handle.addEventListener('mousedown', (e) => {
+                    resizing = true;
+                    startX = e.pageX;
+                    startWidth = th.offsetWidth;
+                    document.body.style.cursor = 'col-resize';
+                    e.preventDefault();
+                    e.stopPropagation();
+                });
+
+                document.addEventListener('mousemove', (e) => {
+                    if (!resizing) return;
+                    const newWidth = Math.max(90, startWidth + (e.pageX - startX));
+                    document.querySelectorAll('.' + colClass).forEach(el => {
+                        el.style.width = newWidth + 'px';
+                        el.style.minWidth = newWidth + 'px';
+                        el.style.maxWidth = newWidth + 'px';
+                    });
+                });
+
+                document.addEventListener('mouseup', (e) => {
+                    if (!resizing) return;
+                    resizing = false;
+                    document.body.style.cursor = '';
+                    const finalWidth = Math.max(90, startWidth + (e.pageX - startX));
+                    saveWidth(colClass, finalWidth);
+                });
+            });
+        }
+
+        function saveColumnOrder(order) {
+            localStorage.setItem(orderStorageKey, JSON.stringify(order));
+        }
+
+        function getCurrentOrder() {
+            const headerRow = document.querySelector('#crmTable thead tr');
+            return Array.from(headerRow.children).map(th => Array.from(th.classList).find(cls => cls.startsWith('col-')));
+        }
+
+        function applySavedOrder() {
+            const saved = JSON.parse(localStorage.getItem(orderStorageKey) || 'null');
+            if (!saved || !saved.length) return;
+
+            const table = document.getElementById('crmTable');
+            const headerRow = table.tHead.rows[0];
+            const bodyRows = table.tBodies[0].rows;
+
+            saved.forEach(colClass => {
+                const th = headerRow.querySelector('.' + colClass);
+                if (th) headerRow.appendChild(th);
+            });
+
+            Array.from(bodyRows).forEach(row => {
+                saved.forEach(colClass => {
+                    const td = row.querySelector('.' + colClass);
+                    if (td) row.appendChild(td);
+                });
+            });
+        }
+
+        function setupDragAndDrop() {
+            const table = document.getElementById('crmTable');
+            const headerRow = table.tHead.rows[0];
+            let draggedTh = null;
+
+            headerRow.querySelectorAll('th').forEach(th => {
+                th.addEventListener('dragstart', () => {
+                    draggedTh = th;
+                    th.classList.add('dragging');
+                });
+
+                th.addEventListener('dragend', () => {
+                    th.classList.remove('dragging');
+                    draggedTh = null;
+                    saveColumnOrder(getCurrentOrder());
+                });
+
+                th.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                });
+
+                th.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    if (!draggedTh || draggedTh === th) return;
+
+                    const headers = Array.from(headerRow.children);
+                    const fromIndex = headers.indexOf(draggedTh);
+                    const toIndex = headers.indexOf(th);
+
+                    if (fromIndex < toIndex) {
+                        th.after(draggedTh);
+                    } else {
+                        th.before(draggedTh);
+                    }
+
+                    Array.from(table.tBodies[0].rows).forEach(row => {
+                        const draggedClass = Array.from(draggedTh.classList).find(c => c.startsWith('col-'));
+                        const targetClass = Array.from(th.classList).find(c => c.startsWith('col-'));
+
+                        const draggedTd = row.querySelector('.' + draggedClass);
+                        const targetTd = row.querySelector('.' + targetClass);
+
+                        if (!draggedTd || !targetTd) return;
+
+                        if (fromIndex < toIndex) {
+                            targetTd.after(draggedTd);
+                        } else {
+                            targetTd.before(draggedTd);
+                        }
+                    });
+
+                    saveColumnOrder(getCurrentOrder());
+                });
+            });
+        }
+
+        applySavedOrder();
+        applyColumnVisibility();
+        loadSavedWidths();
+        setupResize();
+        setupDragAndDrop();
+    </script>
     """
+
+    return page_shell("FB — Выгрузка", content, "grouped", extra_scripts)
 
 
 @app.get("/hierarchy", response_class=HTMLResponse)
@@ -966,6 +1443,7 @@ def show_hierarchy(
 ):
     raw_data = get_filtered_data(uploader, manager, geo, offer, search)
     all_uploaders, all_managers, all_geos, all_offers = get_filter_options()
+
     rows = aggregate_grouped_rows(raw_data)
 
     tree = {}
@@ -1018,70 +1496,206 @@ def show_hierarchy(
         creative_node["metrics"]["ftd"] += row["ftd"]
         creative_node["metrics"]["spend"] += row["spend"]
 
-        creative_node["children"][ad_key] = {
-            "metrics": {
-                "clicks": row["clicks"],
-                "leads": row["leads"],
-                "reg": row["reg"],
-                "ftd": row["ftd"],
-                "spend": row["spend"],
-            }
-        }
+        creative_node["children"][ad_key] = row
 
-    hierarchy_html = ""
+    export_hierarchy_link = (
+        f"/export/hierarchy?"
+        f"uploader={quote_plus(uploader)}&"
+        f"manager={quote_plus(manager)}&"
+        f"geo={quote_plus(geo)}&"
+        f"offer={quote_plus(offer)}&"
+        f"search={quote_plus(search)}"
+    )
 
-    for geo_name, geo_node in tree.items():
-        platform_html = ""
-        for platform_name, platform_node in geo_node["children"].items():
-            manager_html = ""
-            for manager_name, manager_node in platform_node["children"].items():
-                offer_html = ""
-                for offer_name, offer_node in manager_node["children"].items():
-                    creative_html = ""
-                    for creative_name, creative_node in offer_node["children"].items():
-                        ad_html = ""
-                        for ad_name, ad_node in creative_node["children"].items():
-                            ad_html += render_node(ad_name, ad_node["metrics"], "lvl6")
-                        creative_html += render_node(creative_name, creative_node["metrics"], "lvl5", ad_html)
-                    offer_html += render_node(offer_name, offer_node["metrics"], "lvl4", creative_html)
-                manager_html += render_node(manager_name, manager_node["metrics"], "lvl3", offer_html)
-            platform_html += render_node(platform_name, platform_node["metrics"], "lvl2", manager_html)
-        hierarchy_html += render_node(geo_name, geo_node["metrics"], "lvl1", platform_html)
+    uploader_options = make_options(all_uploaders, uploader)
+    manager_options = make_options(all_managers, manager)
+    geo_options = make_options(all_geos, geo)
+    offer_options = make_options(all_offers, offer)
 
-    qs = build_query_string(uploader, manager, geo, offer, search)
-    export_url = f"/export/hierarchy?{qs}" if qs else "/export/hierarchy"
+    def metrics_line(name, clicks, leads, reg, ftd, spend):
+        m = calc_metrics(clicks, reg, ftd, spend)
+        return f"""
+        <div class="tree-line">
+            <div class="tree-name">{escape(name)}</div>
+            <div>Clicks: {format_int_or_float(clicks)}</div>
+            <div>Leads: {format_int_or_float(leads)}</div>
+            <div>REG: {format_int_or_float(reg)}</div>
+            <div>FTD: {format_int_or_float(ftd)}</div>
+            <div>Spend: {format_money(spend)}</div>
+            <div>CPL: {format_money(m['cpl_real'])}</div>
+            <div>CPA: {format_money(m['cpa_real'])}</div>
+        </div>
+        """
 
-    content = f"""
-    <div class="card">
-        <h1>FB — Иерархия</h1>
-        <div class="muted">GEO → Platform → Manager → Offer → Creative → Ad</div>
-    </div>
-
-    <div class="card">
-        <form method="get" action="/hierarchy">
-            <div class="filters">
-                <select name="uploader">{make_options(all_uploaders, uploader)}</select>
-                <select name="manager">{make_options(all_managers, manager)}</select>
-                <select name="geo">{make_options(all_geos, geo)}</select>
-                <select name="offer">{make_options(all_offers, offer)}</select>
-                <input type="text" name="search" value="{escape(search)}" placeholder="Поиск по названию объявления">
-                <button type="submit">Применить</button>
-            </div>
-        </form>
-    </div>
-
-    <div class="card">
-        <a class="pill" href="{export_url}">Экспорт CSV</a>
-    </div>
-
-    <div class="tree">
-        {hierarchy_html if hierarchy_html else '<div class="card">Нет данных</div>'}
-    </div>
+    tree_html = """
+    <div class="tree-root">
+        <div class="tree-line tree-header">
+            <div>Уровень</div>
+            <div>Clicks</div>
+            <div>Leads</div>
+            <div>REG</div>
+            <div>FTD</div>
+            <div>Spend</div>
+            <div>CPL</div>
+            <div>CPA</div>
+        </div>
     """
 
-    return page_shell("FB — Иерархия", content, "hierarchy")
+    for geo_name, geo_node in tree.items():
+        gm = geo_node["metrics"]
+        tree_html += f"""
+        <details class="tree-level-1 hierarchy-node" data-node-id="geo::{geo_name}" open>
+            <summary>
+                <span>GEO: {escape(geo_name)}</span>
+                <span>Spend {format_money(gm['spend'])} | REG {format_int_or_float(gm['reg'])} | FTD {format_int_or_float(gm['ftd'])}</span>
+            </summary>
+            {metrics_line(geo_name, gm['clicks'], gm['leads'], gm['reg'], gm['ftd'], gm['spend'])}
+        """
 
+        for platform_name, platform_node in geo_node["children"].items():
+            pm = platform_node["metrics"]
+            tree_html += f"""
+            <details class="tree-level-2 hierarchy-node" data-node-id="geo::{geo_name}|platform::{platform_name}" open>
+                <summary>
+                    <span>Platform: {escape(platform_name)}</span>
+                    <span>Spend {format_money(pm['spend'])} | REG {format_int_or_float(pm['reg'])} | FTD {format_int_or_float(pm['ftd'])}</span>
+                </summary>
+                {metrics_line(platform_name, pm['clicks'], pm['leads'], pm['reg'], pm['ftd'], pm['spend'])}
+            """
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+            for manager_name, manager_node in platform_node["children"].items():
+                mm = manager_node["metrics"]
+                tree_html += f"""
+                <details class="tree-level-3 hierarchy-node" data-node-id="geo::{geo_name}|platform::{platform_name}|manager::{manager_name}" open>
+                    <summary>
+                        <span>Manager: {escape(manager_name)}</span>
+                        <span>Spend {format_money(mm['spend'])} | REG {format_int_or_float(mm['reg'])} | FTD {format_int_or_float(mm['ftd'])}</span>
+                    </summary>
+                    {metrics_line(manager_name, mm['clicks'], mm['leads'], mm['reg'], mm['ftd'], mm['spend'])}
+                """
+
+                for offer_name, offer_node in manager_node["children"].items():
+                    om = offer_node["metrics"]
+                    tree_html += f"""
+                    <details class="tree-level-4 hierarchy-node" data-node-id="geo::{geo_name}|platform::{platform_name}|manager::{manager_name}|offer::{offer_name}" open>
+                        <summary>
+                            <span>Offer: {escape(offer_name)}</span>
+                            <span>Spend {format_money(om['spend'])} | REG {format_int_or_float(om['reg'])} | FTD {format_int_or_float(om['ftd'])}</span>
+                        </summary>
+                        {metrics_line(offer_name, om['clicks'], om['leads'], om['reg'], om['ftd'], om['spend'])}
+                    """
+
+                    for creative_name, creative_node in offer_node["children"].items():
+                        cm = creative_node["metrics"]
+                        tree_html += f"""
+                        <details class="tree-level-5 hierarchy-node" data-node-id="geo::{geo_name}|platform::{platform_name}|manager::{manager_name}|offer::{offer_name}|creative::{creative_name}">
+                            <summary>
+                                <span>Creative: {escape(creative_name)}</span>
+                                <span>Spend {format_money(cm['spend'])} | REG {format_int_or_float(cm['reg'])} | FTD {format_int_or_float(cm['ftd'])}</span>
+                            </summary>
+                            {metrics_line(creative_name, cm['clicks'], cm['leads'], cm['reg'], cm['ftd'], cm['spend'])}
+                        """
+
+                        for ad_name, ad_row in creative_node["children"].items():
+                            tree_html += f"""
+                            <div class="tree-level-6">
+                                {metrics_line(
+                                    ad_name,
+                                    ad_row['clicks'],
+                                    ad_row['leads'],
+                                    ad_row['reg'],
+                                    ad_row['ftd'],
+                                    ad_row['spend']
+                                )}
+                            </div>
+                            """
+
+                        tree_html += "</details>"
+
+                    tree_html += "</details>"
+                tree_html += "</details>"
+            tree_html += "</details>"
+        tree_html += "</details>"
+
+    tree_html += "</div>"
+
+    content = f"""
+    <div class="panel">
+        <div class="controls-row">
+            <div class="column-panel-title">Экспорт</div>
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                <a class="small-btn" href="{export_hierarchy_link}">⬇ Выгрузить CSV</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="panel filters">
+        <form method="get" action="/hierarchy">
+            <label>
+                Uploader
+                <select name="uploader">{uploader_options}</select>
+            </label>
+
+            <label>
+                Manager
+                <select name="manager">{manager_options}</select>
+            </label>
+
+            <label>
+                Geo
+                <select name="geo">{geo_options}</select>
+            </label>
+
+            <label>
+                Offer
+                <select name="offer">{offer_options}</select>
+            </label>
+
+            <label>
+                Search
+                <input type="text" name="search" value="{escape(search)}">
+            </label>
+
+            <button type="submit">Фильтровать</button>
+            <a href="/hierarchy">Сбросить</a>
+        </form>
+        <div class="hint">Логика: GEO → Platform → Manager → Offer → Creative → объявления. Считает из тех же сгруппированных строк, что и Сводка.</div>
+    </div>
+
+    {tree_html if rows else "<div class=\"panel\">Нет данных</div>"}
+    """
+
+    extra_scripts = """
+    <script>
+        const hierarchyStorageKey = 'teambead-hierarchy-state-v1';
+
+        function loadHierarchyState() {
+            const saved = JSON.parse(localStorage.getItem(hierarchyStorageKey) || '{}');
+            document.querySelectorAll('.hierarchy-node').forEach(node => {
+                const id = node.dataset.nodeId;
+                if (!id) return;
+
+                if (saved[id] === false) {
+                    node.removeAttribute('open');
+                } else if (saved[id] === true) {
+                    node.setAttribute('open', 'open');
+                }
+            });
+        }
+
+        function bindHierarchyState() {
+            document.querySelectorAll('.hierarchy-node').forEach(node => {
+                node.addEventListener('toggle', () => {
+                    const saved = JSON.parse(localStorage.getItem(hierarchyStorageKey) || '{}');
+                    saved[node.dataset.nodeId] = node.open;
+                    localStorage.setItem(hierarchyStorageKey, JSON.stringify(saved));
+                });
+            });
+        }
+
+        loadHierarchyState();
+        bindHierarchyState();
+    </script>
+    """
+
+    return page_shell("FB — Статистика", content, "hierarchy", extra_scripts)
