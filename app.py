@@ -96,6 +96,27 @@ class UserSession(Base):
     expires_at = Column(DateTime, nullable=False)
 
 
+class CapRow(Base):
+    __tablename__ = "cap_rows"
+
+    id = Column(Integer, primary_key=True, index=True)
+    advertiser = Column(String, default="")
+    owner_name = Column(String, default="")
+    buyer = Column(String, default="")
+    flow = Column(String, default="")
+    code = Column(String, default="")
+    geo = Column(String, default="")
+    rate = Column(String, default="")
+    baseline = Column(String, default="")
+    cap_value = Column(Float, default=0)
+    promo_code = Column(String, default="")
+    kpi = Column(String, default="")
+    link = Column(String, default="")
+    comments = Column(String, default="")
+    agent = Column(String, default="")
+    current_ftd = Column(Float, default=0)
+
+
 Base.metadata.create_all(bind=engine)
 
 
@@ -528,6 +549,37 @@ def parse_uploaded_dataframe(df, buyer):
     return items
 
 
+def safe_text(value):
+    if value is None:
+        return ""
+    if isinstance(value, float) and pd.isna(value):
+        return ""
+    return str(value).strip()
+
+
+def safe_cap_number(value):
+    text = safe_text(value).replace(",", ".")
+    try:
+        return float(text) if text else 0.0
+    except Exception:
+        return 0.0
+
+
+def normalize_geo_value(value):
+    raw = safe_text(value)
+    if not raw:
+        return ""
+    return raw.upper()
+
+
+def cap_fill_percent(current_ftd, cap_value):
+    cap_value = safe_number(cap_value)
+    current_ftd = safe_number(current_ftd)
+    if cap_value <= 0:
+        return 0.0
+    return (current_ftd / cap_value) * 100
+
+
 # =========================================
 # BLOCK 5 — DATA ACCESS
 # =========================================
@@ -579,6 +631,94 @@ def get_filter_options():
         sorted({r.geo for r in rows if r.geo}),
         sorted({r.offer for r in rows if r.offer}),
     )
+
+
+def get_caps_rows(search="", buyer="", geo="", owner_name=""):
+    Base.metadata.create_all(bind=engine, tables=[CapRow.__table__])
+    db = SessionLocal()
+    try:
+        query = db.query(CapRow)
+        if buyer:
+            query = query.filter(CapRow.buyer == buyer)
+        if geo:
+            query = query.filter(CapRow.geo == geo)
+        if owner_name:
+            query = query.filter(CapRow.owner_name == owner_name)
+        rows = query.order_by(CapRow.buyer.asc(), CapRow.geo.asc(), CapRow.id.desc()).all()
+    finally:
+        db.close()
+
+    search_lower = (search or "").strip().lower()
+    if not search_lower:
+        return rows
+
+    filtered = []
+    for row in rows:
+        haystack = " | ".join([
+            row.advertiser or "",
+            row.owner_name or "",
+            row.buyer or "",
+            row.flow or "",
+            row.code or "",
+            row.geo or "",
+            row.promo_code or "",
+            row.comments or "",
+            row.agent or "",
+        ]).lower()
+        if search_lower in haystack:
+            filtered.append(row)
+    return filtered
+
+
+def get_caps_filter_options():
+    Base.metadata.create_all(bind=engine, tables=[CapRow.__table__])
+    db = SessionLocal()
+    try:
+        rows = db.query(CapRow).all()
+        return (
+            sorted({r.buyer for r in rows if r.buyer}),
+            sorted({r.geo for r in rows if r.geo}),
+            sorted({r.owner_name for r in rows if r.owner_name}),
+        )
+    finally:
+        db.close()
+
+
+def import_caps_from_csv_if_needed():
+    Base.metadata.create_all(bind=engine, tables=[CapRow.__table__])
+    db = SessionLocal()
+    try:
+        if db.query(CapRow).count() > 0:
+            return
+        source_path = "/Users/ivansviderko/Downloads/Капы.csv"
+        if not os.path.exists(source_path):
+            return
+        df = pd.read_csv(source_path)
+        records = []
+        for _, row in df.iterrows():
+            records.append(CapRow(
+                advertiser=safe_text(row.get("Рекл:")),
+                owner_name=safe_text(row.get("Имя:")),
+                buyer=safe_text(row.get("Кабинет:")),
+                flow=safe_text(row.get("Поток:")),
+                code=normalize_geo_value(row.get("CODE:")),
+                geo=normalize_geo_value(row.get("GEO:")),
+                rate=safe_text(row.get("Ставка:")),
+                baseline=safe_text(row.get("БЛ:")),
+                cap_value=safe_cap_number(row.get("Капа:")),
+                promo_code=safe_text(row.get("Промокод:")),
+                kpi=safe_text(row.get("КПИ:")),
+                link=safe_text(row.get("Ссылка:")),
+                comments=safe_text(row.get("Коментарии:")),
+                agent=safe_text(row.get("Агент:")),
+                current_ftd=0,
+            ))
+        if records:
+            for item in records:
+                db.add(item)
+            db.commit()
+    finally:
+        db.close()
 
 
 # =========================================
@@ -1045,11 +1185,45 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 background:#ef4444;
                 box-shadow:0 0 0 4px rgba(239,68,68,0.12);
             }}
+            .caps-layout {{ display:grid; grid-template-columns: minmax(340px, 420px) 1fr; gap:16px; align-items:start; }}
+            .caps-form {{ display:grid; gap:12px; }}
+            .caps-form label {{ display:grid; gap:6px; font-size:12px; font-weight:800; }}
+            .caps-form input, .caps-form textarea, .caps-form select {{
+                width:100%;
+                border-radius:12px;
+                border:1px solid var(--border);
+                background: var(--panel-3);
+                color: var(--text);
+                padding:11px 12px;
+                outline:none;
+            }}
+            .caps-form textarea {{ min-height: 110px; resize: vertical; }}
+            .caps-grid-2 {{ display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:10px; }}
+            .caps-table {{ min-width: 1580px; }}
+            .progress-shell {{
+                min-width: 130px;
+                display:grid;
+                gap:6px;
+            }}
+            .progress-bar {{
+                width:100%;
+                height:10px;
+                border-radius:999px;
+                background: rgba(255,255,255,0.08);
+                overflow:hidden;
+            }}
+            .progress-bar > span {{
+                display:block;
+                height:100%;
+                border-radius:999px;
+                background: linear-gradient(90deg, var(--accent3), var(--accent1));
+            }}
             .muted {{ color: var(--muted); }}
             @media (max-width: 1200px) {{
                 .stats-grid {{ grid-template-columns: repeat(3, minmax(130px, 1fr)); }}
                 .toolbar-grid {{ grid-template-columns: 1fr; }}
                 .users-layout {{ grid-template-columns: 1fr; }}
+                .caps-layout {{ grid-template-columns: 1fr; }}
             }}
             @media (max-width: 900px) {{
                 .app {{ display: block; }}
@@ -1300,6 +1474,206 @@ def users_page_html(current_user, error_text="", success_text="", form_data=None
     </div>
     """
     return page_shell("Users", content, active_page="users", current_user=current_user)
+
+
+def caps_page_html(current_user, rows, filter_values=None, form_data=None, success_text="", error_text=""):
+    filter_values = filter_values or {}
+    form_data = form_data or {}
+    buyers, geos, owners = get_caps_filter_options()
+    buyer_options = make_options(buyers, filter_values.get("buyer", ""))
+    geo_options = make_options(geos, filter_values.get("geo", ""))
+    owner_options = make_options(owners, filter_values.get("owner_name", ""))
+
+    total_cap = sum(safe_number(row.cap_value) for row in rows)
+    total_current = sum(safe_number(row.current_ftd) for row in rows)
+    fill_avg = cap_fill_percent(total_current, total_cap)
+    active_caps = len([row for row in rows if safe_number(row.cap_value) > 0])
+
+    rows_html = ""
+    for row in rows:
+        fill_percent = cap_fill_percent(row.current_ftd, row.cap_value)
+        bar_width = max(0, min(100, fill_percent))
+        state = "OK"
+        if fill_percent >= 100:
+            state = "FULL"
+        elif fill_percent >= 80:
+            state = "HOT"
+        rows_html += f"""
+        <tr>
+            <td>{row.id}</td>
+            <td>{escape(row.advertiser or "")}</td>
+            <td>{escape(row.owner_name or "")}</td>
+            <td>{escape(row.buyer or "")}</td>
+            <td>{escape(row.flow or "")}</td>
+            <td>{escape(row.code or "")}</td>
+            <td>{escape(row.geo or "")}</td>
+            <td>{escape(row.rate or "")}</td>
+            <td>{escape(row.baseline or "")}</td>
+            <td>{format_int_or_float(row.cap_value)}</td>
+            <td>{format_int_or_float(row.current_ftd)}</td>
+            <td>
+                <div class="progress-shell">
+                    <div><strong>{fill_percent:.0f}%</strong> · {state}</div>
+                    <div class="progress-bar"><span style="width:{bar_width}%;"></span></div>
+                </div>
+            </td>
+            <td>{escape(row.promo_code or "")}</td>
+            <td>{escape((row.agent or "")[:22])}</td>
+            <td>{escape((row.comments or "")[:22])}</td>
+            <td style="display:flex; gap:8px; flex-wrap:wrap;">
+                <form method="get" action="/caps">
+                    <input type="hidden" name="edit" value="{row.id}">
+                    <button type="submit" class="ghost-btn small-btn">Edit</button>
+                </form>
+                <form method="post" action="/caps/delete" onsubmit="return confirm('Удалить эту капу?');">
+                    <input type="hidden" name="cap_id" value="{row.id}">
+                    <button type="submit" class="ghost-btn small-btn">Delete</button>
+                </form>
+            </td>
+        </tr>
+        """
+
+    message_html = ""
+    if success_text:
+        message_html += f'<div class="notice">{escape(success_text)}</div>'
+    if error_text:
+        message_html += f'<div class="notice notice-danger">{escape(error_text)}</div>'
+
+    current_edit_id = str(form_data.get("edit_id") or "")
+    form_title = "Редактирование капы" if current_edit_id else "Новая капа"
+    submit_label = "Сохранить" if current_edit_id else "Добавить капу"
+
+    content = f"""
+    {message_html}
+    <div class="caps-layout">
+        <div class="panel">
+            <div class="panel-title">{form_title}</div>
+            <div class="panel-subtitle">Тут уже можно вести капы вручную и постепенно подвязать авто-прогресс из статистики.</div>
+            <form method="post" action="/caps/save" class="caps-form" style="margin-top:14px;">
+                <input type="hidden" name="edit_id" value="{escape(current_edit_id)}">
+                <div class="caps-grid-2">
+                    <label>Рекл
+                        <input type="text" name="advertiser" value="{escape(form_data.get('advertiser', ''))}">
+                    </label>
+                    <label>Имя
+                        <input type="text" name="owner_name" value="{escape(form_data.get('owner_name', ''))}">
+                    </label>
+                </div>
+                <div class="caps-grid-2">
+                    <label>Кабинет
+                        <input type="text" name="buyer" value="{escape(form_data.get('buyer', ''))}" required>
+                    </label>
+                    <label>Поток
+                        <input type="text" name="flow" value="{escape(form_data.get('flow', ''))}">
+                    </label>
+                </div>
+                <div class="caps-grid-2">
+                    <label>CODE
+                        <input type="text" name="code" value="{escape(form_data.get('code', ''))}">
+                    </label>
+                    <label>GEO
+                        <input type="text" name="geo" value="{escape(form_data.get('geo', ''))}">
+                    </label>
+                </div>
+                <div class="caps-grid-2">
+                    <label>Ставка
+                        <input type="text" name="rate" value="{escape(form_data.get('rate', ''))}">
+                    </label>
+                    <label>БЛ
+                        <input type="text" name="baseline" value="{escape(form_data.get('baseline', ''))}">
+                    </label>
+                </div>
+                <div class="caps-grid-2">
+                    <label>Капа
+                        <input type="number" step="0.01" name="cap_value" value="{escape(form_data.get('cap_value', ''))}" required>
+                    </label>
+                    <label>Current FTD
+                        <input type="number" step="0.01" name="current_ftd" value="{escape(form_data.get('current_ftd', '0'))}">
+                    </label>
+                </div>
+                <div class="caps-grid-2">
+                    <label>Промокод
+                        <input type="text" name="promo_code" value="{escape(form_data.get('promo_code', ''))}">
+                    </label>
+                    <label>Агент
+                        <input type="text" name="agent" value="{escape(form_data.get('agent', ''))}">
+                    </label>
+                </div>
+                <label>Ссылка
+                    <input type="text" name="link" value="{escape(form_data.get('link', ''))}">
+                </label>
+                <label>КПИ
+                    <textarea name="kpi">{escape(form_data.get('kpi', ''))}</textarea>
+                </label>
+                <label>Комментарии
+                    <textarea name="comments">{escape(form_data.get('comments', ''))}</textarea>
+                </label>
+                <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                    <button type="submit" class="btn">{submit_label}</button>
+                    <a href="/caps" class="ghost-btn">Сбросить</a>
+                </div>
+            </form>
+        </div>
+
+        <div>
+            <div class="panel compact-panel filters">
+                <div class="panel-title">Фильтры</div>
+                <form method="get" action="/caps">
+                    <label>Buyer<select name="buyer">{buyer_options}</select></label>
+                    <label>Geo<select name="geo">{geo_options}</select></label>
+                    <label>Имя<select name="owner_name">{owner_options}</select></label>
+                    <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="Поиск по капам"></label>
+                    <button type="submit">Фильтровать</button>
+                    <a href="/caps" class="ghost-btn">Сбросить</a>
+                </form>
+            </div>
+
+            <div class="panel compact-panel">
+                <div class="stats-grid">
+                    <div class="stat-card"><div class="name">Caps</div><div class="value">{active_caps}</div></div>
+                    <div class="stat-card"><div class="name">Cap Total</div><div class="value">{format_int_or_float(total_cap)}</div></div>
+                    <div class="stat-card"><div class="name">Current FTD</div><div class="value">{format_int_or_float(total_current)}</div></div>
+                    <div class="stat-card"><div class="name">Fill Avg</div><div class="value">{fill_avg:.0f}%</div></div>
+                </div>
+            </div>
+
+            <div class="panel compact-panel">
+                <div class="controls-line">
+                    <div>
+                        <div class="panel-title" style="margin-bottom:4px;">Caps table</div>
+                        <div class="panel-subtitle">CSV уже импортирован, новые капы можно добавлять вручную прямо тут.</div>
+                    </div>
+                </div>
+                <div class="table-wrap">
+                    <table class="caps-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Рекл</th>
+                                <th>Имя</th>
+                                <th>Кабинет</th>
+                                <th>Поток</th>
+                                <th>CODE</th>
+                                <th>GEO</th>
+                                <th>Ставка</th>
+                                <th>БЛ</th>
+                                <th>Капа</th>
+                                <th>Current FTD</th>
+                                <th>Fill</th>
+                                <th>Промокод</th>
+                                <th>Агент</th>
+                                <th>Комментарии</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>{rows_html if rows_html else '<tr><td colspan="16">Нет кап</td></tr>'}</tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    """
+    return page_shell("Caps", content, active_page="caps", current_user=current_user)
 
 
 def render_dev_page(title, emoji, active_page, current_user=None):
@@ -1937,12 +2311,149 @@ def finance_page(request: Request):
 
 
 @app.get("/caps", response_class=HTMLResponse)
-def caps_page(request: Request):
+def caps_page(
+    request: Request,
+    search: str = Query(default=""),
+    buyer: str = Query(default=""),
+    geo: str = Query(default=""),
+    owner_name: str = Query(default=""),
+    edit: str = Query(default=""),
+    message: str = Query(default=""),
+):
     user = get_current_user(request)
     if not user:
         return auth_redirect_response()
     enforce_page_access(user, "caps")
-    return render_dev_page("Caps", "🧢", "caps", current_user=user)
+    import_caps_from_csv_if_needed()
+
+    rows = get_caps_rows(search=search, buyer=buyer, geo=geo, owner_name=owner_name)
+    form_data = {}
+    if edit:
+        db = SessionLocal()
+        try:
+            item = db.query(CapRow).filter(CapRow.id == safe_number(edit)).first()
+            if item:
+                form_data = {
+                    "edit_id": str(item.id),
+                    "advertiser": item.advertiser or "",
+                    "owner_name": item.owner_name or "",
+                    "buyer": item.buyer or "",
+                    "flow": item.flow or "",
+                    "code": item.code or "",
+                    "geo": item.geo or "",
+                    "rate": item.rate or "",
+                    "baseline": item.baseline or "",
+                    "cap_value": format_int_or_float(item.cap_value),
+                    "current_ftd": format_int_or_float(item.current_ftd),
+                    "promo_code": item.promo_code or "",
+                    "kpi": item.kpi or "",
+                    "link": item.link or "",
+                    "comments": item.comments or "",
+                    "agent": item.agent or "",
+                }
+        finally:
+            db.close()
+    return caps_page_html(
+        user,
+        rows,
+        filter_values={"search": search, "buyer": buyer, "geo": geo, "owner_name": owner_name},
+        form_data=form_data,
+        success_text=message,
+    )
+
+
+@app.post("/caps/save")
+def save_cap(
+    request: Request,
+    edit_id: str = Form(default=""),
+    advertiser: str = Form(default=""),
+    owner_name: str = Form(default=""),
+    buyer: str = Form(...),
+    flow: str = Form(default=""),
+    code: str = Form(default=""),
+    geo: str = Form(default=""),
+    rate: str = Form(default=""),
+    baseline: str = Form(default=""),
+    cap_value: str = Form(...),
+    current_ftd: str = Form(default="0"),
+    promo_code: str = Form(default=""),
+    kpi: str = Form(default=""),
+    link: str = Form(default=""),
+    comments: str = Form(default=""),
+    agent: str = Form(default=""),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "caps")
+
+    clean_buyer = safe_text(buyer)
+    clean_cap_value = safe_cap_number(cap_value)
+    form_data = {
+        "edit_id": edit_id,
+        "advertiser": advertiser,
+        "owner_name": owner_name,
+        "buyer": buyer,
+        "flow": flow,
+        "code": code,
+        "geo": geo,
+        "rate": rate,
+        "baseline": baseline,
+        "cap_value": cap_value,
+        "current_ftd": current_ftd,
+        "promo_code": promo_code,
+        "kpi": kpi,
+        "link": link,
+        "comments": comments,
+        "agent": agent,
+    }
+    if not clean_buyer:
+        return HTMLResponse(caps_page_html(user, get_caps_rows(), form_data=form_data, error_text="Поле Кабинет обязательно."), status_code=400)
+    if clean_cap_value <= 0:
+        return HTMLResponse(caps_page_html(user, get_caps_rows(), form_data=form_data, error_text="Капа должна быть больше 0."), status_code=400)
+
+    db = SessionLocal()
+    try:
+        item = db.query(CapRow).filter(CapRow.id == safe_number(edit_id)).first() if edit_id else None
+        if not item:
+            item = CapRow()
+            db.add(item)
+
+        item.advertiser = safe_text(advertiser)
+        item.owner_name = safe_text(owner_name)
+        item.buyer = clean_buyer
+        item.flow = safe_text(flow)
+        item.code = normalize_geo_value(code)
+        item.geo = normalize_geo_value(geo)
+        item.rate = safe_text(rate)
+        item.baseline = safe_text(baseline)
+        item.cap_value = clean_cap_value
+        item.current_ftd = safe_cap_number(current_ftd)
+        item.promo_code = safe_text(promo_code)
+        item.kpi = safe_text(kpi)
+        item.link = safe_text(link)
+        item.comments = safe_text(comments)
+        item.agent = safe_text(agent)
+        db.commit()
+    finally:
+        db.close()
+
+    return RedirectResponse(url="/caps?message=Капа сохранена", status_code=303)
+
+
+@app.post("/caps/delete")
+def delete_cap(request: Request, cap_id: str = Form(...)):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "caps")
+    db = SessionLocal()
+    try:
+        db.query(CapRow).filter(CapRow.id == safe_number(cap_id)).delete()
+        db.commit()
+    finally:
+        db.close()
+    return RedirectResponse(url="/caps?message=Капа удалена", status_code=303)
 
 
 @app.get("/chatterfy", response_class=HTMLResponse)
