@@ -1,6 +1,6 @@
-from fastapi import FastAPI, UploadFile, File, Query, Form, Request, HTTPException
+from fastapi import FastAPI, UploadFile, File, Query, Form, Request
 from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse, Response
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Float
 from sqlalchemy.orm import sessionmaker, declarative_base
 import pandas as pd
 import shutil
@@ -10,20 +10,11 @@ from urllib.parse import urlencode
 from html import escape
 import io
 import csv
-import secrets
-import hashlib
-from datetime import datetime, timedelta
 
 # =========================================
 # BLOCK 1 — DATABASE
 # =========================================
 DATABASE_URL = "sqlite:///./test.db"
-SESSION_COOKIE_NAME = "teambead_session"
-SESSION_DURATION_DAYS = 14
-DEFAULT_USERS = [
-    {"username": os.getenv("TEAMBEAD_ADMIN1_LOGIN", "admin1"), "password": os.getenv("TEAMBEAD_ADMIN1_PASSWORD", "change_me_123"), "role": "superadmin", "display_name": os.getenv("TEAMBEAD_ADMIN1_NAME", "Admin 1")},
-    {"username": os.getenv("TEAMBEAD_ADMIN2_LOGIN", "admin2"), "password": os.getenv("TEAMBEAD_ADMIN2_PASSWORD", "change_me_456"), "role": "admin", "display_name": os.getenv("TEAMBEAD_ADMIN2_NAME", "Admin 2")},
-]
 
 engine = create_engine(
     DATABASE_URL,
@@ -62,27 +53,6 @@ class FBRow(Base):
     date_end = Column(String)
 
 
-class User(Base):
-    __tablename__ = "users"
-
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True, nullable=False)
-    password_hash = Column(String, nullable=False)
-    role = Column(String, default="buyer", nullable=False)
-    display_name = Column(String, default="")
-    buyer_name = Column(String, default="")
-    is_active = Column(Integer, default=1)
-
-
-class UserSession(Base):
-    __tablename__ = "user_sessions"
-
-    id = Column(Integer, primary_key=True, index=True)
-    token = Column(String, unique=True, index=True, nullable=False)
-    username = Column(String, index=True, nullable=False)
-    expires_at = Column(DateTime, nullable=False)
-
-
 Base.metadata.create_all(bind=engine)
 
 
@@ -92,231 +62,11 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(title="TEAMbead CRM")
 
 
-# =========================================
-# BLOCK 3.1 — AUTH HELPERS
-# =========================================
-def hash_password(password: str) -> str:
-    salt = secrets.token_hex(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120000)
-    return f"{salt}${digest.hex()}"
-
-
-def verify_password(password: str, stored_hash: str) -> bool:
-    try:
-        salt, expected = stored_hash.split("$", 1)
-        digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120000).hex()
-        return secrets.compare_digest(digest, expected)
-    except Exception:
-        return False
-
-
-def ensure_default_users():
-    db = SessionLocal()
-    try:
-        for item in DEFAULT_USERS:
-            username = (item.get("username") or "").strip()
-            password = item.get("password") or ""
-            if not username or not password:
-                continue
-            existing = db.query(User).filter(User.username == username).first()
-            if existing:
-                changed = False
-                if not existing.display_name and item.get("display_name"):
-                    existing.display_name = item.get("display_name")
-                    changed = True
-                if not existing.role and item.get("role"):
-                    existing.role = item.get("role")
-                    changed = True
-                if changed:
-                    db.add(existing)
-                continue
-            db.add(User(
-                username=username,
-                password_hash=hash_password(password),
-                role=item.get("role") or "admin",
-                display_name=item.get("display_name") or username,
-                is_active=1,
-            ))
-        db.commit()
-    finally:
-        db.close()
-
-
-def create_user_session(username: str) -> str:
-    token = secrets.token_urlsafe(32)
-    expires_at = datetime.utcnow() + timedelta(days=SESSION_DURATION_DAYS)
-    db = SessionLocal()
-    try:
-        db.add(UserSession(token=token, username=username, expires_at=expires_at))
-        db.commit()
-        return token
-    finally:
-        db.close()
-
-
-def delete_user_session(token: str):
-    if not token:
-        return
-    db = SessionLocal()
-    try:
-        db.query(UserSession).filter(UserSession.token == token).delete()
-        db.commit()
-    finally:
-        db.close()
-
-
-def get_current_user(request: Request):
-    token = request.cookies.get(SESSION_COOKIE_NAME)
-    if not token:
-        return None
-    db = SessionLocal()
-    try:
-        session = db.query(UserSession).filter(UserSession.token == token).first()
-        if not session:
-            return None
-        if session.expires_at <= datetime.utcnow():
-            db.delete(session)
-            db.commit()
-            return None
-        user = db.query(User).filter(User.username == session.username, User.is_active == 1).first()
-        if not user:
-            return None
-        return {
-            "id": user.id,
-            "username": user.username,
-            "display_name": user.display_name or user.username,
-            "role": user.role or "buyer",
-            "buyer_name": user.buyer_name or "",
-        }
-    finally:
-        db.close()
-
-
-def require_login(request: Request):
-    user = get_current_user(request)
-    if not user:
-        raise HTTPException(status_code=401)
-    return user
-
-
-def require_any_role(user, *roles):
-    if roles and user.get("role") not in roles:
-        raise HTTPException(status_code=403)
-
-
-def auth_redirect_response(url: str = "/login"):
-    return RedirectResponse(url=url, status_code=302)
-
-
-def login_page_html(error_text: str = ""):
-    error_html = f'<div class="login-error">{escape(error_text)}</div>' if error_text else ''
-    creds = ''.join([
-        f'<div class="cred-line"><strong>{escape(item["role"])}</strong> — {escape(item["username"])} / {escape(item["password"])}</div>'
-        for item in DEFAULT_USERS
-    ])
-    return f"""
-    <html>
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>TEAMbead CRM — Login</title>
-        <style>
-            :root {{
-                --bg: #07101f; --panel:#0d1729; --panel-2:#111f35; --text:#ebf2ff; --muted:#8ca3c7;
-                --border:#1f3150; --accent1:#38bdf8; --accent2:#2563eb; --accent3:#22c55e; --shadow:0 18px 40px rgba(0,0,0,.28);
-            }}
-            * {{ box-sizing:border-box; }}
-            body {{ margin:0; min-height:100vh; display:grid; place-items:center; padding:24px; color:var(--text);
-                background: radial-gradient(circle at top right, rgba(56,189,248,.14), transparent 24%), var(--bg);
-                font-family: "Avenir Next", "Nunito", "Trebuchet MS", "Segoe UI", Arial, sans-serif; }}
-            .login-shell {{ width:min(100%, 1020px); display:grid; grid-template-columns: 1.05fr .95fr; gap:20px; }}
-            .card {{ background:linear-gradient(180deg,var(--panel),var(--panel-2)); border:1px solid var(--border); border-radius:26px; box-shadow:var(--shadow); padding:28px; }}
-            .brand {{ display:flex; align-items:center; gap:12px; font-weight:900; font-size:28px; margin-bottom:12px; }}
-            .brand-mark {{ width:18px; height:18px; border-radius:999px; background:linear-gradient(135deg,var(--accent1),var(--accent2),var(--accent3)); box-shadow:0 0 0 5px rgba(56,189,248,.14); }}
-            .title {{ font-size:24px; font-weight:900; margin-bottom:8px; }}
-            .muted {{ color:var(--muted); line-height:1.5; }}
-            form {{ display:grid; gap:14px; margin-top:14px; }}
-            label {{ display:grid; gap:7px; font-size:13px; font-weight:800; }}
-            input {{ border-radius:14px; border:1px solid var(--border); background:#16243c; color:var(--text); padding:13px 14px; font-size:15px; outline:none; }}
-            button {{ border:1px solid var(--border); background:linear-gradient(90deg,var(--accent2),var(--accent1)); color:white; padding:13px 16px; border-radius:14px; font-weight:900; cursor:pointer; }}
-            .login-error {{ margin-top:12px; padding:12px 14px; border-radius:14px; background:rgba(239,68,68,.14); border:1px solid rgba(239,68,68,.28); }}
-            .cred-box {{ margin-top:18px; padding:14px; border-radius:18px; background:rgba(56,189,248,.06); border:1px solid var(--border); }}
-            .cred-title {{ font-weight:900; margin-bottom:10px; }}
-            .cred-line {{ padding:8px 0; border-top:1px solid rgba(255,255,255,.06); }}
-            .cred-line:first-child {{ border-top:none; padding-top:0; }}
-            .pill {{ display:inline-flex; gap:8px; align-items:center; padding:8px 12px; border-radius:999px; border:1px solid var(--border); background:rgba(56,189,248,.08); font-size:12px; font-weight:900; margin-top:16px; }}
-            @media (max-width: 860px) {{ .login-shell {{ grid-template-columns:1fr; }} .brand{{font-size:22px;}} }}
-        </style>
-    </head>
-    <body>
-        <div class="login-shell">
-            <div class="card">
-                <div class="brand"><span class="brand-mark"></span><span>TEAMbead CRM</span></div>
-                <div class="title">Вход в систему</div>
-                <div class="muted">Сейчас добавлена базовая авторизация с ролями. Без входа CRM больше не открывается. Дальше сюда спокойно добавим Buyer, Operator и ограничения по разделам.</div>
-                <div class="pill">🔐 Роли готовы: superadmin / admin / buyer / operator</div>
-            </div>
-            <div class="card">
-                <div class="title">Login</div>
-                <div class="muted">Войди под админом. Потом уже сделаем отдельное управление пользователями внутри CRM.</div>
-                {error_html}
-                <form method="post" action="/login">
-                    <label>Login<input type="text" name="username" autocomplete="username" required></label>
-                    <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
-                    <button type="submit">Войти</button>
-                </form>
-                <div class="cred-box">
-                    <div class="cred-title">Стартовые админы</div>
-                    <div class="muted" style="margin-bottom:10px;">После входа поменяешь их как удобно через код или позже через отдельный экран пользователей.</div>
-                    {creds}
-                </div>
-            </div>
-        </div>
-    </body>
-    </html>
-    """
-
-
-ensure_default_users()
-
-
-@app.get("/login", response_class=HTMLResponse)
-def login_page(request: Request):
-    if get_current_user(request):
-        return RedirectResponse(url="/grouped", status_code=302)
-    return HTMLResponse(login_page_html())
-
-
-@app.post("/login")
-def login_submit(username: str = Form(...), password: str = Form(...)):
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter(User.username == username.strip(), User.is_active == 1).first()
-        if not user or not verify_password(password, user.password_hash):
-            return HTMLResponse(login_page_html("Неверный логин или пароль"), status_code=401)
-    finally:
-        db.close()
-
-    token = create_user_session(username.strip())
-    response = RedirectResponse(url="/grouped", status_code=302)
-    response.set_cookie(SESSION_COOKIE_NAME, token, httponly=True, samesite="lax", max_age=SESSION_DURATION_DAYS * 24 * 60 * 60)
-    return response
-
-
-@app.get("/logout")
-def logout(request: Request):
-    token = request.cookies.get(SESSION_COOKIE_NAME)
-    delete_user_session(token)
-    response = RedirectResponse(url="/login", status_code=302)
-    response.delete_cookie(SESSION_COOKIE_NAME)
-    return response
-
-
 @app.api_route("/", methods=["GET", "HEAD"])
 def home(request: Request):
     if request.method == "HEAD":
         return Response(status_code=200)
-    return RedirectResponse(url="/grouped" if get_current_user(request) else "/login", status_code=302)
+    return RedirectResponse(url="/grouped", status_code=302)
 
 
 # =========================================
@@ -646,7 +396,7 @@ def sidebar_html(active_page):
 
 
 
-def page_shell(title, content, active_page="grouped", extra_scripts="", top_actions="", current_user=None):
+def page_shell(title, content, active_page="grouped", extra_scripts="", top_actions=""):
     sidebar = sidebar_html(active_page)
     return f"""
     <html>
@@ -777,7 +527,6 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .page-title {{ font-size: 26px; font-weight: 900; letter-spacing: 0.2px; }}
             .subtitle {{ color: var(--muted); font-size: 13px; margin-top: 6px; }}
             .top-actions {{ display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }}
-            .user-chip {{ display:inline-flex; align-items:center; gap:8px; padding:9px 12px; border-radius:999px; border:1px solid var(--border); background:var(--panel-2); font-size:12px; font-weight:900; }}
             .btn, .small-btn, .theme-toggle, .filters button, .filters a, .upload-btn, .ghost-btn {{
                 border: 1px solid var(--border);
                 background: linear-gradient(90deg, var(--accent2), var(--accent1));
@@ -958,8 +707,6 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                     </div>
                     <div class="top-actions">
                         {top_actions}
-                        <div class="user-chip">👤 {escape((current_user or {}).get("display_name", "Гость"))} · {escape((current_user or {}).get("role", "guest"))}</div>
-                        <a class="ghost-btn small-btn" href="/logout">↩ Logout</a>
                         <button class="ghost-btn small-btn" onclick="toggleRowColors()">🎨 Цвета строк</button>
                         <button class="ghost-btn small-btn" onclick="toggleTheme()">🌙 / ☀️ Тема</button>
                     </div>
@@ -1066,7 +813,7 @@ def render_tree_nodes(nodes, level=1):
 
 
 
-def render_dev_page(title, emoji, active_page, current_user=None):
+def render_dev_page(title, emoji, active_page):
     content = f'''
     <div class="empty-dev">
         <div class="empty-dev-card">
@@ -1075,18 +822,14 @@ def render_dev_page(title, emoji, active_page, current_user=None):
         </div>
     </div>
     '''
-    return page_shell(title, content, active_page=active_page, current_user=current_user)
+    return page_shell(title, content, active_page=active_page)
 
 
 # =========================================
 # BLOCK 8 — UPLOAD
 # =========================================
 @app.post("/upload")
-async def upload_file(request: Request, buyer: str = Form(...), file: UploadFile = File(...)):
-    user = get_current_user(request)
-    if not user:
-        return auth_redirect_response()
-    require_any_role(user, "superadmin", "admin")
+async def upload_file(buyer: str = Form(...), file: UploadFile = File(...)):
     original_name = file.filename or ""
     ext = os.path.splitext(original_name)[1].lower() or ".csv"
     filename = f"temp_{uuid.uuid4()}{ext}"
@@ -1126,7 +869,6 @@ async def upload_file(request: Request, buyer: str = Form(...), file: UploadFile
 # =========================================
 @app.get("/export/grouped")
 def export_grouped_csv(
-    request: Request,
     buyer: str = Query(default=""),
     manager: str = Query(default=""),
     geo: str = Query(default=""),
@@ -1135,11 +877,6 @@ def export_grouped_csv(
     sort_by: str = Query(default="spend"),
     order: str = Query(default="desc"),
 ):
-    user = get_current_user(request)
-    if not user:
-        return auth_redirect_response()
-    if user.get("role") == "buyer" and user.get("buyer_name"):
-        buyer = user.get("buyer_name")
     rows = aggregate_grouped_rows(get_filtered_data(buyer, manager, geo, offer, search))
     reverse = order.lower() != "asc"
     rows.sort(key=lambda x: x.get(sort_by, 0) if x.get(sort_by) is not None else 0, reverse=reverse)
@@ -1165,18 +902,12 @@ def export_grouped_csv(
 
 @app.get("/export/hierarchy")
 def export_hierarchy_csv(
-    request: Request,
     buyer: str = Query(default=""),
     manager: str = Query(default=""),
     geo: str = Query(default=""),
     offer: str = Query(default=""),
     search: str = Query(default=""),
 ):
-    user = get_current_user(request)
-    if not user:
-        return auth_redirect_response()
-    if user.get("role") == "buyer" and user.get("buyer_name"):
-        buyer = user.get("buyer_name")
     rows = aggregate_grouped_rows(get_filtered_data(buyer, manager, geo, offer, search))
     output = io.StringIO()
     writer = csv.writer(output)
@@ -1196,7 +927,6 @@ def export_hierarchy_csv(
 # =========================================
 @app.get("/grouped", response_class=HTMLResponse)
 def show_grouped_table(
-    request: Request,
     buyer: str = Query(default=""),
     manager: str = Query(default=""),
     geo: str = Query(default=""),
@@ -1205,11 +935,6 @@ def show_grouped_table(
     sort_by: str = Query(default="spend"),
     order: str = Query(default="desc"),
 ):
-    user = get_current_user(request)
-    if not user:
-        return auth_redirect_response()
-    if user.get("role") == "buyer" and user.get("buyer_name"):
-        buyer = user.get("buyer_name")
     data = get_filtered_data(buyer, manager, geo, offer, search)
     rows = aggregate_grouped_rows(data)
     all_buyers, all_managers, all_geos, all_offers = get_filter_options()
@@ -1517,7 +1242,7 @@ def show_grouped_table(
     """
 
     top_actions = f'<a class="small-btn" href="{export_link}">⬇ CSV</a>'
-    return page_shell("FB — Export", content, "grouped", extra_scripts, top_actions=top_actions, current_user=user)
+    return page_shell("FB — Export", content, "grouped", extra_scripts, top_actions=top_actions)
 
 
 # =========================================
@@ -1525,18 +1250,12 @@ def show_grouped_table(
 # =========================================
 @app.get("/hierarchy", response_class=HTMLResponse)
 def show_hierarchy(
-    request: Request,
     buyer: str = Query(default=""),
     manager: str = Query(default=""),
     geo: str = Query(default=""),
     offer: str = Query(default=""),
     search: str = Query(default=""),
 ):
-    user = get_current_user(request)
-    if not user:
-        return auth_redirect_response()
-    if user.get("role") == "buyer" and user.get("buyer_name"):
-        buyer = user.get("buyer_name")
     data = get_filtered_data(buyer, manager, geo, offer, search)
     rows = aggregate_grouped_rows(data)
     all_buyers, all_managers, all_geos, all_offers = get_filter_options()
@@ -1579,39 +1298,27 @@ def show_hierarchy(
     '''
 
     top_actions = f'<a class="small-btn" href="{export_link}">⬇ CSV</a>'
-    return page_shell("FB — Statistic", content, "hierarchy", top_actions=top_actions, current_user=user)
+    return page_shell("FB — Statistic", content, "hierarchy", top_actions=top_actions)
 
 
 # =========================================
 # BLOCK 12 — PLACEHOLDERS
 # =========================================
 @app.get("/finance", response_class=HTMLResponse)
-def finance_page(request: Request):
-    user = get_current_user(request)
-    if not user:
-        return auth_redirect_response()
-    return render_dev_page("Finance", "💸", "finance", current_user=user)
+def finance_page():
+    return render_dev_page("Finance", "💸", "finance")
 
 
 @app.get("/caps", response_class=HTMLResponse)
-def caps_page(request: Request):
-    user = get_current_user(request)
-    if not user:
-        return auth_redirect_response()
-    return render_dev_page("Caps", "🧢", "caps", current_user=user)
+def caps_page():
+    return render_dev_page("Caps", "🧢", "caps")
 
 
 @app.get("/chatterfy", response_class=HTMLResponse)
-def chatterfy_page(request: Request):
-    user = get_current_user(request)
-    if not user:
-        return auth_redirect_response()
-    return render_dev_page("Chatterfy", "💬", "chatterfy", current_user=user)
+def chatterfy_page():
+    return render_dev_page("Chatterfy", "💬", "chatterfy")
 
 
 @app.get("/hold-wager", response_class=HTMLResponse)
-def hold_wager_page(request: Request):
-    user = get_current_user(request)
-    if not user:
-        return auth_redirect_response()
-    return render_dev_page("Hold/Wager", "🎯", "holdwager", current_user=user)
+def hold_wager_page():
+    return render_dev_page("Hold/Wager", "🎯", "holdwager")
