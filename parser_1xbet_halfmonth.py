@@ -78,9 +78,67 @@ def export_players_report():
 
         # 1. Логин
         page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=90000)
-        page.fill('input[type="text"]', PARTNER_LOGIN)
-        page.fill('input[type="password"]', PARTNER_PASSWORD)
-        page.click('button[type="submit"]')
+        page.wait_for_load_state("networkidle", timeout=90000)
+
+        login_filled = False
+        for sel in [
+            'input[name="login"]',
+            'input[name="username"]',
+            'input[type="email"]',
+            'input[type="text"]',
+            'input[autocomplete="username"]',
+        ]:
+            try:
+                locator = page.locator(sel).first
+                locator.wait_for(state="visible", timeout=10000)
+                locator.fill(PARTNER_LOGIN)
+                login_filled = True
+                break
+            except Exception:
+                pass
+
+        if not login_filled:
+            browser.close()
+            raise RuntimeError("Не удалось найти поле логина на странице входа")
+
+        password_filled = False
+        for sel in [
+            'input[name="password"]',
+            'input[type="password"]',
+            'input[autocomplete="current-password"]',
+        ]:
+            try:
+                locator = page.locator(sel).first
+                locator.wait_for(state="visible", timeout=10000)
+                locator.fill(PARTNER_PASSWORD)
+                password_filled = True
+                break
+            except Exception:
+                pass
+
+        if not password_filled:
+            browser.close()
+            raise RuntimeError("Не удалось найти поле пароля на странице входа")
+
+        clicked = False
+        for sel in [
+            'button[type="submit"]',
+            'button:has-text("Войти")',
+            'button:has-text("Login")',
+            'button:has-text("Sign in")',
+            'text=Войти',
+        ]:
+            try:
+                page.locator(sel).first.click(timeout=10000)
+                clicked = True
+                break
+            except Exception:
+                pass
+
+        if not clicked:
+            browser.close()
+            raise RuntimeError("Не удалось найти кнопку входа")
+
         page.wait_for_load_state("networkidle", timeout=90000)
 
         # 2. Переход в отчет по игрокам
@@ -114,7 +172,6 @@ def export_players_report():
             except Exception:
                 pass
 
-        # fallback по name
         if not filled_from:
             for sel in ['input[name="dateFrom"]', 'input[name="from"]']:
                 try:
@@ -133,7 +190,7 @@ def export_players_report():
                 except Exception:
                     pass
 
-        # 4. Ставим галочку "Только новые игроки"
+        # 4. Галочка "Только новые игроки"
         checked_new_players = False
         try:
             label = page.locator('label:has-text("Только новые игроки")')
