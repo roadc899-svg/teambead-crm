@@ -226,6 +226,17 @@ class ChatterfyRow(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class ChatterfyIdRow(Base):
+    __tablename__ = "chatterfy_id_rows"
+
+    id = Column(Integer, primary_key=True, index=True)
+    telegram_id = Column(String, index=True, default="")
+    pp_player_id = Column(String, index=True, default="")
+    chat_link = Column(String, default="")
+    source_date = Column(String, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 Base.metadata.create_all(bind=engine)
 
 
@@ -750,6 +761,18 @@ def parse_chatterfy_tags(value):
     return result
 
 
+def parse_chatterfy_datetime(value):
+    text = safe_text(value)
+    if not text:
+        return None
+    for pattern in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ", "%d.%m.%Y %H:%M:%S", "%d.%m.%Y %H:%M"):
+        try:
+            return datetime.strptime(text, pattern)
+        except Exception:
+            continue
+    return None
+
+
 def cap_fill_percent(current_ftd, cap_value):
     cap_value = safe_number(cap_value)
     current_ftd = safe_number(current_ftd)
@@ -1138,6 +1161,10 @@ def ensure_chatterfy_table():
     Base.metadata.create_all(bind=engine, tables=[ChatterfyRow.__table__])
 
 
+def ensure_chatterfy_id_table():
+    Base.metadata.create_all(bind=engine, tables=[ChatterfyIdRow.__table__])
+
+
 def get_half_month_period(today: date | None = None):
     if today is None:
         today = datetime.utcnow().date()
@@ -1300,17 +1327,66 @@ def import_chatterfy_dataframe(df, source_name=""):
     return len(records)
 
 
-def get_chatterfy_rows(status="", search=""):
+def import_chatterfy_ids_dataframe(df):
+    ensure_chatterfy_id_table()
+    records = []
+    for _, row in df.iterrows():
+        telegram_id = safe_text(row.get("TELEGRAM ID") or row.get("Telegram ID") or row.get("telegram_id"))
+        pp_player_id = safe_text(row.get("1xbet_id") or row.get("pp_id") or row.get("ID игрока"))
+        chat_link = safe_text(row.get("chatlink") or row.get("chat_link") or row.get("link"))
+        source_date = safe_text(row.get("date") or row.get("Date"))
+        if not telegram_id and not pp_player_id and not chat_link:
+            continue
+        records.append(ChatterfyIdRow(
+            telegram_id=telegram_id,
+            pp_player_id=pp_player_id,
+            chat_link=chat_link,
+            source_date=source_date,
+        ))
+    db = SessionLocal()
+    try:
+        db.query(ChatterfyIdRow).delete()
+        db.commit()
+        for item in records:
+            db.add(item)
+        db.commit()
+    finally:
+        db.close()
+    return len(records)
+
+
+def get_chatterfy_rows(status="", search="", date_filter="", time_filter="", telegram_id="", pp_player_id=""):
     ensure_chatterfy_table()
+    ensure_chatterfy_id_table()
     db = SessionLocal()
     try:
         rows = db.query(ChatterfyRow).order_by(ChatterfyRow.id.desc()).all()
+        id_rows = db.query(ChatterfyIdRow).all()
     finally:
         db.close()
+    id_map = {}
+    for item in id_rows:
+        key = safe_text(item.telegram_id)
+        if key:
+            id_map[key] = item
     filtered = []
     search_lower = safe_text(search).lower()
     for row in rows:
+        linked = id_map.get(safe_text(row.telegram_id))
+        started_dt = parse_chatterfy_datetime(row.started)
+        started_date = started_dt.strftime("%d.%m.%Y") if started_dt else ""
+        started_time = started_dt.strftime("%H:%M") if started_dt else ""
+        linked_pp = safe_text(linked.pp_player_id) if linked else ""
+        linked_chat = safe_text(linked.chat_link) if linked else ""
         if status and (row.status or "") != status:
+            continue
+        if date_filter and date_filter != started_date:
+            continue
+        if time_filter and not started_time.startswith(time_filter):
+            continue
+        if telegram_id and telegram_id not in safe_text(row.telegram_id):
+            continue
+        if pp_player_id and pp_player_id not in linked_pp:
             continue
         if search_lower:
             haystack = " | ".join([
@@ -1322,10 +1398,20 @@ def get_chatterfy_rows(status="", search=""):
                 row.offer or "",
                 row.manager or "",
                 row.geo or "",
+                linked_pp,
+                linked_chat,
+                started_date,
+                started_time,
             ]).lower()
             if search_lower not in haystack:
                 continue
-        filtered.append(row)
+        filtered.append({
+            "row": row,
+            "started_date": started_date,
+            "started_time": started_time,
+            "pp_player_id": linked_pp,
+            "chat_link": linked_chat,
+        })
     return filtered
 
 
@@ -1342,6 +1428,21 @@ def import_chatterfy_from_csv_if_needed():
         return
     df = pd.read_csv(source_path)
     import_chatterfy_dataframe(df, os.path.basename(source_path))
+
+
+def import_chatterfy_ids_from_csv_if_needed():
+    ensure_chatterfy_id_table()
+    db = SessionLocal()
+    try:
+        if db.query(ChatterfyIdRow).count() > 0:
+            return
+    finally:
+        db.close()
+    source_path = "/Users/ivansviderko/Downloads/ID_Chatterfy.csv"
+    if not os.path.exists(source_path):
+        return
+    df = pd.read_csv(source_path)
+    import_chatterfy_ids_dataframe(df)
 
 def get_partner_period_options():
     ensure_partner_table()
@@ -3277,19 +3378,38 @@ def render_dev_page(title, emoji, active_page, current_user=None):
     return page_shell(title, content, active_page=active_page, current_user=current_user)
 
 
-def chatterfy_page_html(current_user, rows, status="", search="", success_text="", error_text=""):
-    status_values = sorted({safe_text(row.status) for row in rows if safe_text(row.status)})
+def chatterfy_page_html(
+    current_user,
+    rows,
+    status="",
+    search="",
+    date_filter="",
+    time_filter="",
+    telegram_id="",
+    pp_player_id="",
+    page=1,
+    total_count=0,
+    per_page=100,
+    success_text="",
+    error_text="",
+):
+    status_values = sorted({safe_text(item["row"].status) for item in rows if safe_text(item["row"].status)})
     status_options = make_options(status_values, status)
-    total_rows = len(rows)
-    total_tagged = len([row for row in rows if row.offer and row.platform and row.manager and row.geo])
-    total_flows = len({build_flow_key(row.flow_platform or row.platform, row.flow_manager or row.manager, row.flow_geo or row.geo) for row in rows if (row.flow_platform or row.platform)})
+    total_pages = max(1, (int(total_count or 0) + per_page - 1) // per_page)
 
     rows_html = ""
-    for row in rows[:500]:
+    for item in rows:
+        row = item["row"]
+        chat_link = item.get("chat_link") or ""
+        chat_link_html = f'<a href="https://{escape(chat_link)}" target="_blank" rel="noreferrer" class="ghost-btn small-btn">Open</a>' if chat_link else "—"
         rows_html += f"""
         <tr>
+            <td>{escape(item.get("started_date") or "")}</td>
+            <td>{escape(item.get("started_time") or "")}</td>
             <td>{escape(row.name or "")}</td>
             <td>{escape(row.telegram_id or "")}</td>
+            <td>{escape(item.get("pp_player_id") or "")}</td>
+            <td>{chat_link_html}</td>
             <td>{escape(row.username or "")}</td>
             <td>{escape(row.tags or "")}</td>
             <td>{escape(row.launch_date or "")}</td>
@@ -3307,57 +3427,74 @@ def chatterfy_page_html(current_user, rows, status="", search="", success_text="
     if error_text:
         message_html += f'<div class="notice notice-danger">{escape(error_text)}</div>'
 
+    base_qs = build_query_string(
+        status=status,
+        search=search,
+        date_filter=date_filter,
+        time_filter=time_filter,
+        telegram_id=telegram_id,
+        pp_player_id=pp_player_id,
+    )
+    prev_link = f"/chatterfy?{base_qs}&page={page - 1}" if page > 1 else ""
+    next_link = f"/chatterfy?{base_qs}&page={page + 1}" if page < total_pages else ""
+
     content = f"""
     {message_html}
-
-    <details class="panel">
-        <summary class="panel-title" style="cursor:pointer; list-style:none; display:flex; align-items:center; justify-content:space-between;">
-            <span>Upload Chatterfy</span>
-            <span class="btn" style="width:38px; height:38px; padding:0; border-radius:12px;">+</span>
-        </summary>
-        <div class="panel-subtitle" style="margin-top:10px;">Загрузка выгрузки Chatterfy для связки со Statistic.</div>
-        <form method="post" action="/chatterfy/upload" enctype="multipart/form-data" class="upload-form" style="margin-top:14px;">
-            <label>CSV / XLSX
-                <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
-            </label>
-            <button type="submit" class="upload-btn">Загрузить файл</button>
-        </form>
-    </details>
-
-    <div class="panel compact-panel filters">
-        <div class="panel-title">Фильтры</div>
-        <form method="get" action="/chatterfy">
-            <label>Status<select name="status">{status_options}</select></label>
-            <label>Search<input type="text" name="search" value="{escape(search)}" placeholder="Теги, менеджер, geo, offer"></label>
-            <button type="submit">Фильтровать</button>
-            <a href="/chatterfy" class="ghost-btn">Сбросить</a>
-        </form>
-    </div>
-
-    <div class="panel compact-panel">
-        <div class="stats-grid">
-            <div class="stat-card"><div class="name">Rows</div><div class="value">{total_rows}</div></div>
-            <div class="stat-card"><div class="name">Tagged</div><div class="value">{total_tagged}</div></div>
-            <div class="stat-card"><div class="name">Flows</div><div class="value">{total_flows}</div></div>
-        </div>
-    </div>
 
     <div class="panel compact-panel">
         <div class="controls-line">
             <div>
-                <div class="panel-title" style="margin-bottom:4px;">Chatterfy Export</div>
-                <div class="panel-subtitle">Первые 500 строк из последней выгрузки.</div>
+                <div class="panel-title" style="margin-bottom:4px;">Chatterfy Report</div>
+            </div>
+            <div style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; justify-content:flex-end;">
+                <details class="panel compact-panel" style="margin:0; min-width:260px;">
+                    <summary class="panel-title" style="margin:0; cursor:pointer; list-style:none; display:flex; align-items:center; justify-content:space-between;">
+                        <span>Upload</span>
+                        <span class="btn" style="width:34px; height:34px; padding:0; border-radius:10px;">+</span>
+                    </summary>
+                    <div class="upload-inline" style="margin-top:12px;">
+                        <form method="post" action="/chatterfy/upload" enctype="multipart/form-data" class="upload-inline">
+                            <label>Chatterfy
+                                <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
+                            </label>
+                            <button type="submit" class="upload-btn">Upload</button>
+                        </form>
+                        <form method="post" action="/chatterfy/upload-ids" enctype="multipart/form-data" class="upload-inline">
+                            <label>ID File
+                                <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
+                            </label>
+                            <button type="submit" class="upload-btn">Upload IDs</button>
+                        </form>
+                    </div>
+                </details>
+                <div class="panel compact-panel filters" style="margin:0; min-width:620px;">
+                    <form method="get" action="/chatterfy" style="justify-content:flex-end;">
+                        <label>Date<input type="text" name="date_filter" value="{escape(date_filter)}" placeholder="27.03.2026"></label>
+                        <label>Time<input type="text" name="time_filter" value="{escape(time_filter)}" placeholder="09:3"></label>
+                        <label>Telegram ID<input type="text" name="telegram_id" value="{escape(telegram_id)}" placeholder="5065148172"></label>
+                        <label>ID in PP<input type="text" name="pp_player_id" value="{escape(pp_player_id)}" placeholder="1601157577"></label>
+                        <label>Status<select name="status">{status_options}</select></label>
+                        <label>Search<input type="text" name="search" value="{escape(search)}" placeholder="tags, manager, geo, offer"></label>
+                        <input type="hidden" name="page" value="1">
+                        <button type="submit">Filter</button>
+                        <a href="/chatterfy" class="ghost-btn">Reset</a>
+                    </form>
+                </div>
             </div>
         </div>
         <div class="table-wrap">
-            <table style="min-width:1400px;">
+            <table style="min-width:1900px;">
                 <thead>
                     <tr>
+                        <th>Date</th>
+                        <th>Time</th>
                         <th>Name</th>
                         <th>Telegram ID</th>
+                        <th>ID in PP</th>
+                        <th>Chat</th>
                         <th>Username</th>
                         <th>Tags</th>
-                        <th>Date</th>
+                        <th>Tag Date</th>
                         <th>Platform</th>
                         <th>Manager</th>
                         <th>Geo</th>
@@ -3365,8 +3502,16 @@ def chatterfy_page_html(current_user, rows, status="", search="", success_text="
                         <th>Status</th>
                     </tr>
                 </thead>
-                <tbody>{rows_html if rows_html else '<tr><td colspan="10">Нет данных</td></tr>'}</tbody>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="14">Нет данных</td></tr>'}</tbody>
             </table>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:14px; flex-wrap:wrap;">
+            <div class="panel-subtitle">Показано {len(rows)} из {total_count}</div>
+            <div style="display:flex; gap:8px; align-items:center;">
+                {f'<a href="{prev_link}" class="ghost-btn small-btn">Prev</a>' if prev_link else '<span class="ghost-btn small-btn" style="opacity:0.45; pointer-events:none;">Prev</span>'}
+                <span class="user-chip">Page {page} / {total_pages}</span>
+                {f'<a href="{next_link}" class="ghost-btn small-btn">Next</a>' if next_link else '<span class="ghost-btn small-btn" style="opacity:0.45; pointer-events:none;">Next</span>'}
+            </div>
         </div>
     </div>
     """
@@ -4895,6 +5040,11 @@ def chatterfy_page(
     request: Request,
     status: str = Query(default=""),
     search: str = Query(default=""),
+    date_filter: str = Query(default=""),
+    time_filter: str = Query(default=""),
+    telegram_id: str = Query(default=""),
+    pp_player_id: str = Query(default=""),
+    page: int = Query(default=1),
     message: str = Query(default=""),
 ):
     user = get_current_user(request)
@@ -4902,8 +5052,34 @@ def chatterfy_page(
         return auth_redirect_response()
     enforce_page_access(user, "chatterfy")
     import_chatterfy_from_csv_if_needed()
-    rows = get_chatterfy_rows(status=status, search=search)
-    return chatterfy_page_html(user, rows, status=status, search=search, success_text=message)
+    import_chatterfy_ids_from_csv_if_needed()
+    rows = get_chatterfy_rows(
+        status=status,
+        search=search,
+        date_filter=date_filter,
+        time_filter=time_filter,
+        telegram_id=telegram_id,
+        pp_player_id=pp_player_id,
+    )
+    total_count = len(rows)
+    per_page = 100
+    page = max(1, int(page or 1))
+    start = (page - 1) * per_page
+    page_rows = rows[start:start + per_page]
+    return chatterfy_page_html(
+        user,
+        page_rows,
+        status=status,
+        search=search,
+        date_filter=date_filter,
+        time_filter=time_filter,
+        telegram_id=telegram_id,
+        pp_player_id=pp_player_id,
+        page=page,
+        total_count=total_count,
+        per_page=per_page,
+        success_text=message,
+    )
 
 
 @app.post("/chatterfy/upload")
@@ -4927,6 +5103,32 @@ async def upload_chatterfy_file(request: Request, file: UploadFile = File(...)):
                 df = pd.read_csv(filename, sep=";")
         import_chatterfy_dataframe(df, original_name)
         return RedirectResponse(url="/chatterfy?message=Chatterfy загружен", status_code=303)
+    finally:
+        if os.path.exists(filename):
+            os.remove(filename)
+
+
+@app.post("/chatterfy/upload-ids")
+async def upload_chatterfy_ids_file(request: Request, file: UploadFile = File(...)):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "chatterfy")
+    original_name = file.filename or "chatterfy_ids.csv"
+    ext = os.path.splitext(original_name)[1].lower() or ".csv"
+    filename = f"temp_chatterfy_ids_{uuid.uuid4()}{ext}"
+    try:
+        with open(filename, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        if ext in [".xlsx", ".xls"]:
+            df = pd.read_excel(filename)
+        else:
+            try:
+                df = pd.read_csv(filename)
+            except Exception:
+                df = pd.read_csv(filename, sep=";")
+        import_chatterfy_ids_dataframe(df)
+        return RedirectResponse(url="/chatterfy?message=ID file загружен", status_code=303)
     finally:
         if os.path.exists(filename):
             os.remove(filename)
