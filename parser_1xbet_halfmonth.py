@@ -4,6 +4,7 @@ import sys
 import json
 import argparse
 import re
+import subprocess
 from pathlib import Path
 from datetime import date, datetime
 
@@ -232,6 +233,41 @@ def ensure_runtime_ready():
         raise RuntimeError("Не найдено ни одного кабинета 1xBet для запуска")
 
 
+def launch_browser_with_repair(playwright_instance, headless):
+    launch_args = [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--no-zygote",
+        "--single-process",
+    ]
+    try:
+        return playwright_instance.chromium.launch(headless=headless, args=launch_args)
+    except Exception as exc:
+        error_text = str(exc)
+        if "Executable doesn't exist" not in error_text and "Please run the following command to download new browsers" not in error_text:
+            raise
+
+        log("Chromium не найден, пробую установить Playwright browser автоматически")
+        try:
+            subprocess.run(
+                [sys.executable, "-m", "playwright", "install", "chromium"],
+                check=True,
+                env=os.environ.copy(),
+                stdout=sys.stdout,
+                stderr=sys.stderr,
+            )
+        except Exception as install_exc:
+            raise RuntimeError(
+                "Не удалось автоматически установить Chromium для Playwright. "
+                f"Оригинальная ошибка: {error_text}. Ошибка установки: {install_exc}"
+            ) from install_exc
+
+        log("Chromium установлен, повторяю запуск браузера")
+        return playwright_instance.chromium.launch(headless=headless, args=launch_args)
+
+
 def get_half_month_period(today: date | None = None):
     if today is None:
         today = date.today()
@@ -342,25 +378,11 @@ def login_to_partner(page, account):
         update_account_status(account, "authorized", "Вход подтвержден")
         return
 
-    if not HEADLESS and page_has_captcha(page):
-        log("Обнаружена captcha, жду ручной вход в открытом браузере")
-        set_status(status="waiting_for_user", needs_user_action=True, message="Нужно пройти captcha и завершить вход в открытом окне браузера")
-        update_account_status(account, "waiting_for_user", "Нужно пройти captcha")
-        deadline = datetime.now().timestamp() + 180
-        while datetime.now().timestamp() < deadline:
-            page.wait_for_timeout(3000)
-            if is_authenticated(page):
-                log("Логин выполнен после ручного подтверждения")
-                set_status(needs_user_action=False)
-                update_account_status(account, "authorized", "Вход подтвержден после captcha")
-                return
-
     if page_has_captcha(page):
-        set_status(status="waiting_for_user", needs_user_action=True)
-        update_account_status(account, "waiting_for_user", "Сайт требует captcha")
+        update_account_status(account, "error", "Сайт требует captcha")
         raise RuntimeError(
             "1xPartners требует captcha при входе. "
-            "Открой режим авторизации в CRM через кнопку Open 1xBet Login, выполни вход вручную один раз и затем повтори запуск."
+            "Этот аккаунт не подходит для серверного запуска без GUI. Используй кабинет без captcha."
         )
 
     update_account_status(account, "error", "Логин не завершился успешно")
@@ -717,17 +739,7 @@ def export_players_report(account):
     update_account_status(account, "running", f"Готовлю выгрузку за {period['period_label']}")
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=HEADLESS,
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--no-zygote",
-                "--single-process",
-            ],
-        )
+        browser = launch_browser_with_repair(p, headless=HEADLESS)
 
         context_kwargs = {
             "accept_downloads": True,
@@ -766,22 +778,12 @@ def export_players_report(account):
 def authorize_session(account):
     ensure_runtime_ready()
     session_path = session_path_for_account(account)
-    log(f"Режим авторизации: открываю браузер для входа в 1xPartners для кабинета {account['label']}")
+    log(f"Режим проверки: проверяю логин и сессию 1xPartners для кабинета {account['label']}")
     set_status(current_account=account["id"], current_account_label=account["label"])
-    update_account_status(account, "authenticating", "Открываю браузер для сохранения сессии")
+    update_account_status(account, "authenticating", "Проверяю логин и сессию")
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=False,
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--no-zygote",
-                "--single-process",
-            ],
-        )
+        browser = launch_browser_with_repair(p, headless=HEADLESS)
 
         context_kwargs = {
             "accept_downloads": False,
@@ -809,8 +811,8 @@ def authorize_session(account):
                 raise RuntimeError("Сессия не была подтверждена")
 
             save_session_state(context, session_path)
-            log("Авторизация сохранена, теперь можно запускать парсер из CRM")
-            update_account_status(account, "authorized", "Сессия сохранена")
+            log("Проверка пройдена, сессия сохранена")
+            update_account_status(account, "authorized", "Сессия сохранена и готова к запуску")
             return {"authorized": True, "session_state_path": str(session_path), "account_id": account["id"]}
         finally:
             browser.close()
@@ -902,7 +904,7 @@ def main():
         print("crm_result:", result)
         return 0
     except Exception as exc:
-        current_status = "waiting_for_user" if "captcha" in str(exc).lower() else "error"
+        current_status = "error"
         try:
             accounts_for_status = resolve_selected_accounts(args.accounts)
             session_saved = any(session_path_for_account(account).exists() for account in accounts_for_status)
@@ -913,7 +915,7 @@ def main():
             mode=args.mode,
             finished_at=datetime.now().isoformat(timespec="seconds"),
             error=str(exc),
-            needs_user_action=current_status == "waiting_for_user",
+            needs_user_action=False,
             session_saved=session_saved,
         )
         print(f"[1XBET_PARSER_ERROR] {exc}", file=sys.stderr, flush=True)
