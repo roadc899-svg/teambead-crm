@@ -2369,6 +2369,47 @@ def get_partner_period_options():
         db.close()
 
 
+def get_partner_upload_summaries():
+    ensure_partner_table()
+    db = SessionLocal()
+    try:
+        rows = db.query(PartnerRow).order_by(PartnerRow.id.desc()).all()
+    finally:
+        db.close()
+
+    grouped = {}
+    cabinet_platform_map = get_cabinet_platform_map()
+    for row in rows:
+        source_key = safe_text(getattr(row, "source_name", ""))
+        if not source_key:
+            continue
+        item = grouped.setdefault(source_key, {
+            "source_name": source_key,
+            "cabinet_name": safe_text(getattr(row, "cabinet_name", "")),
+            "period_label": partner_row_period_label(row),
+            "platform_label": "CellXpert" if partner_row_platform(row, cabinet_platform_map) == "cellxpert" else "1xBet",
+            "rows_count": 0,
+            "players_count": 0,
+            "ftd_count": 0,
+            "date_start": "",
+            "date_end": "",
+        })
+        item["rows_count"] += 1
+        item["players_count"] += 1
+        if safe_number(getattr(row, "deposit_amount", 0)) > 0:
+            item["ftd_count"] += 1
+        registration_date = safe_text(getattr(row, "registration_date", ""))
+        if registration_date:
+            if not item["date_start"] or registration_date < item["date_start"]:
+                item["date_start"] = registration_date
+            if not item["date_end"] or registration_date > item["date_end"]:
+                item["date_end"] = registration_date
+
+    result = list(grouped.values())
+    result.sort(key=lambda item: (safe_text(item.get("period_label")), safe_text(item.get("cabinet_name")), safe_text(item.get("source_name"))), reverse=True)
+    return result
+
+
 def get_partner_rows_by_period(period_value="", period_label="", cabinet_name="", country="", search=""):
     ensure_partner_table()
     active_cabinets = get_active_cabinet_name_set()
@@ -6025,6 +6066,7 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
 def partner_report_page_html(
     current_user,
     rows,
+    upload_summaries=None,
     source_name="",
     cabinet_name="",
     upload_platform="1xbet",
@@ -6037,6 +6079,7 @@ def partner_report_page_html(
     success_text="",
     error_text="",
 ):
+    upload_summaries = upload_summaries or []
     all_sources = get_partner_period_options()
     all_cabinets = sorted(set(get_cabinet_names(active_only=True)))
     upload_cabinets = get_cabinet_names(active_only=True) or all_cabinets
@@ -6092,6 +6135,26 @@ def partner_report_page_html(
     if error_text:
         message_html += f'<div class="notice notice-danger">{escape(error_text)}</div>'
 
+    delete_upload_rows = ""
+    for item in upload_summaries:
+        delete_upload_rows += f"""
+        <tr>
+            <td>{escape(item.get('cabinet_name') or '—')}</td>
+            <td>{escape(item.get('platform_label') or '—')}</td>
+            <td>{escape(item.get('period_label') or '—')}</td>
+            <td>{escape(item.get('date_start') or '—')}</td>
+            <td>{escape(item.get('date_end') or '—')}</td>
+            <td>{format_int_or_float(item.get('rows_count', 0))}</td>
+            <td>{format_int_or_float(item.get('ftd_count', 0))}</td>
+            <td style="white-space:nowrap;">
+                <form method="post" action="/partner-report/delete-upload" onsubmit="return confirm('Delete this upload? This action will remove this cabinet period data.');">
+                    <input type="hidden" name="source_name" value="{escape(item.get('source_name', ''))}">
+                    <button type="submit" class="ghost-btn small-btn">Delete</button>
+                </form>
+            </td>
+        </tr>
+        """
+
     def header_link(field, label):
         next_order = "asc"
         arrow = ""
@@ -6145,6 +6208,29 @@ def partner_report_page_html(
                             </label>
                             <button type="submit" class="btn small-btn">Upload</button>
                         </form>
+                    </div>
+                </details>
+                <details class="upload-menu upload-menu-right" style="z-index:89;">
+                    <summary class="ghost-btn small-btn">Delete Upload</summary>
+                    <div class="upload-menu-list" style="width:min(860px, calc(100vw - 48px));">
+                        <div class="panel-subtitle">Choose the exact cabinet and period upload you want to remove.</div>
+                        <div class="table-wrap" style="margin-top:8px;">
+                            <table style="min-width:780px;">
+                                <thead>
+                                    <tr>
+                                        <th>Cabinet</th>
+                                        <th>Platform</th>
+                                        <th>Period</th>
+                                        <th>From</th>
+                                        <th>To</th>
+                                        <th>Rows</th>
+                                        <th>FTD</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>{delete_upload_rows if delete_upload_rows else '<tr><td colspan="8">No uploads yet</td></tr>'}</tbody>
+                            </table>
+                        </div>
                     </div>
                 </details>
         </div>
@@ -7004,8 +7090,6 @@ def render_dashboard_page(
         </div>
     </div>
 
-    {render_analytics_spotlight(rows)}
-
     {render_statistic_cards(totals)}
 
     {render_statistic_dashboard(rows)}
@@ -7717,6 +7801,7 @@ def partner_report_page(
         return auth_redirect_response()
     enforce_page_access(user, "partner")
     effective_period_label = resolve_period_label(period_view, period_label)
+    upload_summaries = get_partner_upload_summaries()
     filtered = get_partner_rows_by_period(
         period_value=source_name,
         period_label=effective_period_label,
@@ -7744,6 +7829,7 @@ def partner_report_page(
     return partner_report_page_html(
         user,
         filtered,
+        upload_summaries=upload_summaries,
         source_name=source_name,
         period_view=period_view,
         period_label=effective_period_label,
@@ -7812,6 +7898,31 @@ async def upload_partner_report_file(
     finally:
         if os.path.exists(filename):
             os.remove(filename)
+
+
+@app.post("/partner-report/delete-upload")
+def delete_partner_upload(
+    request: Request,
+    source_name: str = Form(default=""),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "partner")
+    clean_source_name = safe_text(source_name)
+    if not clean_source_name:
+        return RedirectResponse(url="/partner-report?message=Upload+not+found", status_code=303)
+
+    ensure_partner_table()
+    db = SessionLocal()
+    try:
+        db.query(PartnerRow).filter(PartnerRow.source_name == clean_source_name).delete()
+        db.commit()
+    finally:
+        db.close()
+    clear_runtime_cache("stat_support::")
+    refresh_cap_current_ftd_from_partner()
+    return RedirectResponse(url="/partner-report?message=Upload+deleted", status_code=303)
 
 
 @app.post("/partner-report/flags/save")
