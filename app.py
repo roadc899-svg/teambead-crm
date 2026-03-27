@@ -1,6 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, Query, Form, Request, HTTPException, Header
-from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse, Response, FileResponse
 from fastapi.exception_handlers import http_exception_handler
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
 from sqlalchemy.orm import sessionmaker, declarative_base
 import pandas as pd
@@ -26,6 +27,7 @@ DATABASE_URL = "sqlite:///./test.db"
 SESSION_COOKIE_NAME = "teambead_session"
 SESSION_DURATION_DAYS = 14
 DATA_UPLOAD_DIR = "./uploaded_data"
+STATIC_DIR = "./static"
 FINANCE_UPLOAD_PATH = os.path.join(DATA_UPLOAD_DIR, "finance_latest.csv")
 PARTNER_UPLOAD_DIR = os.path.join(DATA_UPLOAD_DIR, "partner_reports")
 PARTNER_IMPORT_API_KEY = os.getenv("TEAMBEAD_PARTNER_IMPORT_KEY", "8hF9sK2LmQpX91zA")
@@ -244,6 +246,31 @@ Base.metadata.create_all(bind=engine)
 # BLOCK 3 — APP
 # =========================================
 app = FastAPI(title="TEAMbead CRM")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/favicon.jpg", include_in_schema=False)
+def favicon_jpg():
+    candidates = [
+        os.path.join(STATIC_DIR, "favicon.jpg"),
+        "./favicon.jpg",
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return FileResponse(path, media_type="image/jpeg")
+    raise HTTPException(status_code=404)
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon_ico():
+    candidates = [
+        os.path.join(STATIC_DIR, "favicon.jpg"),
+        "./favicon.jpg",
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            return FileResponse(path, media_type="image/jpeg")
+    raise HTTPException(status_code=404)
 
 
 @app.exception_handler(HTTPException)
@@ -452,6 +479,8 @@ def login_page_html(error_text: str = ""):
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <link rel="icon" type="image/jpeg" href="/favicon.jpg?v=2">
+        <link rel="shortcut icon" href="/favicon.ico?v=2">
         <title>TEAMbead CRM — Login</title>
         <style>
             :root {{
@@ -1938,6 +1967,8 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <link rel="icon" type="image/jpeg" href="/favicon.jpg?v=2">
+        <link rel="shortcut icon" href="/favicon.ico?v=2">
         <title>{escape(title)}</title>
         <style>
             :root {{
@@ -2113,14 +2144,61 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 font-weight: 800;
             }}
             .logout-btn {{
-                color: #fca5a5;
-                border-color: rgba(239,68,68,0.28);
+                color: #ffffff !important;
+                border-color: rgba(239,68,68,0.62) !important;
+                background: linear-gradient(90deg, rgba(185,28,28,0.96), rgba(239,68,68,0.92)) !important;
+            }}
+            .logout-btn:hover {{
+                background: linear-gradient(90deg, rgba(153,27,27,1), rgba(220,38,38,0.96)) !important;
+                color: #fff7f7 !important;
             }}
             .theme-menu {{ position: relative; }}
             .theme-menu > summary {{
                 list-style: none;
             }}
             .theme-menu > summary::-webkit-details-marker {{ display:none; }}
+            .upload-menu {{ position: relative; }}
+            .upload-menu > summary {{
+                list-style:none;
+            }}
+            .upload-menu > summary::-webkit-details-marker {{ display:none; }}
+            .upload-menu-list {{
+                display:grid;
+                gap:12px;
+                position:absolute;
+                top: calc(100% + 8px);
+                right: 0;
+                width: 320px;
+                max-width: min(320px, calc(100vw - 48px));
+                padding: 12px;
+                border-radius: 16px;
+                border: 1px solid var(--border);
+                background: var(--panel);
+                box-shadow: var(--shadow);
+                z-index: 40;
+            }}
+            .upload-menu-list form {{
+                display:grid;
+                gap:10px;
+                align-items:end;
+            }}
+            .upload-menu-list label {{
+                display:grid;
+                gap:6px;
+                font-size:12px;
+                font-weight:800;
+                color:var(--text);
+            }}
+            .upload-menu-list input {{
+                width:100%;
+                min-width:0;
+                border-radius:12px;
+                border:1px solid var(--border);
+                background: var(--panel-3);
+                color: var(--text);
+                padding: 11px 12px;
+                outline:none;
+            }}
             .theme-menu-list {{
                 display:grid;
                 gap:8px;
@@ -2541,6 +2619,9 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 if (!wrap || !menu) return;
                 if (!wrap.contains(e.target)) menu.classList.remove('open');
                 document.querySelectorAll('.theme-menu').forEach(function(item) {{
+                    if (!item.contains(e.target)) item.removeAttribute('open');
+                }});
+                document.querySelectorAll('.upload-menu').forEach(function(item) {{
                     if (!item.contains(e.target)) item.removeAttribute('open');
                 }});
             }});
@@ -3517,14 +3598,92 @@ def chatterfy_page_html(
         )
         return f'<a href="/chatterfy?{qs}">{escape(label)}{arrow}</a>'
 
+    column_defs = [
+        ("started_date", "Date"),
+        ("started_time", "Time"),
+        ("name", "Name"),
+        ("telegram_id", "Telegram ID"),
+        ("pp_player_id", "ID in PP"),
+        ("chat_link", "Chat"),
+        ("username", "Username"),
+        ("tags", "Tags"),
+        ("launch_date", "Tag Date"),
+        ("platform", "Platform"),
+        ("manager", "Manager"),
+        ("geo", "Geo"),
+        ("offer", "Offer"),
+        ("status", "Status"),
+    ]
+    column_chips = "".join([
+        f'<label class="column-chip"><input class="column-toggle-chatterfy" type="checkbox" value="{key}" checked> {label}</label>'
+        for key, label in column_defs
+    ])
+
     extra_scripts = """
     <script>
         (function() {
             const table = document.getElementById('chatterfyTable');
             if (!table) return;
-            const KEY = 'teambead_chatterfy_widths_v1';
+            const WIDTH_KEY = 'teambead_chatterfy_widths_v1';
+            const HIDDEN_KEY = 'teambead_chatterfy_hidden_columns_v1';
+            const ORDER_KEY = 'teambead_chatterfy_column_order_v1';
+            function getHeaderRow() { return table.querySelector('thead tr'); }
+            function getRows() { return Array.from(table.querySelectorAll('tr')); }
+            function getCurrentOrder() {
+                return Array.from(getHeaderRow().querySelectorAll('th[data-col]')).map(th => th.dataset.col);
+            }
+            function reorderCells(order) {
+                getRows().forEach(row => {
+                    const cellsMap = {};
+                    Array.from(row.children).forEach(cell => {
+                        const key = cell.dataset.col;
+                        if (key) cellsMap[key] = cell;
+                    });
+                    order.forEach(key => {
+                        if (cellsMap[key]) row.appendChild(cellsMap[key]);
+                    });
+                });
+            }
+            function applyOrder() {
+                const saved = JSON.parse(localStorage.getItem(ORDER_KEY) || '[]');
+                const current = getCurrentOrder();
+                if (!saved.length) return;
+                const merged = saved.filter(x => current.includes(x)).concat(current.filter(x => !saved.includes(x)));
+                reorderCells(merged);
+            }
+            function applyVisibility() {
+                const hidden = JSON.parse(localStorage.getItem(HIDDEN_KEY) || '[]');
+                document.querySelectorAll('.column-toggle-chatterfy').forEach(cb => {
+                    cb.checked = !hidden.includes(cb.value);
+                });
+                document.querySelectorAll('#chatterfyTable [data-col]').forEach(el => {
+                    el.style.display = hidden.includes(el.dataset.col) ? 'none' : '';
+                });
+            }
+            function saveVisibility() {
+                const hidden = [];
+                document.querySelectorAll('.column-toggle-chatterfy').forEach(cb => {
+                    if (!cb.checked) hidden.push(cb.value);
+                });
+                localStorage.setItem(HIDDEN_KEY, JSON.stringify(hidden));
+                applyVisibility();
+            }
+            function showAllColumns() {
+                localStorage.setItem(HIDDEN_KEY, JSON.stringify([]));
+                applyVisibility();
+            }
+            function resetColumnsAll() {
+                localStorage.removeItem(HIDDEN_KEY);
+                localStorage.removeItem(ORDER_KEY);
+                localStorage.removeItem(WIDTH_KEY);
+                window.location.reload();
+            }
+            window.toggleChatterfyColumnMenu = function() {
+                const menu = document.getElementById('chatterfyColumnMenu');
+                if (menu) menu.classList.toggle('open');
+            }
             function applyWidths() {
-                const widths = JSON.parse(localStorage.getItem(KEY) || '{}');
+                const widths = JSON.parse(localStorage.getItem(WIDTH_KEY) || '{}');
                 Object.entries(widths).forEach(([key, width]) => {
                     document.querySelectorAll('[data-col=\"' + key + '\"]').forEach(el => {
                         el.style.width = width + 'px';
@@ -3534,9 +3693,9 @@ def chatterfy_page_html(
                 });
             }
             function saveWidth(key, width) {
-                const widths = JSON.parse(localStorage.getItem(KEY) || '{}');
+                const widths = JSON.parse(localStorage.getItem(WIDTH_KEY) || '{}');
                 widths[key] = Math.max(90, Math.round(width));
-                localStorage.setItem(KEY, JSON.stringify(widths));
+                localStorage.setItem(WIDTH_KEY, JSON.stringify(widths));
             }
             table.querySelectorAll('th[data-col]').forEach(th => {
                 const resizer = th.querySelector('.resizer');
@@ -3544,6 +3703,7 @@ def chatterfy_page_html(
                 let startX = 0;
                 let startWidth = 0;
                 let resizing = false;
+                th.setAttribute('draggable', 'true');
                 const key = th.dataset.col;
                 resizer.addEventListener('mousedown', function(e) {
                     e.preventDefault();
@@ -3569,6 +3729,44 @@ def chatterfy_page_html(
                     saveWidth(key, th.getBoundingClientRect().width);
                 });
             });
+            let dragged = null;
+            table.querySelectorAll('th[data-col]').forEach(th => {
+                th.addEventListener('dragstart', function(e) {
+                    if (e.target.classList.contains('resizer')) { e.preventDefault(); return; }
+                    dragged = th;
+                    th.classList.add('dragging');
+                });
+                th.addEventListener('dragend', function() {
+                    table.querySelectorAll('th[data-col]').forEach(x => x.classList.remove('dragging', 'drag-target-left', 'drag-target-right'));
+                    dragged = null;
+                });
+                th.addEventListener('dragover', function(e) {
+                    e.preventDefault();
+                    if (!dragged || dragged === th) return;
+                    const rect = th.getBoundingClientRect();
+                    const before = (e.clientX - rect.left) < rect.width / 2;
+                    th.classList.toggle('drag-target-left', before);
+                    th.classList.toggle('drag-target-right', !before);
+                });
+                th.addEventListener('dragleave', function() {
+                    th.classList.remove('drag-target-left', 'drag-target-right');
+                });
+                th.addEventListener('drop', function(e) {
+                    e.preventDefault();
+                    if (!dragged || dragged === th) return;
+                    const rect = th.getBoundingClientRect();
+                    const before = (e.clientX - rect.left) < rect.width / 2;
+                    if (before) th.parentNode.insertBefore(dragged, th);
+                    else th.parentNode.insertBefore(dragged, th.nextSibling);
+                    const order = getCurrentOrder();
+                    reorderCells(order);
+                    localStorage.setItem(ORDER_KEY, JSON.stringify(order));
+                    table.querySelectorAll('th[data-col]').forEach(x => x.classList.remove('drag-target-left', 'drag-target-right'));
+                });
+            });
+            document.querySelectorAll('.column-toggle-chatterfy').forEach(cb => cb.addEventListener('change', saveVisibility));
+            applyOrder();
+            applyVisibility();
             applyWidths();
         })();
     </script>
@@ -3583,12 +3781,9 @@ def chatterfy_page_html(
                 <div class="panel-title" style="margin-bottom:4px;">Chatterfy Report</div>
             </div>
             <div style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; justify-content:flex-end;">
-                <details class="panel compact-panel" style="margin:0; min-width:320px;">
-                    <summary class="panel-title" style="margin:0; cursor:pointer; list-style:none; display:flex; align-items:center; justify-content:space-between;">
-                        <span>Upload</span>
-                        <span class="btn toggle-indicator" style="width:34px; height:34px; border-radius:10px;"></span>
-                    </summary>
-                    <div style="display:grid; gap:12px; margin-top:12px;">
+                <details class="upload-menu">
+                    <summary class="btn toggle-indicator" style="width:34px; height:34px; border-radius:10px;"></summary>
+                    <div class="upload-menu-list">
                         <form method="post" action="/chatterfy/upload" enctype="multipart/form-data" class="upload-inline" style="justify-content:space-between;">
                             <label>Chatterfy File
                                 <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
@@ -3618,24 +3813,37 @@ def chatterfy_page_html(
                 </div>
             </div>
         </div>
+        <div class="controls-line" style="margin-top:12px;">
+            <div></div>
+            <div class="column-menu-wrap">
+                <button type="button" class="ghost-btn small-btn" onclick="toggleChatterfyColumnMenu()">⚙️ Columns</button>
+                <div class="column-menu" id="chatterfyColumnMenu">
+                    <div class="column-actions">
+                        <button type="button" class="ghost-btn small-btn" onclick="showAllColumns()">Show All</button>
+                        <button type="button" class="ghost-btn small-btn" onclick="resetColumnsAll()">Reset All</button>
+                    </div>
+                    <div class="column-grid">{column_chips}</div>
+                </div>
+            </div>
+        </div>
         <div class="table-wrap">
             <table id="chatterfyTable" style="min-width:1900px;">
                 <thead>
                     <tr>
-                        <th data-col="started_date"><div class="th-inner">{header_link("started_date", "Date")}<span class="resizer"></span></div></th>
-                        <th data-col="started_time"><div class="th-inner">{header_link("started_time", "Time")}<span class="resizer"></span></div></th>
-                        <th data-col="name"><div class="th-inner">{header_link("name", "Name")}<span class="resizer"></span></div></th>
-                        <th data-col="telegram_id"><div class="th-inner">{header_link("telegram_id", "Telegram ID")}<span class="resizer"></span></div></th>
-                        <th data-col="pp_player_id"><div class="th-inner">{header_link("pp_player_id", "ID in PP")}<span class="resizer"></span></div></th>
-                        <th data-col="chat_link"><div class="th-inner">{header_link("chat_link", "Chat")}<span class="resizer"></span></div></th>
-                        <th data-col="username"><div class="th-inner">{header_link("username", "Username")}<span class="resizer"></span></div></th>
-                        <th data-col="tags"><div class="th-inner">{header_link("tags", "Tags")}<span class="resizer"></span></div></th>
-                        <th data-col="launch_date"><div class="th-inner">{header_link("launch_date", "Tag Date")}<span class="resizer"></span></div></th>
-                        <th data-col="platform"><div class="th-inner">{header_link("platform", "Platform")}<span class="resizer"></span></div></th>
-                        <th data-col="manager"><div class="th-inner">{header_link("manager", "Manager")}<span class="resizer"></span></div></th>
-                        <th data-col="geo"><div class="th-inner">{header_link("geo", "Geo")}<span class="resizer"></span></div></th>
-                        <th data-col="offer"><div class="th-inner">{header_link("offer", "Offer")}<span class="resizer"></span></div></th>
-                        <th data-col="status"><div class="th-inner">{header_link("status", "Status")}<span class="resizer"></span></div></th>
+                        <th data-col="started_date"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("started_date", "Date")}<span class="resizer"></span></div></th>
+                        <th data-col="started_time"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("started_time", "Time")}<span class="resizer"></span></div></th>
+                        <th data-col="name"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("name", "Name")}<span class="resizer"></span></div></th>
+                        <th data-col="telegram_id"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("telegram_id", "Telegram ID")}<span class="resizer"></span></div></th>
+                        <th data-col="pp_player_id"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("pp_player_id", "ID in PP")}<span class="resizer"></span></div></th>
+                        <th data-col="chat_link"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("chat_link", "Chat")}<span class="resizer"></span></div></th>
+                        <th data-col="username"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("username", "Username")}<span class="resizer"></span></div></th>
+                        <th data-col="tags"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("tags", "Tags")}<span class="resizer"></span></div></th>
+                        <th data-col="launch_date"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("launch_date", "Tag Date")}<span class="resizer"></span></div></th>
+                        <th data-col="platform"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("platform", "Platform")}<span class="resizer"></span></div></th>
+                        <th data-col="manager"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("manager", "Manager")}<span class="resizer"></span></div></th>
+                        <th data-col="geo"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("geo", "Geo")}<span class="resizer"></span></div></th>
+                        <th data-col="offer"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("offer", "Offer")}<span class="resizer"></span></div></th>
+                        <th data-col="status"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("status", "Status")}<span class="resizer"></span></div></th>
                     </tr>
                 </thead>
                 <tbody>{rows_html if rows_html else '<tr><td colspan="14">Нет данных</td></tr>'}</tbody>
