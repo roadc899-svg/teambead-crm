@@ -5516,27 +5516,27 @@ def onexbet_report_page(
         account_status = account_status_map.get(account["id"], {})
         account_status_text = escape(account_status.get("status") or ("authorized" if account.get("session_saved") else "idle"))
         account_cards_html += f"""
-        <label class="user-chip" style="display:grid;gap:10px;padding:12px 14px;">
+        <div class="user-chip" style="display:grid;gap:10px;padding:12px 14px;">
             <span style="display:flex;align-items:center;gap:10px;justify-content:space-between;">
                 <span style="display:flex;align-items:center;gap:10px;">
-                <input type="checkbox" class="onexbet-account-checkbox" value="{escape(account["id"])}" checked>
-                <span>
-                    <strong>{escape(account["label"])}</strong><br>
-                    <span style="color:var(--muted);font-size:12px;">{escape(account["login"])}</span>
+                    <input type="checkbox" class="onexbet-account-checkbox" value="{escape(account["id"])}" checked>
+                    <span>
+                        <strong>{escape(account["label"])}</strong><br>
+                        <span style="color:var(--muted);font-size:12px;">{escape(account["login"])}</span>
+                    </span>
                 </span>
-            </span>
                 <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                     <span class="user-chip" id="status-chip-{escape(account["id"])}">{account_status_text}</span>
                     <span class="user-chip" id="session-chip-{escape(account["id"])}">{'Session Saved' if account.get("session_saved") else 'No Session'}</span>
                 </span>
             </span>
             <span style="display:flex;gap:8px;flex-wrap:wrap;">
-                <button type="button" class="ghost-btn small-btn" onclick="startSingleOnexbetJob('auth', '{escape(account["id"])}')">Auth</button>
-                <button type="button" class="ghost-btn small-btn" onclick="startSingleOnexbetJob('run', '{escape(account["id"])}')">Run</button>
-                <button type="button" class="ghost-btn small-btn" onclick="restartSingleOnexbetRun('{escape(account["id"])}')">Restart</button>
-                <button type="button" class="ghost-btn small-btn" onclick="resetSingleOnexbetSession('{escape(account["id"])}')">Reset Session</button>
+                <button type="button" class="ghost-btn small-btn" style="cursor:pointer;" onclick="startSingleOnexbetJob('auth', '{escape(account["id"])}')">Auth</button>
+                <button type="button" class="ghost-btn small-btn" style="cursor:pointer;" onclick="startSingleOnexbetJob('run', '{escape(account["id"])}')">Run</button>
+                <button type="button" class="ghost-btn small-btn" style="cursor:pointer;" onclick="restartSingleOnexbetRun('{escape(account["id"])}')">Restart</button>
+                <button type="button" class="ghost-btn small-btn" style="cursor:pointer;" onclick="resetSingleOnexbetSession('{escape(account["id"])}')">Reset Session</button>
             </span>
-        </label>
+        </div>
         """
     if not account_cards_html:
         account_cards_html = '<div class="notice notice-danger">Кабинеты 1xBet не найдены. Добавь accounts.json.</div>'
@@ -5659,6 +5659,11 @@ def onexbet_report_page(
             return String(value || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
         }
 
+        function setOnexbetMessage(text) {
+            const messageEl = document.getElementById('onexbetMessage');
+            if (messageEl) messageEl.textContent = text || 'No updates yet';
+        }
+
         function renderOnexbetLog(logText) {
             const text = String(logText || '');
             const lines = text.split('\n');
@@ -5773,6 +5778,7 @@ def onexbet_report_page(
                 alert('Выбери хотя бы один кабинет 1xBet');
                 return;
             }
+            setOnexbetMessage('Сбрасываю сессии для выбранных кабинетов...');
             try {
                 const res = await fetch('/1xbet-report/parser/reset-sessions', {
                     method: 'POST',
@@ -5784,7 +5790,9 @@ def onexbet_report_page(
                 if (!res.ok) {
                     throw new Error(data.detail || 'Не удалось сбросить сессии');
                 }
+                setOnexbetMessage('Сессии сброшены');
             } catch (e) {
+                setOnexbetMessage(e.message || 'Не удалось сбросить сессии');
                 alert(e.message || 'Не удалось сбросить сессии');
             }
             refreshOnexbetState();
@@ -5810,6 +5818,7 @@ def onexbet_report_page(
             const runBtn = document.getElementById('onexbetRunBtn');
             if (authBtn) authBtn.disabled = true;
             if (runBtn) runBtn.disabled = true;
+            setOnexbetMessage(mode === 'auth' ? 'Проверяю выбранные сессии...' : 'Запускаю парсер по выбранным кабинетам...');
 
             try {
                 const res = await fetch(endpoint, {
@@ -5823,7 +5832,9 @@ def onexbet_report_page(
                 if (!res.ok) {
                     throw new Error(data.detail || 'Не удалось запустить процесс');
                 }
+                setOnexbetMessage(mode === 'auth' ? 'Проверка сессий запущена' : 'Парсер запущен');
             } catch (e) {
+                setOnexbetMessage(e.message || 'Не удалось запустить процесс');
                 alert(e.message || 'Не удалось запустить процесс');
             }
 
@@ -5836,6 +5847,7 @@ def onexbet_report_page(
                 alert('Выбери хотя бы один кабинет 1xBet');
                 return;
             }
+            setOnexbetMessage('Перезапускаю парсер для выбранных кабинетов...');
             try {
                 const res = await fetch('/1xbet-report/parser/restart-run', {
                     method: 'POST',
@@ -5847,7 +5859,9 @@ def onexbet_report_page(
                 if (!res.ok) {
                     throw new Error(data.detail || 'Не удалось перезапустить процесс');
                 }
+                setOnexbetMessage('Перезапуск выполнен');
             } catch (e) {
+                setOnexbetMessage(e.message || 'Не удалось перезапустить процесс');
                 alert(e.message || 'Не удалось перезапустить процесс');
             }
             refreshOnexbetState();
@@ -5866,6 +5880,7 @@ def onexbet_report_page(
         }
 
         async function stopOnexbetJob() {
+            setOnexbetMessage('Останавливаю текущий процесс...');
             try {
                 const res = await fetch('/1xbet-report/parser/stop', {
                     method: 'POST',
@@ -5875,7 +5890,9 @@ def onexbet_report_page(
                 if (!res.ok) {
                     throw new Error(data.detail || 'Не удалось остановить процесс');
                 }
+                setOnexbetMessage('Процесс остановлен');
             } catch (e) {
+                setOnexbetMessage(e.message || 'Не удалось остановить процесс');
                 alert(e.message || 'Не удалось остановить процесс');
             }
             refreshOnexbetState();
