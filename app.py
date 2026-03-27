@@ -4386,48 +4386,31 @@ def run_onexbet_parser(request: Request):
     user = require_login(request)
     enforce_page_access(user, "onexbet_report")
 
-    parser_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "parser_1xbet_halfmonth.py")
+    try:
+        from parser_1xbet_halfmonth import run_parser
 
-    if not os.path.exists(parser_path):
+        result = run_parser()
+        print("1XBET PARSER RESULT:", result)
+
+        inserted = result.get("inserted", 0) if isinstance(result, dict) else 0
+        period_label = result.get("period_label", "") if isinstance(result, dict) else ""
+
+        success_text = f"Парсер завершен. Загружено строк: {inserted}"
+        if period_label:
+            success_text += f" | Период: {period_label}"
+
         return RedirectResponse(
-            url="/1xbet-report?run_error=Файл parser_1xbet_halfmonth.py не найден рядом с app.py",
+            url="/1xbet-report?run_ok=" + urlencode({"v": success_text})[2:],
             status_code=303,
         )
 
-    try:
-        result = subprocess.run(
-            [sys.executable, parser_path],
-            capture_output=True,
-            text=True,
-            timeout=600,
-            cwd=os.path.dirname(os.path.abspath(__file__)),
-        )
-
-        if result.returncode == 0:
-            return RedirectResponse(
-                url="/1xbet-report?run_ok=Парсер успешно запущен и завершен",
-                status_code=303,
-            )
-
-        error_text = (result.stderr or result.stdout or "Неизвестная ошибка").strip()
-        error_text = error_text.replace("\n", " | ")[:700]
-
+    except Exception as e:
+        error_text = str(e).replace("\n", " | ")[:700]
+        print("1XBET PARSER ERROR:", error_text)
         return RedirectResponse(
             url="/1xbet-report?run_error=" + urlencode({"v": error_text})[2:],
             status_code=303,
         )
-
-    except subprocess.TimeoutExpired:
-        return RedirectResponse(
-            url="/1xbet-report?run_error=Парсер превысил лимит времени ожидания",
-            status_code=303,
-        )
-    except Exception as e:
-        return RedirectResponse(
-            url="/1xbet-report?run_error=" + urlencode({"v": str(e)})[2:],
-            status_code=303,
-        )
-@app.get("/1xbet-report", response_class=HTMLResponse)
 @app.get("/1xbet-report", response_class=HTMLResponse)
 def onexbet_report_page(
     request: Request,
