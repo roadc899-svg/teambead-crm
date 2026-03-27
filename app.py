@@ -705,6 +705,16 @@ def format_int_or_float(value):
         return str(value)
 
 
+def format_plain_number_text(value):
+    text = safe_text(value)
+    if not text:
+        return ""
+    try:
+        return format_int_or_float(float(text.replace(",", ".")))
+    except Exception:
+        return text
+
+
 
 def format_money(value):
     try:
@@ -1700,6 +1710,96 @@ def get_partner_country_options():
         if value:
             result.append(value)
     return sorted(set(result))
+
+
+def get_hold_wager_rows(period_label="", cabinet_name="", search=""):
+    ensure_partner_table()
+    ensure_caps_table()
+    ensure_chatterfy_id_table()
+    db = SessionLocal()
+    try:
+        partner_query = db.query(PartnerRow)
+        if period_label:
+            partner_query = partner_query.filter(PartnerRow.period_label == period_label)
+        if cabinet_name:
+            partner_query = partner_query.filter(PartnerRow.cabinet_name == cabinet_name)
+        partner_rows = partner_query.order_by(PartnerRow.registration_date.desc(), PartnerRow.id.desc()).all()
+        caps = db.query(CapRow).all()
+        id_rows = db.query(ChatterfyIdRow).all()
+    finally:
+        db.close()
+
+    caps_by_promo = {}
+    for cap in caps:
+        promo_key = safe_text(cap.promo_code).upper()
+        if promo_key:
+            caps_by_promo.setdefault(promo_key, []).append(cap)
+
+    chat_by_player = {}
+    for item in id_rows:
+        player_key = normalize_id_value(item.pp_player_id)
+        if player_key and player_key not in chat_by_player:
+            chat_by_player[player_key] = safe_text(item.chat_link)
+
+    search_lower = safe_text(search).lower()
+    result = []
+    for row in partner_rows:
+        if safe_number(row.deposit_amount) <= 0:
+            continue
+        promo_key = safe_text(row.sub_id).upper()
+        matched_caps = caps_by_promo.get(promo_key, [])
+        if not matched_caps:
+            continue
+        cap = matched_caps[0]
+        deposit_amount = safe_number(row.deposit_amount)
+        bet_amount = safe_number(row.bet_amount)
+        baseline = safe_cap_number(cap.baseline)
+        fail_baseline = baseline > 0 and (deposit_amount < baseline or bet_amount < baseline)
+        fail_wager = bet_amount < deposit_amount
+        if not fail_baseline and not fail_wager:
+            continue
+
+        reason_parts = []
+        if fail_baseline:
+            reason_parts.append("Baseline")
+        if fail_wager:
+            reason_parts.append("Wager")
+        player_key = normalize_id_value(row.player_id)
+        chat_link = chat_by_player.get(player_key, "")
+        item = {
+            "row_id": row.id,
+            "report_date": safe_text(getattr(row, "report_date", "")) or get_half_month_period_from_date(row.registration_date).get("report_date", ""),
+            "period_label": partner_row_period_label(row),
+            "registration_date": safe_text(row.registration_date),
+            "cabinet_name": safe_text(row.cabinet_name),
+            "sub_id": safe_text(row.sub_id),
+            "player_id": safe_text(row.player_id),
+            "country": safe_text(row.country),
+            "deposit_amount": deposit_amount,
+            "bet_amount": bet_amount,
+            "baseline": baseline,
+            "rate": safe_text(cap.rate),
+            "flow": safe_text(cap.flow),
+            "promo_code": safe_text(cap.promo_code),
+            "chat_link": chat_link,
+            "reason": " + ".join(reason_parts),
+            "missing_baseline": max(0.0, baseline - min(deposit_amount, bet_amount)) if fail_baseline else 0.0,
+            "missing_wager": max(0.0, deposit_amount - bet_amount) if fail_wager else 0.0,
+        }
+        if search_lower:
+            haystack = " | ".join([
+                item["cabinet_name"],
+                item["sub_id"],
+                item["player_id"],
+                item["country"],
+                item["reason"],
+                item["flow"],
+                item["promo_code"],
+            ]).lower()
+            if search_lower not in haystack:
+                continue
+        result.append(item)
+    return result
 
 
 def replace_partner_rows(source_name, rows_to_insert):
@@ -3875,8 +3975,8 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             <td class="flow-col" title="{escape(row.flow or '')}">{escape(row.flow or "")}</td>
             <td class="code-col" title="{escape(row.code or '')}">{escape(row.code or "")}</td>
             <td class="geo-col" title="{escape(row.geo or '')}">{escape(row.geo or "")}</td>
-            <td class="rate-col" title="{escape(row.rate or '')}">{escape(row.rate or "")}</td>
-            <td class="baseline-col" title="{escape(row.baseline or '')}">{escape(row.baseline or "")}</td>
+            <td class="rate-col" title="{escape(row.rate or '')}">{escape(format_plain_number_text(row.rate))}</td>
+            <td class="baseline-col" title="{escape(row.baseline or '')}">{escape(format_plain_number_text(row.baseline))}</td>
             <td class="cap-col">{format_int_or_float(row.cap_value)}</td>
             <td class="current-col">{format_int_or_float(row.current_ftd)}</td>
             <td class="fill-col">
@@ -3920,12 +4020,6 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         </summary>
         <div class="upload-menu-list cap-menu-list">
             <div class="panel-subtitle">Advertiser caps and manual updates.</div>
-            <form method="post" action="/caps/upload" enctype="multipart/form-data" class="caps-form">
-                <label>Upload caps CSV / XLSX
-                    <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
-                </label>
-                <button type="submit" class="ghost-btn">Upload</button>
-            </form>
             <form method="post" action="/caps/save" class="caps-form">
             <input type="hidden" name="edit_id" value="{escape(current_edit_id)}">
             <div class="caps-grid-2">
@@ -4936,6 +5030,109 @@ def chatterfy_page_html(
     </div>
     """
     return page_shell("Chatterfy", content, active_page="chatterfy", current_user=current_user, extra_scripts=extra_scripts)
+
+
+def hold_wager_page_html(current_user, rows, cabinet_name="", period_view="all", period_label="", search="", success_text="", error_text=""):
+    all_cabinets = sorted(set(get_cabinet_names() + get_partner_cabinet_options()))
+    cabinet_options = make_options(all_cabinets, cabinet_name)
+    period_view_options = "".join([
+        f'<option value="{value}" {"selected" if period_view == value else ""}>{label}</option>'
+        for value, label in [("all", "All Time"), ("current", "Current Period"), ("period", "Choose Period")]
+    ])
+    period_options = make_options(build_period_options(), period_label)
+
+    total_players = len(rows)
+    baseline_fails = sum(1 for item in rows if "Baseline" in item["reason"])
+    wager_fails = sum(1 for item in rows if "Wager" in item["reason"])
+
+    rows_html = ""
+    for item in rows:
+        chat_link = item.get("chat_link") or ""
+        chat_html = f'<a href="https://{escape(chat_link)}" target="_blank" rel="noreferrer" class="ghost-btn small-btn">Open</a>' if chat_link else "—"
+        rows_html += f"""
+        <tr>
+            <td>{escape(item['report_date'])}</td>
+            <td>{escape(item['period_label'])}</td>
+            <td>{escape(item['registration_date'])}</td>
+            <td>{escape(item['cabinet_name'])}</td>
+            <td>{escape(item['sub_id'])}</td>
+            <td>{escape(item['player_id'])}</td>
+            <td>{escape(item['country'])}</td>
+            <td>{escape(item['flow'])}</td>
+            <td>{format_plain_number_text(item['baseline'])}</td>
+            <td>{format_plain_number_text(item['rate'])}</td>
+            <td>{format_money(item['deposit_amount'])}</td>
+            <td>{format_money(item['bet_amount'])}</td>
+            <td>{escape(item['reason'])}</td>
+            <td>{format_money(item['missing_baseline'])}</td>
+            <td>{format_money(item['missing_wager'])}</td>
+            <td>{chat_html}</td>
+        </tr>
+        """
+
+    message_html = ""
+    if success_text:
+        message_html += f'<div class="notice">{escape(success_text)}</div>'
+    if error_text:
+        message_html += f'<div class="notice notice-danger">{escape(error_text)}</div>'
+
+    content = f"""
+    {message_html}
+    <div class="panel compact-panel filters">
+        <div class="panel-title">Filters</div>
+        <form method="get" action="/hold-wager">
+            <label>View<select name="period_view">{period_view_options}</select></label>
+            <label>Period<select name="period_label">{period_options}</select></label>
+            <label>Cabinet<select name="cabinet_name">{cabinet_options}</select></label>
+            <label>Search<input type="text" name="search" value="{escape(search)}" placeholder="subid, player id, country"></label>
+            <button type="submit" class="btn small-btn">Filter</button>
+            <a href="/hold-wager" class="ghost-btn small-btn">Reset</a>
+        </form>
+    </div>
+
+    <div class="panel compact-panel">
+        <div class="stats-grid">
+            <div class="stat-card"><div class="name">Players</div><div class="value">{total_players}</div></div>
+            <div class="stat-card"><div class="name">Baseline Fail</div><div class="value">{baseline_fails}</div></div>
+            <div class="stat-card"><div class="name">Wager Fail</div><div class="value">{wager_fails}</div></div>
+        </div>
+    </div>
+
+    <div class="panel compact-panel">
+        <div class="controls-line">
+            <div>
+                <div class="panel-title" style="margin-bottom:4px;">Hold/Wager Review</div>
+                <div class="panel-subtitle">Players from 1xBet who do not pass cap baseline or deposit-to-bet wager rules.</div>
+            </div>
+        </div>
+        <div class="table-wrap">
+            <table style="min-width:1680px;">
+                <thead>
+                    <tr>
+                        <th>Report Date</th>
+                        <th>Period</th>
+                        <th>Reg Date</th>
+                        <th>Cabinet</th>
+                        <th>SubID</th>
+                        <th>Player ID</th>
+                        <th>Country</th>
+                        <th>Flow</th>
+                        <th>Baseline</th>
+                        <th>Rate</th>
+                        <th>Deposit</th>
+                        <th>Bet</th>
+                        <th>Reason</th>
+                        <th>Missing BL</th>
+                        <th>Missing Wager</th>
+                        <th>Chat</th>
+                    </tr>
+                </thead>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="16">No hold/wager issues for the selected filters.</td></tr>'}</tbody>
+            </table>
+        </div>
+    </div>
+    """
+    return page_shell("Hold/Wager", content, active_page="holdwager", current_user=current_user)
 
 
 def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, success_text="", error_text=""):
@@ -6409,8 +6606,8 @@ def caps_page(
                     "flow": item.flow or "",
                     "code": item.code or "",
                     "geo": item.geo or "",
-                    "rate": item.rate or "",
-                    "baseline": item.baseline or "",
+                    "rate": format_plain_number_text(item.rate),
+                    "baseline": format_plain_number_text(item.baseline),
                     "cap_value": format_int_or_float(item.cap_value),
                     "current_ftd": format_int_or_float(item.current_ftd),
                     "promo_code": item.promo_code or "",
@@ -7047,9 +7244,28 @@ async def upload_chatterfy_ids_file(request: Request, file: UploadFile = File(..
 
 
 @app.get("/hold-wager", response_class=HTMLResponse)
-def hold_wager_page(request: Request):
+def hold_wager_page(
+    request: Request,
+    period_view: str = Query(default="all"),
+    period_label: str = Query(default=""),
+    cabinet_name: str = Query(default=""),
+    search: str = Query(default=""),
+):
     user = get_current_user(request)
     if not user:
         return auth_redirect_response()
     enforce_page_access(user, "holdwager")
-    return render_dev_page("Hold/Wager", "🎯", "holdwager", current_user=user)
+    effective_period_label = resolve_period_label(period_view, period_label)
+    rows = get_hold_wager_rows(
+        period_label=effective_period_label,
+        cabinet_name=cabinet_name,
+        search=search,
+    )
+    return hold_wager_page_html(
+        user,
+        rows,
+        cabinet_name=cabinet_name,
+        period_view=period_view,
+        period_label=effective_period_label,
+        search=search,
+    )
