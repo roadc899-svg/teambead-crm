@@ -76,36 +76,80 @@ def click_first(page, selectors, label, timeout=10000):
     return False
 
 
+def open_date_picker(page):
+    selectors = [
+        'input[placeholder*="2026"]',
+        'input[placeholder*="20"]',
+        'input[readonly]',
+        'input[type="text"]',
+    ]
+    for sel in selectors:
+        try:
+            loc = page.locator(sel)
+            count = loc.count()
+            for i in range(count):
+                item = loc.nth(i)
+                if item.is_visible():
+                    item.click(timeout=5000)
+                    page.wait_for_timeout(1000)
+                    log(f"date_picker: открыт через {sel}")
+                    return
+        except Exception:
+            pass
+    raise RuntimeError("Не удалось открыть календарь периода")
+
+
+def choose_day_from_calendar(page, day_value, occurrence=0):
+    day_text = str(int(day_value))
+    selectors = [
+        f'td:has-text("{day_text}")',
+        f'button:has-text("{day_text}")',
+        f'div:has-text("{day_text}")',
+    ]
+
+    for sel in selectors:
+        try:
+            loc = page.locator(sel)
+            if loc.count() > occurrence:
+                candidate = loc.nth(occurrence)
+                if candidate.is_visible():
+                    candidate.click(timeout=5000)
+                    page.wait_for_timeout(500)
+                    log(f"calendar_day: выбран день {day_text} через {sel} occurrence={occurrence}")
+                    return
+        except Exception:
+            pass
+
+    raise RuntimeError(f"Не удалось выбрать день {day_text} в календаре")
+
+
 def set_date_range(page, period):
     start = period["date_start"]
     end = period["date_end"]
 
     log(f"date_range: ставлю {start} - {end}")
 
+    start_day = start.split("-")[2]
+    end_day = end.split("-")[2]
+
     try:
-        inputs = page.locator('input[type="text"]')
+        open_date_picker(page)
 
-        if inputs.count() < 2:
-            raise RuntimeError("Не найдены поля даты")
+        # Сначала выбираем дату начала
+        choose_day_from_calendar(page, start_day, occurrence=0)
 
-        start_input = inputs.nth(0)
-        end_input = inputs.nth(1)
-
-        start_input.click()
-        start_input.fill("")
-        start_input.type(start, delay=50)
-        start_input.press("Enter")
-
-        page.wait_for_timeout(500)
-
-        end_input.click()
-        end_input.fill("")
-        end_input.type(end, delay=50)
-        end_input.press("Enter")
+        # Потом дату конца
+        # Если день тот же, берем следующее вхождение
+        if start_day == end_day:
+            choose_day_from_calendar(page, end_day, occurrence=1)
+        else:
+            try:
+                choose_day_from_calendar(page, end_day, occurrence=1)
+            except Exception:
+                choose_day_from_calendar(page, end_day, occurrence=0)
 
         page.wait_for_timeout(1000)
-
-        log("date_range: даты успешно установлены")
+        log("date_range: диапазон выбран через календарь")
 
     except Exception as e:
         raise RuntimeError(f"Не удалось заполнить даты периода: {e}")
