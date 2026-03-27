@@ -22,6 +22,10 @@ DOWNLOAD_DIR = Path("downloads")
 DOWNLOAD_DIR.mkdir(exist_ok=True)
 
 
+def log(*args):
+    print("[1XBET_PARSER]", *args, flush=True)
+
+
 def get_half_month_period(today: date | None = None):
     if today is None:
         today = date.today()
@@ -45,10 +49,6 @@ def get_half_month_period(today: date | None = None):
         "date_end": date_end.strftime("%Y-%m-%d"),
         "period_label": f"{start_day:02d}-{end_day:02d}.{month:02d}.{year}",
     }
-
-
-def log(*args):
-    print("[1XBET_PARSER]", *args, flush=True)
 
 
 def fill_first_visible(page, selectors, value, label):
@@ -77,59 +77,41 @@ def click_first(page, selectors, label, timeout=10000):
 
 
 def set_date_range(page, period):
-    # сначала пробуем явные селекторы
-    from_ok = fill_first_visible(
-        page,
-        [
-            'input[name="dateFrom"]',
-            'input[name="from"]',
-            'input[placeholder*="2026-03-16"]',
-            'input[placeholder*="YYYY-MM-DD"]',
-        ],
-        period["date_start"],
-        "date_from",
-    )
+    start = period["date_start"]
+    end = period["date_end"]
 
-    to_ok = fill_first_visible(
-        page,
-        [
-            'input[name="dateTo"]',
-            'input[name="to"]',
-            'input[placeholder*="2026-03-27"]',
-            'input[placeholder*="YYYY-MM-DD"]',
-        ],
-        period["date_end"],
-        "date_to",
-    )
+    log(f"date_range: ставлю {start} - {end}")
 
-    if from_ok and to_ok:
-        return
-
-    # fallback: ищем первые два видимых input
     try:
-        inputs = page.locator("input")
-        visible_inputs = []
-        for i in range(inputs.count()):
-            inp = inputs.nth(i)
-            try:
-                if inp.is_visible():
-                    visible_inputs.append(inp)
-            except Exception:
-                pass
+        inputs = page.locator('input[type="text"]')
 
-        if len(visible_inputs) >= 2:
-            visible_inputs[0].fill(period["date_start"])
-            visible_inputs[1].fill(period["date_end"])
-            log("date_range: установлен через fallback первые 2 input")
-            return
-    except Exception:
-        pass
+        if inputs.count() < 2:
+            raise RuntimeError("Не найдены поля даты")
 
-    raise RuntimeError("Не удалось заполнить даты периода")
+        start_input = inputs.nth(0)
+        end_input = inputs.nth(1)
+
+        start_input.click()
+        start_input.fill("")
+        start_input.type(start, delay=50)
+        start_input.press("Enter")
+
+        page.wait_for_timeout(500)
+
+        end_input.click()
+        end_input.fill("")
+        end_input.type(end, delay=50)
+        end_input.press("Enter")
+
+        page.wait_for_timeout(1000)
+
+        log("date_range: даты успешно установлены")
+
+    except Exception as e:
+        raise RuntimeError(f"Не удалось заполнить даты периода: {e}")
 
 
 def check_new_players(page):
-    # основной вариант
     try:
         label = page.locator('label:has-text("Только новые игроки")')
         if label.count() > 0:
@@ -142,7 +124,6 @@ def check_new_players(page):
     except Exception:
         pass
 
-    # fallback — клик по тексту
     try:
         page.locator('text=Только новые игроки').first.click(timeout=5000)
         log("checkbox: клик по тексту 'Только новые игроки'")
@@ -150,7 +131,6 @@ def check_new_players(page):
     except Exception:
         pass
 
-    # fallback — первая доступная checkbox
     try:
         checkboxes = page.locator('input[type="checkbox"]')
         if checkboxes.count() > 0:
@@ -195,7 +175,7 @@ def export_players_report():
         page = context.new_page()
 
         try:
-            # 1. Логин
+            # Логин
             log("Открываю страницу логина")
             page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=90000)
             page.wait_for_load_state("networkidle", timeout=90000)
@@ -245,19 +225,19 @@ def export_players_report():
             page.wait_for_load_state("networkidle", timeout=90000)
             page.wait_for_timeout(3000)
 
-            # 2. Отчет по игрокам
+            # Отчет по игрокам
             log("Открываю отчет по игрокам")
             page.goto(PLAYERS_REPORT_URL, wait_until="domcontentloaded", timeout=90000)
             page.wait_for_load_state("networkidle", timeout=90000)
             page.wait_for_timeout(3000)
 
-            # 3. Даты
+            # Даты
             set_date_range(page, period)
 
-            # 4. Только новые игроки
+            # Только новые игроки
             check_new_players(page)
 
-            # 5. Сгенерировать отчет
+            # Сгенерировать отчет
             generated = click_first(
                 page,
                 [
@@ -274,15 +254,13 @@ def export_players_report():
             page.wait_for_load_state("networkidle", timeout=90000)
             page.wait_for_timeout(5000)
 
-            # 6. Экспорт CSV
+            # Скачать CSV
             file_path = None
             try:
                 with page.expect_download(timeout=60000) as download_info:
                     try:
-                        # сначала пробуем напрямую CSV
                         page.locator('text=CSV').first.click(timeout=10000)
                     except Exception:
-                        # если не получилось — открываем экспорт и потом CSV
                         opened = click_first(
                             page,
                             [
