@@ -15,6 +15,8 @@ import secrets
 import hashlib
 import calendar
 import re
+import subprocess
+import sys
 from datetime import datetime, timedelta, date
 
 # =========================================
@@ -26,7 +28,7 @@ SESSION_DURATION_DAYS = 14
 DATA_UPLOAD_DIR = "./uploaded_data"
 FINANCE_UPLOAD_PATH = os.path.join(DATA_UPLOAD_DIR, "finance_latest.csv")
 PARTNER_UPLOAD_DIR = os.path.join(DATA_UPLOAD_DIR, "partner_reports")
-PARTNER_IMPORT_API_KEY = "8hF9sK2LmQpX91zA"
+PARTNER_IMPORT_API_KEY = os.getenv("TEAMBEAD_PARTNER_IMPORT_KEY", "8hF9sK2LmQpX91zA")
 DEFAULT_USERS = [
     {
         "username": os.getenv("TEAMBEAD_ADMIN1_LOGIN", "Ivan"),
@@ -4319,6 +4321,52 @@ async def api_partner_import(
         }
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Не удалось обработать файл партнера: {exc}")
+@app.post("/1xbet-report/run-parser")
+def run_onexbet_parser(request: Request):
+    user = require_login(request)
+    enforce_page_access(user, "onexbet_report")
+
+    parser_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "parser_1xbet_halfmonth.py")
+
+    if not os.path.exists(parser_path):
+        return RedirectResponse(
+            url="/1xbet-report?run_error=Файл parser_1xbet_halfmonth.py не найден рядом с app.py",
+            status_code=303,
+        )
+
+    try:
+        result = subprocess.run(
+            [sys.executable, parser_path],
+            capture_output=True,
+            text=True,
+            timeout=600,
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+        )
+
+        if result.returncode == 0:
+            return RedirectResponse(
+                url="/1xbet-report?run_ok=Парсер успешно запущен и завершен",
+                status_code=303,
+            )
+
+        error_text = (result.stderr or result.stdout or "Неизвестная ошибка").strip()
+        error_text = error_text.replace("\n", " | ")[:700]
+
+        return RedirectResponse(
+            url="/1xbet-report?run_error=" + urlencode({"v": error_text})[2:],
+            status_code=303,
+        )
+
+    except subprocess.TimeoutExpired:
+        return RedirectResponse(
+            url="/1xbet-report?run_error=Парсер превысил лимит времени ожидания",
+            status_code=303,
+        )
+    except Exception as e:
+        return RedirectResponse(
+            url="/1xbet-report?run_error=" + urlencode({"v": str(e)})[2:],
+            status_code=303,
+        )
 @app.get("/1xbet-report", response_class=HTMLResponse)
 def onexbet_report_page(
     request: Request,
@@ -4326,6 +4374,8 @@ def onexbet_report_page(
     country: str = Query(default=""),
     sub_id: str = Query(default=""),
     search: str = Query(default=""),
+    run_ok: str = Query(default=""),
+    run_error: str = Query(default=""),
 ):
     user = require_login(request)
     enforce_page_access(user, "onexbet_report")
@@ -4405,11 +4455,25 @@ def onexbet_report_page(
             <td colspan="11" style="text-align:center;padding:24px;">Нет данных по выбранному периоду</td>
         </tr>
         """
-
+notice_html = ""
+if run_ok:
+    notice_html = f'<div class="notice">{escape(run_ok)}</div>'
+elif run_error:
+    notice_html = f'<div class="notice notice-danger">{escape(run_error)}</div>'
+    
     content = f"""
+    {notice_html}
+
     <div class="panel">
-        <div class="panel-title">1xBet Отчет</div>
-        <div class="panel-subtitle">Выгрузка, которую загружает парсер по игрокам</div>
+        <div class="controls-line">
+            <div>
+                <div class="panel-title">1xBet Отчет</div>
+                <div class="panel-subtitle">Выгрузка, которую загружает парсер по игрокам</div>
+            </div>
+            <form method="post" action="/1xbet-report/run-parser" style="margin:0;">
+                <button type="submit" class="btn">Запустить выгрузку</button>
+            </form>
+        </div>
     </div>
 
     <div class="panel compact-panel filters">
