@@ -165,7 +165,9 @@ class FinanceExpenseRow(Base):
     id = Column(Integer, primary_key=True, index=True)
     expense_date = Column(String, default="")
     category = Column(String, default="")
+    wallet_name = Column(String, default="")
     amount = Column(Float, default=0)
+    from_wallet = Column(String, default="")
     paid_by = Column(String, default="")
     comment = Column(String, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -178,9 +180,25 @@ class FinanceIncomeRow(Base):
     income_date = Column(String, default="")
     category = Column(String, default="")
     description = Column(String, default="")
+    wallet_name = Column(String, default="")
     amount = Column(Float, default=0)
     wallet = Column(String, default="")
+    from_wallet = Column(String, default="")
+    comment = Column(String, default="")
     reconciliation = Column(String, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class FinanceTransferRow(Base):
+    __tablename__ = "finance_transfer_rows"
+
+    id = Column(Integer, primary_key=True, index=True)
+    transfer_date = Column(String, default="")
+    category = Column(String, default="")
+    amount = Column(Float, default=0)
+    from_wallet = Column(String, default="")
+    to_wallet = Column(String, default="")
+    comment = Column(String, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -192,6 +210,10 @@ class PartnerRow(Base):
     cabinet_name = Column(String, default="")
     sub_id = Column(String, index=True, default="")
     player_id = Column(String, default="")
+    report_date = Column(String, default="")
+    period_start = Column(String, default="")
+    period_end = Column(String, default="")
+    period_label = Column(String, default="")
     registration_date = Column(String, default="")
     country = Column(String, default="")
     deposit_amount = Column(Float, default=0)
@@ -200,6 +222,8 @@ class PartnerRow(Base):
     cpa_amount = Column(Float, default=0)
     hold_time = Column(String, default="")
     blocked = Column(String, default="")
+    manual_hold = Column(Integer, default=0)
+    manual_blocked = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -207,8 +231,14 @@ class CabinetRow(Base):
     __tablename__ = "cabinet_rows"
 
     id = Column(Integer, primary_key=True, index=True)
+    advertiser = Column(String, default="")
+    platform = Column(String, default="")
     name = Column(String, unique=True, index=True, default="")
+    geo_list = Column(String, default="")
+    brands = Column(String, default="")
+    team_name = Column(String, default="")
     manager_name = Column(String, default="")
+    manager_contact = Column(String, default="")
     wallet = Column(String, default="")
     comments = Column(String, default="")
     status = Column(String, default="Active")
@@ -230,6 +260,10 @@ class ChatterfyRow(Base):
     status = Column(String, default="")
     step = Column(String, default="")
     external_id = Column(String, default="")
+    report_date = Column(String, default="")
+    period_start = Column(String, default="")
+    period_end = Column(String, default="")
+    period_label = Column(String, default="")
     launch_date = Column(String, default="")
     platform = Column(String, default="")
     manager = Column(String, default="")
@@ -471,9 +505,9 @@ def resolve_effective_buyer(user, buyer: str = "") -> str:
     return (buyer or "").strip()
 
 
-def get_scoped_filter_options(user):
+def get_scoped_filter_options(user, period_label=""):
     buyer_scope = resolve_effective_buyer(user)
-    rows = get_filtered_data(buyer=buyer_scope)
+    rows = get_filtered_data(buyer=buyer_scope, period_label=period_label)
     return (
         sorted({r.uploader for r in rows if r.uploader}),
         sorted({r.manager for r in rows if r.manager}),
@@ -816,6 +850,97 @@ def parse_chatterfy_datetime(value):
     return None
 
 
+def parse_datetime_flexible(value):
+    text = safe_text(value)
+    if not text:
+        return None
+    for pattern in (
+        "%Y-%m-%d",
+        "%d.%m.%Y",
+        "%d/%m/%Y",
+        "%d/%m/%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%dT%H:%M:%S",
+    ):
+        try:
+            return datetime.strptime(text, pattern)
+        except Exception:
+            continue
+    return parse_chatterfy_datetime(text)
+
+
+def get_half_month_period_from_date(value):
+    dt = parse_datetime_flexible(value) if not isinstance(value, datetime) else value
+    if not dt:
+        return {"report_date": "", "period_start": "", "period_end": "", "period_label": ""}
+    day_value = dt.day
+    year = dt.year
+    month = dt.month
+    if day_value <= 15:
+        start_day = 1
+        end_day = 15
+    else:
+        start_day = 16
+        end_day = calendar.monthrange(year, month)[1]
+    period_start = date(year, month, start_day)
+    period_end = date(year, month, end_day)
+    return {
+        "report_date": dt.strftime("%Y-%m-%d"),
+        "period_start": period_start.strftime("%Y-%m-%d"),
+        "period_end": period_end.strftime("%Y-%m-%d"),
+        "period_label": f"{period_start.strftime('%d.%m.%Y')} - {period_end.strftime('%d.%m.%Y')}",
+    }
+
+
+def build_period_options(start_year=2026, end_year=2027):
+    options = []
+    for year in range(start_year, end_year + 1):
+        for month in range(1, 13):
+            last_day = calendar.monthrange(year, month)[1]
+            first = date(year, month, 1)
+            mid = date(year, month, 15)
+            second = date(year, month, 16)
+            end = date(year, month, last_day)
+            options.append(f"{first.strftime('%d.%m.%Y')} - {mid.strftime('%d.%m.%Y')}")
+            options.append(f"{second.strftime('%d.%m.%Y')} - {end.strftime('%d.%m.%Y')}")
+    return options
+
+
+def get_current_period_label(today=None):
+    base_date = today or datetime.utcnow().date()
+    period = get_half_month_period(today=base_date)
+    return f"{datetime.strptime(period['date_start'], '%Y-%m-%d').strftime('%d.%m.%Y')} - {datetime.strptime(period['date_end'], '%Y-%m-%d').strftime('%d.%m.%Y')}"
+
+
+def resolve_period_label(period_view="", period_label=""):
+    clean_view = safe_text(period_view)
+    clean_label = safe_text(period_label)
+    if clean_view == "current":
+        return get_current_period_label()
+    if clean_view == "period":
+        return clean_label
+    return ""
+
+
+def fb_row_period_label(row):
+    try:
+        start_dt = datetime.strptime(safe_text(row.date_start), "%Y-%m-%d")
+        end_dt = datetime.strptime(safe_text(row.date_end), "%Y-%m-%d")
+        return f"{start_dt.strftime('%d.%m.%Y')} - {end_dt.strftime('%d.%m.%Y')}"
+    except Exception:
+        return ""
+
+
+def partner_row_period_label(row):
+    return safe_text(getattr(row, "period_label", "")) or get_half_month_period_from_date(getattr(row, "registration_date", "")).get("period_label", "")
+
+
+def chatterfy_row_period_label(row):
+    return safe_text(getattr(row, "period_label", "")) or get_half_month_period_from_date(getattr(row, "started", "")).get("period_label", "")
+
+
 def cap_fill_percent(current_ftd, cap_value):
     cap_value = safe_number(cap_value)
     current_ftd = safe_number(current_ftd)
@@ -841,7 +966,7 @@ def get_all_rows():
 
 
 
-def get_filtered_data(buyer="", manager="", geo="", offer="", search=""):
+def get_filtered_data(buyer="", manager="", geo="", offer="", search="", period_label=""):
     rows = get_all_rows()
     filtered = []
     search_lower = (search or "").lower().strip()
@@ -854,6 +979,8 @@ def get_filtered_data(buyer="", manager="", geo="", offer="", search=""):
         if geo and (row.geo or "") != geo:
             continue
         if offer and (row.offer or "") != offer:
+            continue
+        if period_label and fb_row_period_label(row) != period_label:
             continue
         if search_lower:
             haystack = " | ".join([
@@ -1203,6 +1330,18 @@ def ensure_partner_table():
             columns = [row[1] for row in conn.execute(text("PRAGMA table_info(partner_rows)")).fetchall()]
             if "cabinet_name" not in columns:
                 conn.execute(text("ALTER TABLE partner_rows ADD COLUMN cabinet_name VARCHAR DEFAULT ''"))
+            if "report_date" not in columns:
+                conn.execute(text("ALTER TABLE partner_rows ADD COLUMN report_date VARCHAR DEFAULT ''"))
+            if "period_start" not in columns:
+                conn.execute(text("ALTER TABLE partner_rows ADD COLUMN period_start VARCHAR DEFAULT ''"))
+            if "period_end" not in columns:
+                conn.execute(text("ALTER TABLE partner_rows ADD COLUMN period_end VARCHAR DEFAULT ''"))
+            if "period_label" not in columns:
+                conn.execute(text("ALTER TABLE partner_rows ADD COLUMN period_label VARCHAR DEFAULT ''"))
+            if "manual_hold" not in columns:
+                conn.execute(text("ALTER TABLE partner_rows ADD COLUMN manual_hold INTEGER DEFAULT 0"))
+            if "manual_blocked" not in columns:
+                conn.execute(text("ALTER TABLE partner_rows ADD COLUMN manual_blocked INTEGER DEFAULT 0"))
 
 
 def ensure_cabinet_table():
@@ -1210,12 +1349,24 @@ def ensure_cabinet_table():
     if DATABASE_URL.startswith("sqlite"):
         with engine.begin() as conn:
             columns = [row[1] for row in conn.execute(text("PRAGMA table_info(cabinet_rows)")).fetchall()]
+            if "advertiser" not in columns:
+                conn.execute(text("ALTER TABLE cabinet_rows ADD COLUMN advertiser VARCHAR DEFAULT ''"))
+            if "platform" not in columns:
+                conn.execute(text("ALTER TABLE cabinet_rows ADD COLUMN platform VARCHAR DEFAULT ''"))
             if "name" not in columns:
                 conn.execute(text("ALTER TABLE cabinet_rows ADD COLUMN name VARCHAR DEFAULT ''"))
                 if "cabinet_name" in columns:
                     conn.execute(text("UPDATE cabinet_rows SET name = cabinet_name WHERE COALESCE(name, '') = ''"))
+            if "geo_list" not in columns:
+                conn.execute(text("ALTER TABLE cabinet_rows ADD COLUMN geo_list VARCHAR DEFAULT ''"))
+            if "brands" not in columns:
+                conn.execute(text("ALTER TABLE cabinet_rows ADD COLUMN brands VARCHAR DEFAULT ''"))
+            if "team_name" not in columns:
+                conn.execute(text("ALTER TABLE cabinet_rows ADD COLUMN team_name VARCHAR DEFAULT ''"))
             if "manager_name" not in columns:
                 conn.execute(text("ALTER TABLE cabinet_rows ADD COLUMN manager_name VARCHAR DEFAULT ''"))
+            if "manager_contact" not in columns:
+                conn.execute(text("ALTER TABLE cabinet_rows ADD COLUMN manager_contact VARCHAR DEFAULT ''"))
             if "wallet" not in columns:
                 conn.execute(text("ALTER TABLE cabinet_rows ADD COLUMN wallet VARCHAR DEFAULT ''"))
                 if "wallets" in columns:
@@ -1230,6 +1381,17 @@ def ensure_cabinet_table():
 
 def ensure_chatterfy_table():
     Base.metadata.create_all(bind=engine, tables=[ChatterfyRow.__table__])
+    if DATABASE_URL.startswith("sqlite"):
+        with engine.begin() as conn:
+            columns = [row[1] for row in conn.execute(text("PRAGMA table_info(chatterfy_rows)")).fetchall()]
+            if "report_date" not in columns:
+                conn.execute(text("ALTER TABLE chatterfy_rows ADD COLUMN report_date VARCHAR DEFAULT ''"))
+            if "period_start" not in columns:
+                conn.execute(text("ALTER TABLE chatterfy_rows ADD COLUMN period_start VARCHAR DEFAULT ''"))
+            if "period_end" not in columns:
+                conn.execute(text("ALTER TABLE chatterfy_rows ADD COLUMN period_end VARCHAR DEFAULT ''"))
+            if "period_label" not in columns:
+                conn.execute(text("ALTER TABLE chatterfy_rows ADD COLUMN period_label VARCHAR DEFAULT ''"))
 
 
 def ensure_chatterfy_id_table():
@@ -1326,11 +1488,16 @@ def parse_partner_dataframe(df, source_name="", cabinet_name=""):
         deposit_amount = safe_number(row.get("Сумма депозитов"))
         company_income = safe_number(row.get("Доход компании (общий)"))
         cpa_amount = safe_number(row.get("CPA"))
+        period_info = get_half_month_period_from_date(row.get("Дата регистрации"))
         records.append(PartnerRow(
             source_name=source_name,
             cabinet_name=safe_text(cabinet_name),
             sub_id=sub_id,
             player_id=player_id,
+            report_date=period_info["report_date"],
+            period_start=period_info["period_start"],
+            period_end=period_info["period_end"],
+            period_label=period_info["period_label"],
             registration_date=safe_text(row.get("Дата регистрации")),
             country=country,
             deposit_amount=deposit_amount,
@@ -1341,6 +1508,15 @@ def parse_partner_dataframe(df, source_name="", cabinet_name=""):
             blocked=safe_text(row.get("Заблокирован")),
         ))
     return records
+
+
+def build_partner_row_identity(row):
+    return (
+        safe_text(getattr(row, "cabinet_name", "")),
+        safe_text(getattr(row, "sub_id", "")),
+        safe_text(getattr(row, "player_id", "")),
+        safe_text(getattr(row, "registration_date", "")),
+    )
 
 
 def detect_partner_header_index(df) -> int:
@@ -1384,8 +1560,14 @@ def get_cabinet_rows(search="", status=""):
             continue
         if search_lower:
             haystack = " | ".join([
+                row.advertiser or "",
+                row.platform or "",
                 row.name or "",
+                row.geo_list or "",
+                row.brands or "",
+                row.team_name or "",
                 row.manager_name or "",
+                row.manager_contact or "",
                 row.wallet or "",
                 row.comments or "",
                 row.status or "",
@@ -1427,6 +1609,18 @@ def replace_partner_rows(source_name, rows_to_insert):
     ensure_partner_table()
     db = SessionLocal()
     try:
+        existing_rows = db.query(PartnerRow).filter(PartnerRow.source_name == source_name).all() if source_name else db.query(PartnerRow).all()
+        manual_flags = {
+            build_partner_row_identity(item): {
+                "manual_hold": 1 if safe_number(getattr(item, "manual_hold", 0)) > 0 else 0,
+                "manual_blocked": 1 if safe_number(getattr(item, "manual_blocked", 0)) > 0 else 0,
+            }
+            for item in existing_rows
+        }
+        for item in rows_to_insert:
+            flags = manual_flags.get(build_partner_row_identity(item), {})
+            item.manual_hold = int(flags.get("manual_hold", 0))
+            item.manual_blocked = int(flags.get("manual_blocked", 0))
         if source_name:
             db.query(PartnerRow).filter(PartnerRow.source_name == source_name).delete()
         else:
@@ -1446,6 +1640,7 @@ def import_chatterfy_dataframe(df, source_name=""):
     for _, row in df.iterrows():
         tags = safe_text(row.get("Tags"))
         parsed = parse_chatterfy_tags(tags)
+        period_info = get_half_month_period_from_date(row.get("Started"))
         records.append(ChatterfyRow(
             source_name=source_name,
             name=safe_text(row.get("Name")),
@@ -1458,6 +1653,10 @@ def import_chatterfy_dataframe(df, source_name=""):
             status=safe_text(row.get("Status")),
             step=safe_text(row.get("Step")),
             external_id=safe_text(row.get("ID")),
+            report_date=period_info["report_date"],
+            period_start=period_info["period_start"],
+            period_end=period_info["period_end"],
+            period_label=period_info["period_label"],
             launch_date=parsed["launch_date"],
             platform=parsed["platform"],
             manager=parsed["manager"],
@@ -1507,7 +1706,7 @@ def import_chatterfy_ids_dataframe(df):
     return len(records)
 
 
-def get_chatterfy_rows(status="", search="", date_filter="", time_filter="", telegram_id="", pp_player_id=""):
+def get_chatterfy_rows(status="", search="", date_filter="", time_filter="", telegram_id="", pp_player_id="", period_label=""):
     ensure_chatterfy_table()
     ensure_chatterfy_id_table()
     db = SessionLocal()
@@ -1530,7 +1729,11 @@ def get_chatterfy_rows(status="", search="", date_filter="", time_filter="", tel
         started_time = started_dt.strftime("%H:%M") if started_dt else ""
         linked_pp = safe_text(linked.pp_player_id) if linked else ""
         linked_chat = safe_text(linked.chat_link) if linked else ""
+        row_period_label = chatterfy_row_period_label(row)
+        row_report_date = safe_text(getattr(row, "report_date", "")) or (started_dt.strftime("%Y-%m-%d") if started_dt else "")
         if status and (row.status or "") != status:
+            continue
+        if period_label and row_period_label != period_label:
             continue
         if date_filter and date_filter != started_date:
             continue
@@ -1563,6 +1766,8 @@ def get_chatterfy_rows(status="", search="", date_filter="", time_filter="", tel
             "started_time": started_time,
             "pp_player_id": linked_pp,
             "chat_link": linked_chat,
+            "report_date": row_report_date,
+            "period_label": row_period_label,
         })
     return filtered
 
@@ -1668,7 +1873,7 @@ def is_partner_row_qualified_for_cap(row, cap):
     return True
 
 
-def get_statistic_support_maps():
+def get_statistic_support_maps(period_label=""):
     import_chatterfy_from_csv_if_needed()
     ensure_partner_table()
     ensure_chatterfy_table()
@@ -1680,6 +1885,10 @@ def get_statistic_support_maps():
         chatterfy_rows = db.query(ChatterfyRow).all()
     finally:
         db.close()
+
+    if period_label:
+        partner_rows = [row for row in partner_rows if partner_row_period_label(row) == period_label]
+        chatterfy_rows = [row for row in chatterfy_rows if chatterfy_row_period_label(row) == period_label]
 
     caps_by_sub = {}
     for cap in caps:
@@ -1739,8 +1948,8 @@ def get_statistic_support_maps():
     return partner_by_flow, chatterfy_by_ad, chatterfy_by_flow
 
 
-def enrich_statistic_rows(rows):
-    partner_by_flow, chatterfy_by_ad, chatterfy_by_flow = get_statistic_support_maps()
+def enrich_statistic_rows(rows, period_label=""):
+    partner_by_flow, chatterfy_by_ad, chatterfy_by_flow = get_statistic_support_maps(period_label=period_label)
     ad_bucket_weights = {}
     ad_bucket_counts = {}
     for item in rows:
@@ -1781,7 +1990,27 @@ def ensure_finance_tables():
         FinanceWalletRow.__table__,
         FinanceExpenseRow.__table__,
         FinanceIncomeRow.__table__,
+        FinanceTransferRow.__table__,
     ])
+    if DATABASE_URL.startswith("sqlite"):
+        with engine.begin() as conn:
+            expense_columns = [row[1] for row in conn.execute(text("PRAGMA table_info(finance_expense_rows)")).fetchall()]
+            if "wallet_name" not in expense_columns:
+                conn.execute(text("ALTER TABLE finance_expense_rows ADD COLUMN wallet_name VARCHAR DEFAULT ''"))
+            if "from_wallet" not in expense_columns:
+                conn.execute(text("ALTER TABLE finance_expense_rows ADD COLUMN from_wallet VARCHAR DEFAULT ''"))
+                if "paid_by" in expense_columns:
+                    conn.execute(text("UPDATE finance_expense_rows SET from_wallet = paid_by WHERE COALESCE(from_wallet, '') = ''"))
+
+            income_columns = [row[1] for row in conn.execute(text("PRAGMA table_info(finance_income_rows)")).fetchall()]
+            if "wallet_name" not in income_columns:
+                conn.execute(text("ALTER TABLE finance_income_rows ADD COLUMN wallet_name VARCHAR DEFAULT ''"))
+                if "wallet" in income_columns:
+                    conn.execute(text("UPDATE finance_income_rows SET wallet_name = wallet WHERE COALESCE(wallet_name, '') = ''"))
+            if "from_wallet" not in income_columns:
+                conn.execute(text("ALTER TABLE finance_income_rows ADD COLUMN from_wallet VARCHAR DEFAULT ''"))
+            if "comment" not in income_columns:
+                conn.execute(text("ALTER TABLE finance_income_rows ADD COLUMN comment VARCHAR DEFAULT ''"))
 
 
 def load_manual_finance():
@@ -1792,6 +2021,7 @@ def load_manual_finance():
             "wallets": db.query(FinanceWalletRow).order_by(FinanceWalletRow.id.desc()).all(),
             "expenses": db.query(FinanceExpenseRow).order_by(FinanceExpenseRow.id.desc()).all(),
             "income": db.query(FinanceIncomeRow).order_by(FinanceIncomeRow.id.desc()).all(),
+            "transfers": db.query(FinanceTransferRow).order_by(FinanceTransferRow.id.desc()).all(),
         }
     finally:
         db.close()
@@ -1880,7 +2110,7 @@ def import_tasks_dataframe(df, assigned_user, created_by_user):
         db.close()
 
 
-def build_finance_form_data(wallet_item=None, expense_item=None, income_item=None):
+def build_finance_form_data(wallet_item=None, expense_item=None, income_item=None, transfer_item=None):
     data = {}
     if wallet_item:
         data.update({
@@ -1906,11 +2136,102 @@ def build_finance_form_data(wallet_item=None, expense_item=None, income_item=Non
             "income_date": income_item.income_date or "",
             "income_category": income_item.category or "",
             "income_description": income_item.description or "",
+            "income_wallet_name": income_item.wallet_name or income_item.wallet or "",
             "income_amount": format_int_or_float(income_item.amount),
-            "income_wallet": income_item.wallet or "",
-            "income_reconciliation": income_item.reconciliation or "",
+            "income_from_wallet": income_item.from_wallet or income_item.reconciliation or "",
+            "income_comment": income_item.comment or "",
+        })
+    if transfer_item:
+        data.update({
+            "transfer_edit_id": str(transfer_item.id),
+            "transfer_date": transfer_item.transfer_date or "",
+            "transfer_category": transfer_item.category or "",
+            "transfer_amount": format_int_or_float(transfer_item.amount),
+            "transfer_from_wallet": transfer_item.from_wallet or "",
+            "transfer_to_wallet": transfer_item.to_wallet or "",
+            "transfer_comment": transfer_item.comment or "",
         })
     return data
+
+
+def normalize_date_for_compare(value):
+    dt = parse_datetime_flexible(value)
+    return dt.strftime("%Y-%m-%d") if dt else ""
+
+
+def get_finance_year_options(manual):
+    years = set()
+    for item in manual.get("expenses", []):
+        dt = parse_datetime_flexible(item.expense_date)
+        if dt:
+            years.add(str(dt.year))
+    for item in manual.get("income", []):
+        dt = parse_datetime_flexible(item.income_date)
+        if dt:
+            years.add(str(dt.year))
+    for item in manual.get("transfers", []):
+        dt = parse_datetime_flexible(item.transfer_date)
+        if dt:
+            years.add(str(dt.year))
+    years.update({"2026", "2027"})
+    return sorted(years)
+
+
+def date_matches_filters(value, date_from="", date_to="", year=""):
+    normalized = normalize_date_for_compare(value)
+    if not normalized:
+        return not (date_from or date_to or year)
+    if year and not normalized.startswith(f"{year}-"):
+        return False
+    if date_from and normalized < date_from:
+        return False
+    if date_to and normalized > date_to:
+        return False
+    return True
+
+
+def filter_finance_manual_rows(manual, date_from="", date_to="", year=""):
+    return {
+        "wallets": manual.get("wallets", []),
+        "expenses": [item for item in manual.get("expenses", []) if date_matches_filters(item.expense_date, date_from, date_to, year)],
+        "income": [item for item in manual.get("income", []) if date_matches_filters(item.income_date, date_from, date_to, year)],
+        "transfers": [item for item in manual.get("transfers", []) if date_matches_filters(item.transfer_date, date_from, date_to, year)],
+    }
+
+
+def compute_finance_balances(snapshot, manual):
+    balance_map = {}
+
+    for item in snapshot.get("wallets", []):
+        key = safe_text(item.get("wallet")) or safe_text(item.get("description")) or safe_text(item.get("owner")) or "Unknown"
+        balance_map[key] = balance_map.get(key, 0.0) + safe_number(item.get("amount"))
+
+    for item in manual.get("wallets", []):
+        key = safe_text(item.wallet) or safe_text(item.description) or safe_text(item.owner_name) or f"Wallet {item.id}"
+        balance_map[key] = balance_map.get(key, 0.0) + safe_number(item.amount)
+
+    for item in manual.get("income", []):
+        key = safe_text(item.wallet_name) or safe_text(item.wallet) or "Unassigned"
+        balance_map[key] = balance_map.get(key, 0.0) + safe_number(item.amount)
+
+    for item in manual.get("expenses", []):
+        key = safe_text(item.wallet_name) or safe_text(item.from_wallet) or safe_text(item.paid_by) or "Unassigned"
+        balance_map[key] = balance_map.get(key, 0.0) - safe_number(item.amount)
+
+    for item in manual.get("transfers", []):
+        from_key = safe_text(item.from_wallet)
+        to_key = safe_text(item.to_wallet)
+        if from_key:
+            balance_map[from_key] = balance_map.get(from_key, 0.0) - safe_number(item.amount)
+        if to_key:
+            balance_map[to_key] = balance_map.get(to_key, 0.0) + safe_number(item.amount)
+
+    rows = [{"wallet_name": key, "balance": value} for key, value in balance_map.items()]
+    rows.sort(key=lambda x: x["balance"], reverse=True)
+    return {
+        "total": sum(item["balance"] for item in rows),
+        "rows": rows,
+    }
 
 
 # =========================================
@@ -2014,7 +2335,7 @@ def sidebar_html(active_page, current_user=None):
         ("finance", "/finance", "💸", "Finance", []),
         ("caps", "/caps", "🔶", "Caps", []),
         ("partner", "/partner-report", "🎰", "1xBet", []),
-        ("cabinets", "/cabinets", "🗂", "Cabinets", []),
+        ("cabinets", "/cabinets", "🗂", "Partners", []),
         ("chatterfy", "/chatterfy", "💬", "Chatterfy", []),
         ("holdwager", "/hold-wager", "🎯", "Hold/Wager", []),
     ]
@@ -2389,6 +2710,9 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             details[open] > summary .toggle-indicator::before {{
                 content:"−";
             }}
+            details[open] > summary.toggle-indicator::before {{
+                content:"−";
+            }}
             .main {{ flex: 1; padding: 22px; overflow-x: hidden; }}
             .topbar {{ display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 18px; }}
             .page-title {{ font-size: 26px; font-weight: 900; letter-spacing: 0.2px; }}
@@ -2505,6 +2829,52 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .th-inner {{ display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-right: 10px; }}
             .drag-handle {{ cursor: grab; opacity: 0.75; font-size: 12px; }}
             .dragging {{ opacity: 0.45; }}
+            .stat-cell-right {{ text-align: right; }}
+            .stat-cell-wrap {{ white-space: normal; min-width: 180px; }}
+            .flow-badge {{
+                display: inline-flex;
+                flex-wrap: wrap;
+                gap: 6px;
+                align-items: center;
+            }}
+            .flow-badge span {{
+                display:inline-flex;
+                align-items:center;
+                padding: 6px 10px;
+                border-radius: 999px;
+                background: var(--chip);
+                border: 1px solid var(--border);
+                font-size: 12px;
+                font-weight: 800;
+            }}
+            .flag-form {{
+                display: grid;
+                gap: 8px;
+                min-width: 120px;
+            }}
+            .flag-check {{
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                font-weight: 800;
+                font-size: 13px;
+            }}
+            .flag-check input {{
+                width: 16px;
+                height: 16px;
+                accent-color: var(--accent1);
+            }}
+            .caps-actions {{
+                display: flex;
+                gap: 8px;
+                align-items: center;
+                justify-content: center;
+                flex-wrap: wrap;
+            }}
+            .caps-actions .ghost-btn {{
+                min-width: 92px;
+                text-align: center;
+            }}
             .drag-target-left::before, .drag-target-right::after {{
                 content: "";
                 position: absolute;
@@ -2840,6 +3210,152 @@ def render_statistic_cards(totals):
     return html
 
 
+def aggregate_stat_rows_by_keys(rows, keys):
+    buckets = {}
+    for row in rows:
+        identity = tuple((safe_text(row.get(key)) or "—") for key in keys)
+        if identity not in buckets:
+            buckets[identity] = {
+                "rows": [],
+                "campaigns": set(),
+                "offers": set(),
+                "creatives": set(),
+            }
+        bucket = buckets[identity]
+        bucket["rows"].append(row)
+        if safe_text(row.get("ad_name")):
+            bucket["campaigns"].add(safe_text(row.get("ad_name")))
+        if safe_text(row.get("offer")):
+            bucket["offers"].add(safe_text(row.get("offer")))
+        if safe_text(row.get("creative")):
+            bucket["creatives"].add(safe_text(row.get("creative")))
+
+    result = []
+    for identity, bucket in buckets.items():
+        metrics = aggregate_totals(bucket["rows"])
+        item = {key: identity[index] for index, key in enumerate(keys)}
+        item.update(metrics)
+        item["campaign_count"] = len(bucket["campaigns"])
+        item["offer_count"] = len(bucket["offers"])
+        item["creative_count"] = len(bucket["creatives"])
+        result.append(item)
+    return result
+
+
+def render_stat_table(title, subtitle, rows, columns, empty_text="No data"):
+    head_html = "".join([f"<th>{escape(col['label'])}</th>" for col in columns])
+    body_html = ""
+    for row in rows:
+        cell_html = ""
+        for col in columns:
+            raw_value = row.get(col["key"], "")
+            formatted = col.get("formatter", lambda value: value)(raw_value)
+            if not col.get("html"):
+                formatted = escape(str(formatted))
+            align_class = " stat-cell-right" if col.get("align") == "right" else ""
+            allow_wrap = " stat-cell-wrap" if col.get("wrap") else ""
+            cell_html += f'<td class="{align_class}{allow_wrap}">{formatted}</td>'
+        body_html += f"<tr>{cell_html}</tr>"
+
+    return f"""
+    <div class="panel compact-panel">
+        <div class="panel-title" style="margin-bottom:4px;">{escape(title)}</div>
+        <div class="panel-subtitle">{escape(subtitle)}</div>
+        <div class="table-wrap" style="margin-top:14px;">
+            <table style="min-width:1200px;">
+                <thead><tr>{head_html}</tr></thead>
+                <tbody>{body_html if body_html else f'<tr><td colspan="{len(columns)}">{escape(empty_text)}</td></tr>'}</tbody>
+            </table>
+        </div>
+    </div>
+    """
+
+
+def render_flow_badge(platform, manager, geo):
+    return f'<div class="flow-badge"><span>{escape(platform or "—")}</span><span>{escape(manager or "—")}</span><span>{escape(geo or "—")}</span></div>'
+
+
+def render_statistic_dashboard(rows):
+    geo_rows = aggregate_stat_rows_by_keys(rows, ["geo"])
+    geo_rows.sort(key=lambda item: item.get("spend", 0), reverse=True)
+
+    flow_rows = aggregate_stat_rows_by_keys(rows, ["platform", "manager", "geo"])
+    flow_rows.sort(key=lambda item: item.get("spend", 0), reverse=True)
+
+    campaign_rows = list(rows)
+    campaign_rows.sort(key=lambda item: item.get("spend", 0), reverse=True)
+
+    geo_columns = [
+        {"key": "geo", "label": "Geo"},
+        {"key": "campaign_count", "label": "Campaigns", "align": "right", "formatter": format_int_or_float},
+        {"key": "spend", "label": "Spend", "align": "right", "formatter": format_money},
+        {"key": "ftd", "label": "FB FTD", "align": "right", "formatter": format_int_or_float},
+        {"key": "stat_chatterfy", "label": "Chatterfy", "align": "right", "formatter": format_int_or_float},
+        {"key": "stat_total_ftd", "label": "Total FTD", "align": "right", "formatter": format_int_or_float},
+        {"key": "stat_qual_ftd", "label": "Qual FTD", "align": "right", "formatter": format_int_or_float},
+        {"key": "stat_income", "label": "Income", "align": "right", "formatter": format_money},
+        {"key": "stat_profit", "label": "Profit", "align": "right", "formatter": format_money},
+        {"key": "stat_roi", "label": "ROI", "align": "right", "formatter": format_percent},
+    ]
+    flow_table_columns = [
+        {"key": "flow_label", "label": "Flow", "wrap": True, "formatter": lambda value: value, "html": True},
+        {"key": "offer_count", "label": "Offers", "align": "right", "formatter": format_int_or_float},
+        {"key": "campaign_count", "label": "Campaigns", "align": "right", "formatter": format_int_or_float},
+        {"key": "spend", "label": "Spend", "align": "right", "formatter": format_money},
+        {"key": "stat_chatterfy", "label": "Chatterfy", "align": "right", "formatter": format_int_or_float},
+        {"key": "stat_total_ftd", "label": "Total FTD", "align": "right", "formatter": format_int_or_float},
+        {"key": "stat_qual_ftd", "label": "Qual FTD", "align": "right", "formatter": format_int_or_float},
+        {"key": "stat_income", "label": "Income", "align": "right", "formatter": format_money},
+        {"key": "stat_profit", "label": "Profit", "align": "right", "formatter": format_money},
+        {"key": "stat_roi", "label": "ROI", "align": "right", "formatter": format_percent},
+    ]
+    for item in flow_rows:
+        item["flow_label"] = render_flow_badge(item.get("platform"), item.get("manager"), item.get("geo"))
+
+    campaign_columns = [
+        {"key": "launch_date", "label": "Start"},
+        {"key": "buyer", "label": "Buyer"},
+        {"key": "flow_label", "label": "Flow", "wrap": True, "formatter": lambda value: value, "html": True},
+        {"key": "offer", "label": "Offer"},
+        {"key": "creative", "label": "Creative"},
+        {"key": "ad_name", "label": "Campaign", "wrap": True},
+        {"key": "spend", "label": "Spend", "align": "right", "formatter": format_money},
+        {"key": "ftd", "label": "FB FTD", "align": "right", "formatter": format_int_or_float},
+        {"key": "stat_chatterfy", "label": "Chatterfy", "align": "right", "formatter": format_int_or_float},
+        {"key": "stat_total_ftd", "label": "Total FTD", "align": "right", "formatter": format_int_or_float},
+        {"key": "stat_qual_ftd", "label": "Qual FTD", "align": "right", "formatter": format_int_or_float},
+        {"key": "stat_income", "label": "Income", "align": "right", "formatter": format_money},
+        {"key": "stat_profit", "label": "Profit", "align": "right", "formatter": format_money},
+        {"key": "stat_roi", "label": "ROI", "align": "right", "formatter": format_percent},
+    ]
+    for item in campaign_rows:
+        item["flow_label"] = render_flow_badge(item.get("platform"), item.get("manager"), item.get("geo"))
+
+    return (
+        render_stat_table(
+            "Geo Overview",
+            "Quick read on where money and results are concentrated right now.",
+            geo_rows,
+            geo_columns,
+            empty_text="No geo data yet",
+        )
+        + render_stat_table(
+            "Flow Overview",
+            "Platform + manager + geo combined into one readable operating view.",
+            flow_rows,
+            flow_table_columns,
+            empty_text="No flow data yet",
+        )
+        + render_stat_table(
+            "Campaign Performance",
+            "Main working table for tracking campaigns, costs, FTD, qualification and final income.",
+            campaign_rows,
+            campaign_columns,
+            empty_text="No campaign rows yet",
+        )
+    )
+
+
 
 def render_tree_nodes(nodes, level=1):
     html = ""
@@ -3089,18 +3605,18 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         <form method="post" action="/caps/save" class="caps-form" style="margin-top:14px;">
             <input type="hidden" name="edit_id" value="{escape(current_edit_id)}">
             <div class="caps-grid-2">
-                <label>Рекл
+                <label>Advertiser
                     <input type="text" name="advertiser" value="{escape(form_data.get('advertiser', ''))}">
                 </label>
-                <label>Имя
+                <label>Owner
                     <input type="text" name="owner_name" value="{escape(form_data.get('owner_name', ''))}">
                 </label>
             </div>
             <div class="caps-grid-2">
-                <label>Кабинет
+                <label>Cabinet
                     <input type="text" name="buyer" value="{escape(form_data.get('buyer', ''))}" required>
                 </label>
-                <label>Поток
+                <label>Flow
                     <input type="text" name="flow" value="{escape(form_data.get('flow', ''))}">
                 </label>
             </div>
@@ -3113,15 +3629,15 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 </label>
             </div>
             <div class="caps-grid-2">
-                <label>Ставка
+                <label>Rate
                     <input type="text" name="rate" value="{escape(form_data.get('rate', ''))}">
                 </label>
-                <label>БЛ
+                <label>Baseline
                     <input type="text" name="baseline" value="{escape(form_data.get('baseline', ''))}">
                 </label>
             </div>
             <div class="caps-grid-2">
-                <label>Капа
+                <label>Cap
                     <input type="number" step="0.01" name="cap_value" value="{escape(form_data.get('cap_value', ''))}" required>
                 </label>
                 <label>Current FTD
@@ -3129,20 +3645,20 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 </label>
             </div>
             <div class="caps-grid-2">
-                <label>Промокод
+                <label>Promo Code
                     <input type="text" name="promo_code" value="{escape(form_data.get('promo_code', ''))}">
                 </label>
-                <label>Агент
+                <label>Agent
                     <input type="text" name="agent" value="{escape(form_data.get('agent', ''))}">
                 </label>
             </div>
-            <label>Ссылка
+            <label>Link
                 <input type="text" name="link" value="{escape(form_data.get('link', ''))}">
             </label>
-            <label>КПИ
+            <label>KPI
                 <textarea name="kpi">{escape(form_data.get('kpi', ''))}</textarea>
             </label>
-            <label>Комментарии
+            <label>Comments
                 <textarea name="comments">{escape(form_data.get('comments', ''))}</textarea>
             </label>
             <div style="display:flex; gap:10px; flex-wrap:wrap;">
@@ -3164,7 +3680,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 <form method="get" action="/caps">
                     <label>Buyer<select name="buyer">{buyer_options}</select></label>
                     <label>Geo<select name="geo">{geo_options}</select></label>
-                    <label>Имя<select name="owner_name">{owner_options}</select></label>
+                    <label>Owner<select name="owner_name">{owner_options}</select></label>
                     <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="Search caps"></label>
                     <button type="submit" class="btn small-btn">Filter</button>
                     <a href="/caps" class="ghost-btn small-btn">Reset</a>
@@ -3192,24 +3708,24 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                         <thead>
                             <tr>
                                 <th>ID</th>
-                                <th>Рекл</th>
-                                <th>Имя</th>
-                                <th>Кабинет</th>
-                                <th>Поток</th>
+                                <th>Advertiser</th>
+                                <th>Owner</th>
+                                <th>Cabinet</th>
+                                <th>Flow</th>
                                 <th>CODE</th>
                                 <th>GEO</th>
-                                <th>Ставка</th>
-                                <th>БЛ</th>
-                                <th>Капа</th>
+                                <th>Rate</th>
+                                <th>Baseline</th>
+                                <th>Cap</th>
                                 <th>Current FTD</th>
                                 <th>Fill</th>
-                                <th>Промокод</th>
-                                <th>Агент</th>
-                                <th>Комментарии</th>
+                                <th>Promo Code</th>
+                                <th>Agent</th>
+                                <th>Comments</th>
                                 <th>Action</th>
                             </tr>
                         </thead>
-                        <tbody>{rows_html if rows_html else '<tr><td colspan="16">Нет кап</td></tr>'}</tbody>
+                        <tbody>{rows_html if rows_html else '<tr><td colspan="16">No caps yet</td></tr>'}</tbody>
                     </table>
                 </div>
             </div>
@@ -3238,41 +3754,34 @@ def render_finance_table(title, subtitle, headers, rows_html, min_width="980px")
     """
 
 
-def finance_page_html(current_user, success_text="", error_text="", form_data=None):
+def finance_page_html(current_user, success_text="", error_text="", form_data=None, filter_values=None):
     snapshot = load_finance_snapshot()
-    manual = load_manual_finance()
+    manual_all = load_manual_finance()
     form_data = form_data or {}
+    filter_values = filter_values or {}
+    date_from = safe_text(filter_values.get("date_from"))
+    date_to = safe_text(filter_values.get("date_to"))
+    year = safe_text(filter_values.get("year"))
+    manual = filter_finance_manual_rows(manual_all, date_from=date_from, date_to=date_to, year=year)
+    year_options = make_options(get_finance_year_options(manual_all), year)
+    balances = compute_finance_balances(snapshot, manual_all)
 
-    wallet_rows = ""
-    for item in snapshot["wallets"]:
-        wallet_rows += f"""
-        <tr>
-            <td>{escape(item['category'])}</td>
-            <td>{escape(item['description'])}</td>
-            <td>{escape(item['owner'])}</td>
-            <td class="wallet-code">{escape(item['wallet'])}</td>
-            <td>{format_money(item['amount'])}</td>
-            <td>CSV</td>
-            <td></td>
-        </tr>
-        """
-
-    for item in manual["wallets"]:
-        wallet_rows += f"""
+    service_wallet_rows = ""
+    for item in manual_all["wallets"]:
+        service_wallet_rows += f"""
         <tr>
             <td>{escape(item.category or "")}</td>
             <td>{escape(item.description or "")}</td>
             <td>{escape(item.owner_name or "")}</td>
             <td class="wallet-code">{escape(item.wallet or "")}</td>
             <td>{format_money(item.amount)}</td>
-            <td>Manual</td>
             <td>
                 <div class="caps-actions">
                     <form method="get" action="/finance">
                         <input type="hidden" name="edit_wallet" value="{item.id}">
                         <button type="submit" class="ghost-btn small-btn">Edit</button>
                     </form>
-                    <form method="post" action="/finance/wallets/delete" onsubmit="return confirm('Удалить кошелек?');">
+                    <form method="post" action="/finance/wallets/delete" onsubmit="return confirm('Delete this wallet?');">
                         <input type="hidden" name="wallet_id" value="{item.id}">
                         <button type="submit" class="ghost-btn small-btn">Delete</button>
                     </form>
@@ -3281,38 +3790,25 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
         </tr>
         """
 
-    manual_expense_rows = ""
-    operation_rows = ""
-    for item in manual["expenses"]:
-        manual_expense_rows += f"""
+    balance_rows = ""
+    for item in balances["rows"]:
+        balance_rows += f"""
         <tr>
-            <td>{item.id}</td>
-            <td>{escape(item.expense_date or "")}</td>
-            <td>{escape(item.category or "")}</td>
-            <td>{format_money(item.amount)}</td>
-            <td>{escape(item.paid_by or "")}</td>
-            <td>{escape(item.comment or "")}</td>
-            <td>
-                <div class="caps-actions">
-                    <form method="get" action="/finance">
-                        <input type="hidden" name="edit_expense" value="{item.id}">
-                        <button type="submit" class="ghost-btn small-btn">Edit</button>
-                    </form>
-                    <form method="post" action="/finance/expenses/delete" onsubmit="return confirm('Удалить расход?');">
-                        <input type="hidden" name="expense_id" value="{item.id}">
-                        <button type="submit" class="ghost-btn small-btn">Delete</button>
-                    </form>
-                </div>
-            </td>
+            <td>{escape(item['wallet_name'])}</td>
+            <td>{format_money(item['balance'])}</td>
         </tr>
         """
+
+    operation_rows = ""
+    for item in manual["expenses"]:
         operation_rows += f"""
         <tr>
             <td>{item.id}</td>
             <td>Expense</td>
             <td>{escape(item.expense_date or "")}</td>
             <td>{escape(item.category or "")}</td>
-            <td>{escape(item.paid_by or "")}</td>
+            <td>{escape(item.wallet_name or "")}</td>
+            <td>{escape(item.from_wallet or item.paid_by or "")}</td>
             <td>{format_money(item.amount)}</td>
             <td>{escape(item.comment or "")}</td>
             <td>
@@ -3321,7 +3817,7 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
                         <input type="hidden" name="edit_expense" value="{item.id}">
                         <button type="submit" class="ghost-btn small-btn">Edit</button>
                     </form>
-                    <form method="post" action="/finance/expenses/delete" onsubmit="return confirm('Удалить расход?');">
+                    <form method="post" action="/finance/expenses/delete" onsubmit="return confirm('Delete expense?');">
                         <input type="hidden" name="expense_id" value="{item.id}">
                         <button type="submit" class="ghost-btn small-btn">Delete</button>
                     </form>
@@ -3329,48 +3825,24 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
             </td>
         </tr>
         """
-
-    manual_income_rows = ""
     for item in manual["income"]:
-        manual_income_rows += f"""
-        <tr>
-            <td>{item.id}</td>
-            <td>{escape(item.income_date or "")}</td>
-            <td>{escape(item.category or "")}</td>
-            <td>{escape(item.description or "")}</td>
-            <td>{format_money(item.amount)}</td>
-            <td class="wallet-code">{escape(item.wallet or "")}</td>
-            <td>{escape(item.reconciliation or "")}</td>
-            <td>
-                <div class="caps-actions">
-                    <form method="get" action="/finance">
-                        <input type="hidden" name="edit_income" value="{item.id}">
-                        <button type="submit" class="ghost-btn small-btn">Edit</button>
-                    </form>
-                    <form method="post" action="/finance/income/delete" onsubmit="return confirm('Удалить приход?');">
-                        <input type="hidden" name="income_id" value="{item.id}">
-                        <button type="submit" class="ghost-btn small-btn">Delete</button>
-                    </form>
-                </div>
-            </td>
-        </tr>
-        """
         operation_rows += f"""
         <tr>
             <td>{item.id}</td>
             <td>Income</td>
             <td>{escape(item.income_date or "")}</td>
             <td>{escape(item.category or "")}</td>
-            <td>{escape(item.wallet or "")}</td>
+            <td>{escape(item.wallet_name or item.wallet or "")}</td>
+            <td>{escape(item.from_wallet or item.reconciliation or "")}</td>
             <td>{format_money(item.amount)}</td>
-            <td>{escape((item.description or "") + (f" · {item.reconciliation}" if item.reconciliation else ""))}</td>
+            <td>{escape(item.comment or item.description or "")}</td>
             <td>
                 <div class="caps-actions">
                     <form method="get" action="/finance">
                         <input type="hidden" name="edit_income" value="{item.id}">
                         <button type="submit" class="ghost-btn small-btn">Edit</button>
                     </form>
-                    <form method="post" action="/finance/income/delete" onsubmit="return confirm('Удалить приход?');">
+                    <form method="post" action="/finance/income/delete" onsubmit="return confirm('Delete income?');">
                         <input type="hidden" name="income_id" value="{item.id}">
                         <button type="submit" class="ghost-btn small-btn">Delete</button>
                     </form>
@@ -3378,35 +3850,63 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
             </td>
         </tr>
         """
+    for item in manual["transfers"]:
+        operation_rows += f"""
+        <tr>
+            <td>{item.id}</td>
+            <td>Transfer</td>
+            <td>{escape(item.transfer_date or "")}</td>
+            <td>{escape(item.category or "")}</td>
+            <td>{escape(item.to_wallet or "")}</td>
+            <td>{escape(item.from_wallet or "")}</td>
+            <td>{format_money(item.amount)}</td>
+            <td>{escape(item.comment or "")}</td>
+            <td>
+                <div class="caps-actions">
+                    <form method="get" action="/finance">
+                        <input type="hidden" name="edit_transfer" value="{item.id}">
+                        <button type="submit" class="ghost-btn small-btn">Edit</button>
+                    </form>
+                    <form method="post" action="/finance/transfers/delete" onsubmit="return confirm('Delete transfer?');">
+                        <input type="hidden" name="transfer_id" value="{item.id}">
+                        <button type="submit" class="ghost-btn small-btn">Delete</button>
+                    </form>
+                </div>
+            </td>
+        </tr>
+        """
 
-    manual_wallet_total = sum(safe_number(item.amount) for item in manual["wallets"])
-    manual_expense_total = sum(safe_number(item.amount) for item in manual["expenses"])
-    manual_income_total = sum(safe_number(item.amount) for item in manual["income"])
     wallet_submit_label = "Save Changes" if form_data.get("wallet_edit_id") else "Save Wallet"
     expense_submit_label = "Save Changes" if form_data.get("expense_edit_id") else "Save Expense"
     income_submit_label = "Save Changes" if form_data.get("income_edit_id") else "Save Income"
+    transfer_submit_label = "Save Changes" if form_data.get("transfer_edit_id") else "Save Transfer"
     message_html = ""
     if success_text:
         message_html += f'<div class="notice">{escape(success_text)}</div>'
     if error_text:
         message_html += f'<div class="notice notice-danger">{escape(error_text)}</div>'
+
     create_panel = f"""
     <details class="panel" {'open' if form_data else ''}>
         <summary class="panel-title" style="cursor:pointer; list-style:none; display:flex; align-items:center; justify-content:space-between;">
             <span>Manage Finance</span>
             <span class="btn toggle-indicator"></span>
         </summary>
-        <div class="panel-subtitle" style="margin-top:10px;">Manual wallets, expenses and income.</div>
+        <div class="panel-subtitle" style="margin-top:10px;">Service wallets, expenses, income and transfers.</div>
         <div class="finance-grid" style="margin-top:14px;">
             <div class="panel">
-                <div class="panel-title">{'Edit Wallet' if form_data.get('wallet_edit_id') else 'Add Wallet'}</div>
+                <div class="panel-title">{'Edit Service Wallet' if form_data.get('wallet_edit_id') else 'Add Service Wallet'}</div>
                 <form method="post" action="/finance/wallets/save" class="caps-form" style="margin-top:14px;">
                     <input type="hidden" name="edit_id" value="{escape(form_data.get('wallet_edit_id', ''))}">
-                    <label>Категория<input type="text" name="category" value="{escape(form_data.get('wallet_category', ''))}" placeholder="Binance"></label>
-                    <label>Описание<input type="text" name="description" value="{escape(form_data.get('wallet_description', ''))}" placeholder="Банк"></label>
-                    <label>Метка<input type="text" name="owner_name" value="{escape(form_data.get('wallet_owner_name', ''))}" placeholder="Ivan"></label>
-                    <label>Кошелек<input type="text" name="wallet" value="{escape(form_data.get('wallet_wallet', ''))}" placeholder="Адрес кошелька"></label>
-                    <label>Сумма<input type="number" step="0.01" name="amount" value="{escape(form_data.get('wallet_amount', ''))}" placeholder="0.00"></label>
+                    <label>Type
+                        <select name="category">
+                            {make_options(['Сервисы', 'Рекламодатели', 'Партнеры'], form_data.get('wallet_category', 'Сервисы'))}
+                        </select>
+                    </label>
+                    <label>Wallet Name<input type="text" name="description" value="{escape(form_data.get('wallet_description', ''))}" placeholder="Example: Service Wallet 1"></label>
+                    <label>Owner<input type="text" name="owner_name" value="{escape(form_data.get('wallet_owner_name', ''))}" placeholder="Ivan"></label>
+                    <label>Wallet<input type="text" name="wallet" value="{escape(form_data.get('wallet_wallet', ''))}" placeholder="Wallet address"></label>
+                    <label>Opening Balance<input type="number" step="0.01" name="amount" value="{escape(form_data.get('wallet_amount', ''))}" placeholder="0.00"></label>
                     <div style="display:flex; gap:10px; flex-wrap:wrap;">
                         <button type="submit" class="btn">{wallet_submit_label}</button>
                         <a href="/finance" class="ghost-btn">Reset</a>
@@ -3417,11 +3917,14 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
                 <div class="panel-title">{'Edit Expense' if form_data.get('expense_edit_id') else 'Add Expense'}</div>
                 <form method="post" action="/finance/expenses/save" class="caps-form" style="margin-top:14px;">
                     <input type="hidden" name="edit_id" value="{escape(form_data.get('expense_edit_id', ''))}">
-                    <label>Дата<input type="text" name="expense_date" value="{escape(form_data.get('expense_date', ''))}" placeholder="26.03"></label>
-                    <label>Категория<input type="text" name="category" value="{escape(form_data.get('expense_category', ''))}" placeholder="Сервисы"></label>
-                    <label>Сумма<input type="number" step="0.01" name="amount" value="{escape(form_data.get('expense_amount', ''))}" placeholder="0.00"></label>
-                    <label>Кто оплатил<input type="text" name="paid_by" value="{escape(form_data.get('expense_paid_by', ''))}" placeholder="Кошелек или человек"></label>
-                    <label>Комментарий<textarea name="comment">{escape(form_data.get('expense_comment', ''))}</textarea></label>
+                    <label>Date<input type="date" name="expense_date" value="{escape(form_data.get('expense_date', ''))}"></label>
+                    <label>Category
+                        <select name="category">{make_options(['Сервисы', 'Рекламодатели', 'Партнеры'], form_data.get('expense_category', 'Сервисы'))}</select>
+                    </label>
+                    <label>Amount<input type="number" step="0.01" name="amount" value="{escape(form_data.get('expense_amount', ''))}" placeholder="0.00"></label>
+                    <label>Wallet Name<input type="text" name="wallet_name" value="{escape(form_data.get('expense_wallet_name', ''))}" placeholder="Service wallet name"></label>
+                    <label>From Wallet<input type="text" name="from_wallet" value="{escape(form_data.get('expense_from_wallet', ''))}" placeholder="From which wallet sent"></label>
+                    <label>Comment<textarea name="comment">{escape(form_data.get('expense_comment', ''))}</textarea></label>
                     <div style="display:flex; gap:10px; flex-wrap:wrap;">
                         <button type="submit" class="btn">{expense_submit_label}</button>
                         <a href="/finance" class="ghost-btn">Reset</a>
@@ -3429,27 +3932,43 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
                 </form>
             </div>
         </div>
-        <div class="panel" style="margin-top:16px;">
-            <div class="panel-title">{'Edit Income' if form_data.get('income_edit_id') else 'Add Income'}</div>
-            <form method="post" action="/finance/income/save" class="caps-form" style="margin-top:14px;">
-                <input type="hidden" name="edit_id" value="{escape(form_data.get('income_edit_id', ''))}">
-                <div class="caps-grid-2">
-                    <label>Дата<input type="text" name="income_date" value="{escape(form_data.get('income_date', ''))}" placeholder="26.03"></label>
-                    <label>Категория<input type="text" name="category" value="{escape(form_data.get('income_category', ''))}" placeholder="TeamBead"></label>
-                </div>
-                <div class="caps-grid-2">
-                    <label>Описание<input type="text" name="description" value="{escape(form_data.get('income_description', ''))}" placeholder="PE, CO"></label>
-                    <label>Сумма<input type="number" step="0.01" name="amount" value="{escape(form_data.get('income_amount', ''))}" placeholder="0.00"></label>
-                </div>
-                <div class="caps-grid-2">
-                    <label>Кошелек<input type="text" name="wallet" value="{escape(form_data.get('income_wallet', ''))}" placeholder="Куда пришло"></label>
-                    <label>Сверка<input type="text" name="reconciliation" value="{escape(form_data.get('income_reconciliation', ''))}" placeholder="OK / pending"></label>
-                </div>
-                <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                    <button type="submit" class="btn">{income_submit_label}</button>
-                    <a href="/finance" class="ghost-btn">Reset</a>
-                </div>
-            </form>
+        <div class="finance-grid" style="margin-top:16px;">
+            <div class="panel">
+                <div class="panel-title">{'Edit Income' if form_data.get('income_edit_id') else 'Add Income'}</div>
+                <form method="post" action="/finance/income/save" class="caps-form" style="margin-top:14px;">
+                    <input type="hidden" name="edit_id" value="{escape(form_data.get('income_edit_id', ''))}">
+                    <label>Date<input type="date" name="income_date" value="{escape(form_data.get('income_date', ''))}"></label>
+                    <label>Category
+                        <select name="category">{make_options(['Сервисы', 'Рекламодатели', 'Партнеры'], form_data.get('income_category', 'Сервисы'))}</select>
+                    </label>
+                    <label>Amount<input type="number" step="0.01" name="amount" value="{escape(form_data.get('income_amount', ''))}" placeholder="0.00"></label>
+                    <label>Wallet Name<input type="text" name="wallet_name" value="{escape(form_data.get('income_wallet_name', ''))}" placeholder="Service wallet name"></label>
+                    <label>From Wallet<input type="text" name="from_wallet" value="{escape(form_data.get('income_from_wallet', ''))}" placeholder="From which wallet sent"></label>
+                    <label>Comment<textarea name="comment">{escape(form_data.get('income_comment', ''))}</textarea></label>
+                    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                        <button type="submit" class="btn">{income_submit_label}</button>
+                        <a href="/finance" class="ghost-btn">Reset</a>
+                    </div>
+                </form>
+            </div>
+            <div class="panel">
+                <div class="panel-title">{'Edit Transfer' if form_data.get('transfer_edit_id') else 'Add Transfer'}</div>
+                <form method="post" action="/finance/transfers/save" class="caps-form" style="margin-top:14px;">
+                    <input type="hidden" name="edit_id" value="{escape(form_data.get('transfer_edit_id', ''))}">
+                    <label>Date<input type="date" name="transfer_date" value="{escape(form_data.get('transfer_date', ''))}"></label>
+                    <label>Category
+                        <select name="category">{make_options(['Сервисы', 'Рекламодатели', 'Партнеры'], form_data.get('transfer_category', 'Сервисы'))}</select>
+                    </label>
+                    <label>Amount<input type="number" step="0.01" name="amount" value="{escape(form_data.get('transfer_amount', ''))}" placeholder="0.00"></label>
+                    <label>From Wallet<input type="text" name="from_wallet" value="{escape(form_data.get('transfer_from_wallet', ''))}" placeholder="From wallet"></label>
+                    <label>To Wallet<input type="text" name="to_wallet" value="{escape(form_data.get('transfer_to_wallet', ''))}" placeholder="To wallet"></label>
+                    <label>Comment<textarea name="comment">{escape(form_data.get('transfer_comment', ''))}</textarea></label>
+                    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                        <button type="submit" class="btn">{transfer_submit_label}</button>
+                        <a href="/finance" class="ghost-btn">Reset</a>
+                    </div>
+                </form>
+            </div>
         </div>
     </details>
     """
@@ -3457,25 +3976,40 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
     content = f"""
     {message_html}
     <div class="panel compact-panel">
-        <div class="panel-title">Finance</div>
-        <div class="panel-subtitle">Current wallets and manual finance records.</div>
+        <div class="controls-line">
+            <div>
+                <div class="panel-title">Finance</div>
+                <div class="panel-subtitle">Service wallets, operations and current balances.</div>
+            </div>
+            <div class="panel compact-panel filters" style="margin:0; min-width:640px;">
+                <form method="get" action="/finance" style="justify-content:flex-end;">
+                    <label>Date From<input type="date" name="date_from" value="{escape(date_from)}"></label>
+                    <label>Date To<input type="date" name="date_to" value="{escape(date_to)}"></label>
+                    <label>Year<select name="year">{year_options}</select></label>
+                    <button type="submit" class="btn small-btn">Filter</button>
+                    <a href="/finance" class="ghost-btn small-btn">Reset</a>
+                </form>
+            </div>
+        </div>
     </div>
 
     <div class="panel compact-panel">
         <div class="stats-grid">
-            <div class="stat-card"><div class="name">Wallets</div><div class="value">{format_money(snapshot['totals']['wallets'] + manual_wallet_total)}</div></div>
-            <div class="stat-card"><div class="name">CSV Wallets</div><div class="value">{format_money(snapshot['totals']['wallets'])}</div></div>
-            <div class="stat-card"><div class="name">Manual Wallets</div><div class="value">{format_money(manual_wallet_total)}</div></div>
-            <div class="stat-card"><div class="name">Manual Expenses</div><div class="value">{format_money(manual_expense_total)}</div></div>
-            <div class="stat-card"><div class="name">Manual Income</div><div class="value">{format_money(manual_income_total)}</div></div>
+            <div class="stat-card"><div class="name">Current Total Balance</div><div class="value">{format_money(balances['total'])}</div></div>
+            <div class="stat-card"><div class="name">Wallets Count</div><div class="value">{len(manual_all['wallets'])}</div></div>
+            <div class="stat-card"><div class="name">Expenses</div><div class="value">{format_money(sum(safe_number(x.amount) for x in manual['expenses']))}</div></div>
+            <div class="stat-card"><div class="name">Income</div><div class="value">{format_money(sum(safe_number(x.amount) for x in manual['income']))}</div></div>
+            <div class="stat-card"><div class="name">Transfers</div><div class="value">{format_money(sum(safe_number(x.amount) for x in manual['transfers']))}</div></div>
         </div>
     </div>
 
     {create_panel}
 
-    {render_finance_table("Wallets", "Current wallets in one list", '<th>Категория</th><th>Описание</th><th>Метка</th><th>Кошелек</th><th>Сумма</th><th>Source</th><th>Action</th>', wallet_rows, "1320px")}
+    {render_finance_table("Кошельки сервисов", "Manual wallet registry with owners and starting balances.", '<th>Type</th><th>Wallet Name</th><th>Owner</th><th>Wallet</th><th>Opening Balance</th><th>Action</th>', service_wallet_rows, "1240px")}
 
-    {render_finance_table("Operations", "Manual income and expenses in one list", '<th>ID</th><th>Type</th><th>Дата</th><th>Категория</th><th>Кошелек / Кто оплатил</th><th>Сумма</th><th>Комментарий</th><th>Action</th>', operation_rows, "1360px")}
+    {render_finance_table("Баланс по кошелькам", "Current balance by wallet after manual income, expenses and transfers.", '<th>Wallet</th><th>Current Balance</th>', balance_rows, "980px")}
+
+    {render_finance_table("Операции", "Filtered manual expenses, income and transfers.", '<th>ID</th><th>Type</th><th>Date</th><th>Category</th><th>Wallet Name / To</th><th>From Wallet</th><th>Amount</th><th>Comment</th><th>Action</th>', operation_rows, "1560px")}
     """
     return page_shell("Finance", content, active_page="finance", current_user=current_user)
 
@@ -3674,6 +4208,8 @@ def chatterfy_page_html(
     time_filter="",
     telegram_id="",
     pp_player_id="",
+    period_view="all",
+    period_label="",
     sort_by="started_date",
     order="desc",
     page=1,
@@ -3684,6 +4220,11 @@ def chatterfy_page_html(
 ):
     status_values = sorted({safe_text(item["row"].status) for item in rows if safe_text(item["row"].status)})
     status_options = make_options(status_values, status)
+    period_view_options = "".join([
+        f'<option value="{value}" {"selected" if period_view == value else ""}>{label}</option>'
+        for value, label in [("all", "All Time"), ("current", "Current Period"), ("period", "Choose Period")]
+    ])
+    period_options = make_options(build_period_options(), period_label)
     total_pages = max(1, (int(total_count or 0) + per_page - 1) // per_page)
 
     rows_html = ""
@@ -3693,6 +4234,8 @@ def chatterfy_page_html(
         chat_link_html = f'<a href="https://{escape(chat_link)}" target="_blank" rel="noreferrer" class="ghost-btn small-btn">Open</a>' if chat_link else "—"
         rows_html += f"""
         <tr>
+            <td data-col="report_date">{escape(item.get("report_date") or "")}</td>
+            <td data-col="period_label">{escape(item.get("period_label") or "")}</td>
             <td data-col="started_date">{escape(item.get("started_date") or "")}</td>
             <td data-col="started_time">{escape(item.get("started_time") or "")}</td>
             <td data-col="name">{escape(row.name or "")}</td>
@@ -3719,6 +4262,8 @@ def chatterfy_page_html(
     base_qs = build_query_string(
         status=status,
         search=search,
+        period_view=period_view,
+        period_label=period_label,
         date_filter=date_filter,
         time_filter=time_filter,
         telegram_id=telegram_id,
@@ -3741,6 +4286,8 @@ def chatterfy_page_html(
         qs = build_query_string(
             status=status,
             search=search,
+            period_view=period_view,
+            period_label=period_label,
             date_filter=date_filter,
             time_filter=time_filter,
             telegram_id=telegram_id,
@@ -3752,6 +4299,8 @@ def chatterfy_page_html(
         return f'<a href="/chatterfy?{qs}">{escape(label)}{arrow}</a>'
 
     column_defs = [
+        ("report_date", "Report Date"),
+        ("period_label", "Period"),
         ("started_date", "Date"),
         ("started_time", "Time"),
         ("name", "Name"),
@@ -3955,6 +4504,8 @@ def chatterfy_page_html(
                     <form method="get" action="/chatterfy" style="justify-content:flex-end;">
                         <label>Date<input type="text" name="date_filter" value="{escape(date_filter)}" placeholder="27.03.2026"></label>
                         <label>Time<input type="text" name="time_filter" value="{escape(time_filter)}" placeholder="09:3"></label>
+                        <label>View<select name="period_view">{period_view_options}</select></label>
+                        <label>Period<select name="period_label">{period_options}</select></label>
                         <label>Telegram ID<input type="text" name="telegram_id" value="{escape(telegram_id)}" placeholder="5065148172"></label>
                         <label>ID in PP<input type="text" name="pp_player_id" value="{escape(pp_player_id)}" placeholder="1601157577"></label>
                         <label>Status<select name="status">{status_options}</select></label>
@@ -3983,6 +4534,8 @@ def chatterfy_page_html(
             <table id="chatterfyTable" style="min-width:1900px;">
                 <thead>
                     <tr>
+                        <th data-col="report_date"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("report_date", "Report Date")}<span class="resizer"></span></div></th>
+                        <th data-col="period_label"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("period_label", "Period")}<span class="resizer"></span></div></th>
                         <th data-col="started_date"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("started_date", "Date")}<span class="resizer"></span></div></th>
                         <th data-col="started_time"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("started_time", "Time")}<span class="resizer"></span></div></th>
                         <th data-col="name"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("name", "Name")}<span class="resizer"></span></div></th>
@@ -3999,7 +4552,7 @@ def chatterfy_page_html(
                         <th data-col="status"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("status", "Status")}<span class="resizer"></span></div></th>
                     </tr>
                 </thead>
-                <tbody>{rows_html if rows_html else '<tr><td colspan="14">Нет данных</td></tr>'}</tbody>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="16">Нет данных</td></tr>'}</tbody>
             </table>
         </div>
         <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:14px; flex-wrap:wrap;">
@@ -4028,8 +4581,14 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
         rows_html += f"""
         <tr>
             <td>{escape(str(row.id))}</td>
+            <td>{escape(row.advertiser or "")}</td>
+            <td>{escape(row.platform or "")}</td>
             <td>{escape(row.name or "")}</td>
+            <td style="white-space:normal; min-width:140px;">{escape(row.geo_list or "")}</td>
+            <td style="white-space:normal; min-width:160px;">{escape(row.brands or "")}</td>
+            <td>{escape(row.team_name or "")}</td>
             <td>{escape(row.manager_name or "")}</td>
+            <td>{escape(row.manager_contact or "")}</td>
             <td style="white-space:normal; min-width:220px;">{escape(row.wallet or "")}</td>
             <td>{escape(row.status or "")}</td>
             <td style="white-space:normal; min-width:260px;">{escape(row.comments or "")}</td>
@@ -4060,8 +4619,8 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
     <div class="panel compact-panel">
         <div class="controls-line">
             <div>
-                <div class="panel-title" style="margin-bottom:4px;">Cabinets</div>
-                <div class="panel-subtitle">Manage 1xBet cabinets, linked wallets and notes.</div>
+                <div class="panel-title" style="margin-bottom:4px;">Partners</div>
+                <div class="panel-subtitle">Manage partners, platforms, cabinet names, contacts and linked wallets.</div>
             </div>
             <div style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; justify-content:flex-end;">
                 <details class="upload-menu" {open_attr}>
@@ -4069,13 +4628,31 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
                     <div class="upload-menu-list" style="width:520px; max-width:min(520px, calc(100vw - 48px));">
                         <form method="post" action="/cabinets/save">
                             <input type="hidden" name="edit_id" value="{escape(form_data.get('edit_id', ''))}">
-                            <label>Name
+                            <label>Advertiser
+                                <input type="text" name="advertiser" value="{escape(form_data.get('advertiser', ''))}" placeholder="Example: 1xBet">
+                            </label>
+                            <label>Platform
+                                <input type="text" name="platform" value="{escape(form_data.get('platform', ''))}" placeholder="Example: Facebook / Google / Native">
+                            </label>
+                            <label>Cabinet Name
                                 <input type="text" name="name" value="{escape(form_data.get('name', ''))}" required placeholder="Example: 1xBet Main 01">
+                            </label>
+                            <label>Geo
+                                <input type="text" name="geo_list" value="{escape(form_data.get('geo_list', ''))}" placeholder="Example: PE, CO, CL">
+                            </label>
+                            <label>Brands
+                                <input type="text" name="brands" value="{escape(form_data.get('brands', ''))}" placeholder="Example: 1xBet, Mostbet">
+                            </label>
+                            <label>Team
+                                <input type="text" name="team_name" value="{escape(form_data.get('team_name', ''))}" placeholder="Example: Sales Team / Telegram Team">
                             </label>
                             <label>Manager
                                 <input type="text" name="manager_name" value="{escape(form_data.get('manager_name', ''))}" placeholder="Example: Maria">
                             </label>
-                            <label>Wallets
+                            <label>Manager Contact
+                                <input type="text" name="manager_contact" value="{escape(form_data.get('manager_contact', ''))}" placeholder="@manager or phone">
+                            </label>
+                            <label>Wallet
                                 <textarea name="wallet" placeholder="TRC20 wallet, notes or several wallets">{escape(form_data.get('wallet', ''))}</textarea>
                             </label>
                             <label>Status
@@ -4094,7 +4671,7 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
                 <div class="panel compact-panel filters" style="margin:0; min-width:460px;">
                     <form method="get" action="/cabinets" style="justify-content:flex-end;">
                         <label>Status<select name="status">{status_options}</select></label>
-                        <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="cabinet, wallet, manager"></label>
+                        <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="advertiser, platform, cabinet, geo, brands, team"></label>
                         <button type="submit" class="btn small-btn">Filter</button>
                         <a href="/cabinets" class="ghost-btn small-btn">Reset</a>
                     </form>
@@ -4106,20 +4683,26 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
                 <thead>
                     <tr>
                         <th>ID</th>
-                        <th>Name</th>
+                        <th>Advertiser</th>
+                        <th>Platform</th>
+                        <th>Cabinet Name</th>
+                        <th>Geo</th>
+                        <th>Brands</th>
+                        <th>Team</th>
                         <th>Manager</th>
-                        <th>Wallets</th>
+                        <th>Manager Contact</th>
+                        <th>Wallet</th>
                         <th>Status</th>
                         <th>Comments</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
-                <tbody>{rows_html if rows_html else '<tr><td colspan="7">No cabinets yet</td></tr>'}</tbody>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="13">No partners yet</td></tr>'}</tbody>
             </table>
         </div>
     </div>
     """
-    return page_shell("Cabinets", content, active_page="cabinets", current_user=current_user)
+    return page_shell("Partners", content, active_page="cabinets", current_user=current_user)
 
 
 def partner_report_page_html(
@@ -4129,6 +4712,8 @@ def partner_report_page_html(
     cabinet_name="",
     country="",
     search="",
+    period_view="all",
+    period_label="",
     sort_by="id",
     order="desc",
     success_text="",
@@ -4138,6 +4723,11 @@ def partner_report_page_html(
     all_cabinets = sorted(set(get_cabinet_names() + get_partner_cabinet_options()))
     upload_cabinets = get_cabinet_names(active_only=True) or all_cabinets
     all_countries = sorted({safe_text(row.country) for row in get_partner_rows_by_period("") if safe_text(row.country)})
+    period_view_options = "".join([
+        f'<option value="{value}" {"selected" if period_view == value else ""}>{label}</option>'
+        for value, label in [("all", "All Time"), ("current", "Current Period"), ("period", "Choose Period")]
+    ])
+    period_options = make_options(build_period_options(), period_label)
     source_options = make_options(all_sources, source_name)
     cabinet_options = make_options(all_cabinets, cabinet_name)
     upload_cabinet_options = "".join([
@@ -4149,8 +4739,14 @@ def partner_report_page_html(
 
     rows_html = ""
     for row in rows:
+        hold_checked = "checked" if safe_number(getattr(row, "manual_hold", 0)) > 0 else ""
+        blocked_checked = "checked" if safe_number(getattr(row, "manual_blocked", 0)) > 0 else ""
+        hold_hint = f'<div class="panel-subtitle" style="margin-top:4px;">Raw: {escape(row.hold_time or "—")}</div>'
+        blocked_hint = f'<div class="panel-subtitle" style="margin-top:4px;">Raw: {escape(row.blocked or "—")}</div>'
         rows_html += f"""
         <tr>
+            <td>{escape(safe_text(getattr(row, "report_date", "")) or get_half_month_period_from_date(row.registration_date).get("report_date", ""))}</td>
+            <td>{escape(partner_row_period_label(row))}</td>
             <td>{escape(row.registration_date or "")}</td>
             <td>{escape(row.cabinet_name or "")}</td>
             <td>{escape(row.sub_id or "")}</td>
@@ -4160,8 +4756,26 @@ def partner_report_page_html(
             <td>${safe_number(row.bet_amount):,.2f}</td>
             <td>${safe_number(row.company_income):,.2f}</td>
             <td>${safe_number(row.cpa_amount):,.2f}</td>
-            <td>{escape(row.hold_time or "")}</td>
-            <td>{escape(row.blocked or "")}</td>
+            <td>
+                <form method="post" action="/partner-report/flags/save" class="flag-form">
+                    <input type="hidden" name="partner_row_id" value="{row.id}">
+                    <input type="hidden" name="return_to" value="/partner-report?{escape(build_query_string(source_name=source_name, period_view=period_view, period_label=period_label, cabinet_name=cabinet_name, country=country, search=search, sort_by=sort_by, order=order))}">
+                    <input type="hidden" name="manual_blocked" value="{1 if safe_number(getattr(row, 'manual_blocked', 0)) > 0 else 0}">
+                    <label class="flag-check"><input type="checkbox" name="manual_hold" value="1" {hold_checked}> Hold</label>
+                    {hold_hint}
+                    <button type="submit" class="ghost-btn small-btn">Save</button>
+                </form>
+            </td>
+            <td>
+                <form method="post" action="/partner-report/flags/save" class="flag-form">
+                    <input type="hidden" name="partner_row_id" value="{row.id}">
+                    <input type="hidden" name="return_to" value="/partner-report?{escape(build_query_string(source_name=source_name, period_view=period_view, period_label=period_label, cabinet_name=cabinet_name, country=country, search=search, sort_by=sort_by, order=order))}">
+                    <input type="hidden" name="manual_hold" value="{1 if safe_number(getattr(row, 'manual_hold', 0)) > 0 else 0}">
+                    <label class="flag-check"><input type="checkbox" name="manual_blocked" value="1" {blocked_checked}> Blocked</label>
+                    {blocked_hint}
+                    <button type="submit" class="ghost-btn small-btn">Save</button>
+                </form>
+            </td>
             <td>{escape(row.source_name or "")}</td>
         </tr>
         """
@@ -4183,6 +4797,8 @@ def partner_report_page_html(
                 arrow = " ↓"
         qs = build_query_string(
             source_name=source_name,
+            period_view=period_view,
+            period_label=period_label,
             cabinet_name=cabinet_name,
             country=country,
             search=search,
@@ -4218,6 +4834,8 @@ def partner_report_page_html(
                 <div class="panel compact-panel filters" style="margin:0; min-width:720px;">
                     <form method="get" action="/partner-report" style="justify-content:flex-end;">
                         <label>Upload<select name="source_name">{source_options}</select></label>
+                        <label>View<select name="period_view">{period_view_options}</select></label>
+                        <label>Period<select name="period_label">{period_options}</select></label>
                         <label>Cabinet<select name="cabinet_name">{cabinet_options}</select></label>
                         <label>Country<select name="country">{country_options}</select></label>
                         <label>Search<input type="text" name="search" value="{escape(search)}" placeholder="subid, player, source"></label>
@@ -4242,6 +4860,8 @@ def partner_report_page_html(
             <table style="min-width:1500px;">
                 <thead>
                     <tr>
+                        <th>{header_link('report_date', 'Report Date')}</th>
+                        <th>{header_link('period_label', 'Period')}</th>
                         <th>{header_link('registration_date', 'Registration')}</th>
                         <th>{header_link('cabinet_name', 'Cabinet')}</th>
                         <th>{header_link('sub_id', 'SubId')}</th>
@@ -4256,7 +4876,7 @@ def partner_report_page_html(
                         <th>{header_link('source_name', 'Upload')}</th>
                     </tr>
                 </thead>
-                <tbody>{rows_html if rows_html else '<tr><td colspan="12">No partner rows yet</td></tr>'}</tbody>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="14">No partner rows yet</td></tr>'}</tbody>
             </table>
         </div>
     </div>
@@ -4657,13 +5277,19 @@ def export_hierarchy_csv(
     geo: str = Query(default=""),
     offer: str = Query(default=""),
     search: str = Query(default=""),
+    period_view: str = Query(default="all"),
+    period_label: str = Query(default=""),
 ):
     user = get_current_user(request)
     if not user:
         return auth_redirect_response()
     require_any_role(user, "superadmin", "admin")
     buyer = resolve_effective_buyer(user, buyer)
-    rows = enrich_statistic_rows(aggregate_grouped_rows(get_filtered_data(buyer, manager, geo, offer, search)))
+    effective_period_label = resolve_period_label(period_view, period_label)
+    rows = enrich_statistic_rows(
+        aggregate_grouped_rows(get_filtered_data(buyer, manager, geo, offer, search, period_label=effective_period_label)),
+        period_label=effective_period_label,
+    )
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["Geo", "Platform", "Manager", "Offer", "Creative", "Ad Name", "Leads", "Reg", "FB FTD", "Chatterfy", "Total FTD", "Qual FTD", "Rate", "Spend", "Income", "Profit", "ROI"])
@@ -5029,27 +5655,31 @@ def show_hierarchy(
     geo: str = Query(default=""),
     offer: str = Query(default=""),
     search: str = Query(default=""),
+    period_view: str = Query(default="all"),
+    period_label: str = Query(default=""),
 ):
     user = get_current_user(request)
     if not user:
         return auth_redirect_response()
     enforce_page_access(user, "hierarchy")
     buyer = resolve_effective_buyer(user, buyer)
-    data = get_filtered_data(buyer, manager, geo, offer, search)
-    rows = enrich_statistic_rows(aggregate_grouped_rows(data))
-    all_buyers, all_managers, all_geos, all_offers = get_scoped_filter_options(user)
+    effective_period_label = resolve_period_label(period_view, period_label)
+    data = get_filtered_data(buyer, manager, geo, offer, search, period_label=effective_period_label)
+    rows = enrich_statistic_rows(aggregate_grouped_rows(data), period_label=effective_period_label)
+    all_buyers, all_managers, all_geos, all_offers = get_scoped_filter_options(user, period_label=effective_period_label)
+    period_view_options = "".join([
+        f'<option value="{value}" {"selected" if period_view == value else ""}>{label}</option>'
+        for value, label in [("all", "All Time"), ("current", "Current Period"), ("period", "Choose Period")]
+    ])
+    period_options = make_options(build_period_options(), effective_period_label)
 
     buyer_options = make_options(all_buyers, buyer) if is_admin_role(user) or user.get("role") == "operator" else f'<option value="{escape(buyer)}">{escape(buyer or "Мой buyer")}</option>'
     manager_options = make_options(all_managers, manager)
     geo_options = make_options(all_geos, geo)
     offer_options = make_options(all_offers, offer)
-
-    hierarchy_keys = ["geo", "platform", "manager", "offer", "creative", "ad_name"]
-    tree = aggregate_for_hierarchy(rows, hierarchy_keys)
-    tree_html = render_tree_nodes(tree) if tree else '<div class="panel">Нет данных</div>'
     totals = aggregate_totals(rows)
 
-    export_qs = build_query_string(buyer=buyer, manager=manager, geo=geo, offer=offer, search=search)
+    export_qs = build_query_string(buyer=buyer, manager=manager, geo=geo, offer=offer, search=search, period_view=period_view, period_label=effective_period_label)
     export_link = f"/export/hierarchy?{export_qs}" if export_qs else "/export/hierarchy"
 
     content = f'''
@@ -5060,6 +5690,8 @@ def show_hierarchy(
             <label>Manager<select name="manager">{manager_options}</select></label>
             <label>Geo<select name="geo">{geo_options}</select></label>
             <label>Offer<select name="offer">{offer_options}</select></label>
+            <label>View<select name="period_view">{period_view_options}</select></label>
+            <label>Period<select name="period_label">{period_options}</select></label>
             <label>Search<input type="text" name="search" value="{escape(search)}"></label>
             <button type="submit" class="btn small-btn">Filter</button>
             <a href="/hierarchy" class="ghost-btn small-btn">Reset</a>
@@ -5069,11 +5701,11 @@ def show_hierarchy(
     {render_statistic_cards(totals)}
 
     <div class="panel compact-panel">
-        <div class="panel-title">Statistic</div>
-        <div class="panel-subtitle">FB + Chatterfy + Partner + Caps in one structure for tracking traffic, FTD, quals, income and profit.</div>
+        <div class="panel-title">Statistic Center</div>
+        <div class="panel-subtitle">One shared view for FB costs, Chatterfy volume, 1xBet qualification and cap-based income.</div>
     </div>
 
-    <div class="tree-root">{tree_html}</div>
+    {render_statistic_dashboard(rows)}
     '''
 
     top_actions = f'<a class="small-btn" href="{export_link}">⬇ CSV</a>' if is_admin_role(user) else ""
@@ -5087,9 +5719,13 @@ def show_hierarchy(
 def finance_page(
     request: Request,
     message: str = Query(default=""),
+    date_from: str = Query(default=""),
+    date_to: str = Query(default=""),
+    year: str = Query(default=""),
     edit_wallet: str = Query(default=""),
     edit_expense: str = Query(default=""),
     edit_income: str = Query(default=""),
+    edit_transfer: str = Query(default=""),
 ):
     user = get_current_user(request)
     if not user:
@@ -5102,10 +5738,11 @@ def finance_page(
         wallet_item = db.query(FinanceWalletRow).filter(FinanceWalletRow.id == safe_number(edit_wallet)).first() if edit_wallet else None
         expense_item = db.query(FinanceExpenseRow).filter(FinanceExpenseRow.id == safe_number(edit_expense)).first() if edit_expense else None
         income_item = db.query(FinanceIncomeRow).filter(FinanceIncomeRow.id == safe_number(edit_income)).first() if edit_income else None
-        form_data = build_finance_form_data(wallet_item=wallet_item, expense_item=expense_item, income_item=income_item)
+        transfer_item = db.query(FinanceTransferRow).filter(FinanceTransferRow.id == safe_number(edit_transfer)).first() if edit_transfer else None
+        form_data = build_finance_form_data(wallet_item=wallet_item, expense_item=expense_item, income_item=income_item, transfer_item=transfer_item)
     finally:
         db.close()
-    return finance_page_html(user, success_text=message, form_data=form_data)
+    return finance_page_html(user, success_text=message, form_data=form_data, filter_values={"date_from": date_from, "date_to": date_to, "year": year})
 
 
 @app.post("/finance/wallets/save")
@@ -5167,7 +5804,9 @@ def save_finance_expense(
     edit_id: str = Form(default=""),
     expense_date: str = Form(default=""),
     category: str = Form(default=""),
+    wallet_name: str = Form(default=""),
     amount: str = Form(default="0"),
+    from_wallet: str = Form(default=""),
     paid_by: str = Form(default=""),
     comment: str = Form(default=""),
 ):
@@ -5179,8 +5818,9 @@ def save_finance_expense(
     form_data = {
         "expense_date": expense_date,
         "expense_category": category,
+        "expense_wallet_name": wallet_name,
         "expense_amount": amount,
-        "expense_paid_by": paid_by,
+        "expense_from_wallet": from_wallet or paid_by,
         "expense_comment": comment,
     }
     if safe_cap_number(amount) <= 0:
@@ -5193,8 +5833,10 @@ def save_finance_expense(
             db.add(item)
         item.expense_date = safe_text(expense_date)
         item.category = safe_text(category)
+        item.wallet_name = safe_text(wallet_name)
         item.amount = safe_cap_number(amount)
-        item.paid_by = safe_text(paid_by)
+        item.from_wallet = safe_text(from_wallet or paid_by)
+        item.paid_by = safe_text(from_wallet or paid_by)
         item.comment = safe_text(comment)
         db.commit()
     finally:
@@ -5208,10 +5850,10 @@ def save_finance_income(
     edit_id: str = Form(default=""),
     income_date: str = Form(default=""),
     category: str = Form(default=""),
-    description: str = Form(default=""),
+    wallet_name: str = Form(default=""),
     amount: str = Form(default="0"),
-    wallet: str = Form(default=""),
-    reconciliation: str = Form(default=""),
+    from_wallet: str = Form(default=""),
+    comment: str = Form(default=""),
 ):
     user = get_current_user(request)
     if not user:
@@ -5221,10 +5863,10 @@ def save_finance_income(
     form_data = {
         "income_date": income_date,
         "income_category": category,
-        "income_description": description,
+        "income_wallet_name": wallet_name,
         "income_amount": amount,
-        "income_wallet": wallet,
-        "income_reconciliation": reconciliation,
+        "income_from_wallet": from_wallet,
+        "income_comment": comment,
     }
     if safe_cap_number(amount) <= 0:
         return HTMLResponse(finance_page_html(user, error_text="Сумма прихода должна быть больше 0.", form_data=form_data), status_code=400)
@@ -5236,14 +5878,61 @@ def save_finance_income(
             db.add(item)
         item.income_date = safe_text(income_date)
         item.category = safe_text(category)
-        item.description = safe_text(description)
+        item.wallet_name = safe_text(wallet_name)
+        item.description = safe_text(comment)
         item.amount = safe_cap_number(amount)
-        item.wallet = safe_text(wallet)
-        item.reconciliation = safe_text(reconciliation)
+        item.wallet = safe_text(wallet_name)
+        item.from_wallet = safe_text(from_wallet)
+        item.comment = safe_text(comment)
+        item.reconciliation = safe_text(from_wallet)
         db.commit()
     finally:
         db.close()
     return RedirectResponse(url="/finance?message=Приход сохранен", status_code=303)
+
+
+@app.post("/finance/transfers/save")
+def save_finance_transfer(
+    request: Request,
+    edit_id: str = Form(default=""),
+    transfer_date: str = Form(default=""),
+    category: str = Form(default=""),
+    amount: str = Form(default="0"),
+    from_wallet: str = Form(default=""),
+    to_wallet: str = Form(default=""),
+    comment: str = Form(default=""),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    require_any_role(user, "superadmin")
+    ensure_finance_tables()
+    form_data = {
+        "transfer_date": transfer_date,
+        "transfer_category": category,
+        "transfer_amount": amount,
+        "transfer_from_wallet": from_wallet,
+        "transfer_to_wallet": to_wallet,
+        "transfer_comment": comment,
+    }
+    if safe_cap_number(amount) <= 0:
+        return HTMLResponse(finance_page_html(user, error_text="Сумма перемещения должна быть больше 0.", form_data=form_data), status_code=400)
+    db = SessionLocal()
+    try:
+        item = db.query(FinanceTransferRow).filter(FinanceTransferRow.id == safe_number(edit_id)).first() if edit_id else None
+        if not item:
+            item = FinanceTransferRow()
+            db.add(item)
+        item.transfer_date = safe_text(transfer_date)
+        item.category = safe_text(category)
+        item.amount = safe_cap_number(amount)
+        item.from_wallet = safe_text(from_wallet)
+        item.to_wallet = safe_text(to_wallet)
+        item.comment = safe_text(comment)
+        db.commit()
+    finally:
+        db.close()
+    return RedirectResponse(url="/finance?message=Перемещение сохранено", status_code=303)
 
 
 @app.post("/finance/wallets/delete")
@@ -5292,6 +5981,22 @@ def delete_finance_income(request: Request, income_id: str = Form(...)):
     finally:
         db.close()
     return RedirectResponse(url="/finance?message=Приход удален", status_code=303)
+
+
+@app.post("/finance/transfers/delete")
+def delete_finance_transfer(request: Request, transfer_id: str = Form(...)):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    require_any_role(user, "superadmin")
+    ensure_finance_tables()
+    db = SessionLocal()
+    try:
+        db.query(FinanceTransferRow).filter(FinanceTransferRow.id == safe_number(transfer_id)).delete()
+        db.commit()
+    finally:
+        db.close()
+    return RedirectResponse(url="/finance?message=Перемещение удалено", status_code=303)
 
 
 @app.get("/caps", response_class=HTMLResponse)
@@ -5392,9 +6097,9 @@ def save_cap(
         "agent": agent,
     }
     if not clean_buyer:
-        return HTMLResponse(caps_page_html(user, get_caps_rows(), form_data=form_data, error_text="Поле Кабинет обязательно."), status_code=400)
+        return HTMLResponse(caps_page_html(user, get_caps_rows(), form_data=form_data, error_text="Cabinet is required."), status_code=400)
     if clean_cap_value <= 0:
-        return HTMLResponse(caps_page_html(user, get_caps_rows(), form_data=form_data, error_text="Капа должна быть больше 0."), status_code=400)
+        return HTMLResponse(caps_page_html(user, get_caps_rows(), form_data=form_data, error_text="Cap must be greater than 0."), status_code=400)
 
     db = SessionLocal()
     try:
@@ -5422,7 +6127,7 @@ def save_cap(
     finally:
         db.close()
 
-    return RedirectResponse(url="/caps?message=Капа сохранена", status_code=303)
+    return RedirectResponse(url="/caps?message=Cap+saved", status_code=303)
 
 
 @app.post("/caps/upload")
@@ -5443,7 +6148,7 @@ async def upload_caps_file(request: Request, file: UploadFile = File(...)):
             df = pd.read_csv(filename)
         import_caps_dataframe(df)
         refresh_cap_current_ftd_from_partner()
-        return RedirectResponse(url="/caps?message=Капы загружены", status_code=303)
+        return RedirectResponse(url="/caps?message=Caps+uploaded", status_code=303)
     finally:
         if os.path.exists(filename):
             os.remove(filename)
@@ -5461,7 +6166,7 @@ def delete_cap(request: Request, cap_id: str = Form(...)):
         db.commit()
     finally:
         db.close()
-    return RedirectResponse(url="/caps?message=Капа удалена", status_code=303)
+    return RedirectResponse(url="/caps?message=Cap+deleted", status_code=303)
 
 @app.get("/api/partner/current-period")
 def api_partner_current_period(request: Request):
@@ -5565,8 +6270,14 @@ def cabinets_page(
             if item:
                 form_data = {
                     "edit_id": str(item.id),
+                    "advertiser": item.advertiser or "",
+                    "platform": item.platform or "",
                     "name": item.name or "",
+                    "geo_list": item.geo_list or "",
+                    "brands": item.brands or "",
+                    "team_name": item.team_name or "",
                     "manager_name": item.manager_name or "",
+                    "manager_contact": item.manager_contact or "",
                     "wallet": item.wallet or "",
                     "comments": item.comments or "",
                     "status": item.status or "Active",
@@ -5586,8 +6297,14 @@ def cabinets_page(
 def save_cabinet(
     request: Request,
     edit_id: str = Form(default=""),
+    advertiser: str = Form(default=""),
+    platform: str = Form(default=""),
     name: str = Form(default=""),
+    geo_list: str = Form(default=""),
+    brands: str = Form(default=""),
+    team_name: str = Form(default=""),
     manager_name: str = Form(default=""),
+    manager_contact: str = Form(default=""),
     wallet: str = Form(default=""),
     comments: str = Form(default=""),
     status: str = Form(default="Active"),
@@ -5601,8 +6318,14 @@ def save_cabinet(
     clean_name = safe_text(name)
     form_data = {
         "edit_id": edit_id,
+        "advertiser": advertiser,
+        "platform": platform,
         "name": name,
+        "geo_list": geo_list,
+        "brands": brands,
+        "team_name": team_name,
         "manager_name": manager_name,
+        "manager_contact": manager_contact,
         "wallet": wallet,
         "comments": comments,
         "status": status or "Active",
@@ -5622,8 +6345,14 @@ def save_cabinet(
         if not item:
             item = CabinetRow()
             db.add(item)
+        item.advertiser = safe_text(advertiser)
+        item.platform = safe_text(platform)
         item.name = clean_name
+        item.geo_list = safe_text(geo_list)
+        item.brands = safe_text(brands)
+        item.team_name = safe_text(team_name)
         item.manager_name = safe_text(manager_name)
+        item.manager_contact = safe_text(manager_contact)
         item.wallet = safe_text(wallet)
         item.comments = safe_text(comments)
         item.status = safe_text(status) or "Active"
@@ -5653,6 +6382,8 @@ def delete_cabinet(request: Request, cabinet_id: str = Form(...)):
 def partner_report_page(
     request: Request,
     source_name: str = Query(default=""),
+    period_view: str = Query(default="all"),
+    period_label: str = Query(default=""),
     cabinet_name: str = Query(default=""),
     country: str = Query(default=""),
     search: str = Query(default=""),
@@ -5664,11 +6395,14 @@ def partner_report_page(
     if not user:
         return auth_redirect_response()
     enforce_page_access(user, "partner")
+    effective_period_label = resolve_period_label(period_view, period_label)
     rows = get_partner_rows_by_period(source_name)
 
     search_lower = safe_text(search).lower()
     filtered = []
     for row in rows:
+        if effective_period_label and partner_row_period_label(row) != effective_period_label:
+            continue
         if cabinet_name and safe_text(row.cabinet_name) != cabinet_name:
             continue
         if country and safe_text(row.country) != country:
@@ -5695,6 +6429,10 @@ def partner_report_page(
             return safe_number(value)
         if sort_by == "id":
             return safe_number(row.id)
+        if sort_by == "report_date":
+            return safe_text(getattr(row, "report_date", ""))
+        if sort_by == "period_label":
+            return partner_row_period_label(row)
         return safe_text(value).lower()
 
     filtered.sort(key=sort_value, reverse=reverse)
@@ -5702,6 +6440,8 @@ def partner_report_page(
         user,
         filtered,
         source_name=source_name,
+        period_view=period_view,
+        period_label=effective_period_label,
         cabinet_name=cabinet_name,
         country=country,
         search=search,
@@ -5753,11 +6493,42 @@ async def upload_partner_report_file(
             os.remove(filename)
 
 
+@app.post("/partner-report/flags/save")
+def save_partner_row_flags(
+    request: Request,
+    partner_row_id: str = Form(...),
+    return_to: str = Form(default="/partner-report"),
+    manual_hold: str = Form(default="0"),
+    manual_blocked: str = Form(default="0"),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "partner")
+    ensure_partner_table()
+    db = SessionLocal()
+    try:
+        item = db.query(PartnerRow).filter(PartnerRow.id == safe_number(partner_row_id)).first()
+        if not item:
+            return RedirectResponse(url="/partner-report?message=Player+not+found", status_code=303)
+        item.manual_hold = 1 if safe_text(manual_hold) in {"1", "true", "on", "yes"} else 0
+        item.manual_blocked = 1 if safe_text(manual_blocked) in {"1", "true", "on", "yes"} else 0
+        db.add(item)
+        db.commit()
+    finally:
+        db.close()
+    target = safe_text(return_to) or "/partner-report"
+    separator = "&" if "?" in target else "?"
+    return RedirectResponse(url=f"{target}{separator}message=Flags+saved", status_code=303)
+
+
 @app.get("/chatterfy", response_class=HTMLResponse)
 def chatterfy_page(
     request: Request,
     status: str = Query(default=""),
     search: str = Query(default=""),
+    period_view: str = Query(default="all"),
+    period_label: str = Query(default=""),
     date_filter: str = Query(default=""),
     time_filter: str = Query(default=""),
     telegram_id: str = Query(default=""),
@@ -5773,6 +6544,7 @@ def chatterfy_page(
     enforce_page_access(user, "chatterfy")
     import_chatterfy_from_csv_if_needed()
     import_chatterfy_ids_from_csv_if_needed()
+    effective_period_label = resolve_period_label(period_view, period_label)
     rows = get_chatterfy_rows(
         status=status,
         search=search,
@@ -5780,8 +6552,11 @@ def chatterfy_page(
         time_filter=time_filter,
         telegram_id=telegram_id,
         pp_player_id=pp_player_id,
+        period_label=effective_period_label,
     )
     allowed_sort_fields = {
+        "report_date",
+        "period_label",
         "started_date",
         "started_time",
         "name",
@@ -5804,6 +6579,8 @@ def chatterfy_page(
     def sort_value(item):
         row = item["row"]
         values = {
+            "report_date": item.get("report_date") or "",
+            "period_label": item.get("period_label") or "",
             "started_date": item.get("started_date") or "",
             "started_time": item.get("started_time") or "",
             "name": row.name or "",
@@ -5836,6 +6613,8 @@ def chatterfy_page(
         page_rows,
         status=status,
         search=search,
+        period_view=period_view,
+        period_label=effective_period_label,
         date_filter=date_filter,
         time_filter=time_filter,
         telegram_id=telegram_id,
