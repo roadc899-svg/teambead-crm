@@ -200,6 +200,32 @@ class PartnerRow(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class ChatterfyRow(Base):
+    __tablename__ = "chatterfy_rows"
+
+    id = Column(Integer, primary_key=True, index=True)
+    source_name = Column(String, default="")
+    name = Column(String, default="")
+    telegram_id = Column(String, default="")
+    username = Column(String, default="")
+    tags = Column(String, default="")
+    started = Column(String, default="")
+    last_user_message = Column(String, default="")
+    last_bot_message = Column(String, default="")
+    status = Column(String, default="")
+    step = Column(String, default="")
+    external_id = Column(String, default="")
+    launch_date = Column(String, default="")
+    platform = Column(String, default="")
+    manager = Column(String, default="")
+    geo = Column(String, default="")
+    offer = Column(String, default="")
+    flow_platform = Column(String, default="")
+    flow_manager = Column(String, default="")
+    flow_geo = Column(String, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 Base.metadata.create_all(bind=engine)
 
 
@@ -593,6 +619,24 @@ def build_query_string(**kwargs):
 
 
 
+def build_ad_offer_key(launch_date="", platform="", manager="", geo="", offer=""):
+    return (
+        safe_text(launch_date),
+        safe_text(platform).lower(),
+        safe_text(manager).lower(),
+        normalize_geo_value(geo),
+        safe_text(offer).lower(),
+    )
+
+
+def build_flow_key(platform="", manager="", geo=""):
+    return (
+        safe_text(platform).lower(),
+        safe_text(manager).lower(),
+        normalize_geo_value(geo),
+    )
+
+
 def make_options(options, selected_value):
     html = '<option value="">Все</option>'
     for option in options:
@@ -673,6 +717,37 @@ def normalize_geo_value(value):
     if not raw:
         return ""
     return raw.upper()
+
+
+def parse_chatterfy_tags(value):
+    tags = [safe_text(item) for item in safe_text(value).split(",") if safe_text(item)]
+    result = {
+        "launch_date": "",
+        "platform": "",
+        "manager": "",
+        "geo": "",
+        "offer": "",
+        "flow_platform": "",
+        "flow_manager": "",
+        "flow_geo": "",
+    }
+    for tag in tags:
+        parts = [part.strip() for part in tag.split("/") if part.strip()]
+        if len(parts) == 5 and re.match(r"^\d{2}\.\d{2}$", parts[0]):
+            result["launch_date"] = parts[0]
+            result["platform"] = parts[1]
+            result["manager"] = parts[2]
+            result["geo"] = normalize_geo_value(parts[3])
+            result["offer"] = parts[4]
+        elif len(parts) == 3 and not result["flow_platform"]:
+            result["flow_platform"] = parts[0]
+            result["flow_manager"] = parts[1]
+            result["flow_geo"] = normalize_geo_value(parts[2])
+    if not result["flow_platform"] and result["platform"]:
+        result["flow_platform"] = result["platform"]
+        result["flow_manager"] = result["manager"]
+        result["flow_geo"] = result["geo"]
+    return result
 
 
 def cap_fill_percent(current_ftd, cap_value):
@@ -1059,6 +1134,10 @@ def ensure_partner_table():
     Base.metadata.create_all(bind=engine, tables=[PartnerRow.__table__])
 
 
+def ensure_chatterfy_table():
+    Base.metadata.create_all(bind=engine, tables=[ChatterfyRow.__table__])
+
+
 def get_half_month_period(today: date | None = None):
     if today is None:
         today = datetime.utcnow().date()
@@ -1181,6 +1260,89 @@ def replace_partner_rows(source_name, rows_to_insert):
         db.close()
     refresh_cap_current_ftd_from_partner()
 
+
+def import_chatterfy_dataframe(df, source_name=""):
+    ensure_chatterfy_table()
+    records = []
+    for _, row in df.iterrows():
+        tags = safe_text(row.get("Tags"))
+        parsed = parse_chatterfy_tags(tags)
+        records.append(ChatterfyRow(
+            source_name=source_name,
+            name=safe_text(row.get("Name")),
+            telegram_id=safe_text(row.get("Telegram ID")),
+            username=safe_text(row.get("Username")),
+            tags=tags,
+            started=safe_text(row.get("Started")),
+            last_user_message=safe_text(row.get("Last User Message")),
+            last_bot_message=safe_text(row.get("Last Bot Message")),
+            status=safe_text(row.get("Status")),
+            step=safe_text(row.get("Step")),
+            external_id=safe_text(row.get("ID")),
+            launch_date=parsed["launch_date"],
+            platform=parsed["platform"],
+            manager=parsed["manager"],
+            geo=parsed["geo"],
+            offer=parsed["offer"],
+            flow_platform=parsed["flow_platform"],
+            flow_manager=parsed["flow_manager"],
+            flow_geo=parsed["flow_geo"],
+        ))
+    db = SessionLocal()
+    try:
+        db.query(ChatterfyRow).delete()
+        db.commit()
+        for item in records:
+            db.add(item)
+        db.commit()
+    finally:
+        db.close()
+    return len(records)
+
+
+def get_chatterfy_rows(status="", search=""):
+    ensure_chatterfy_table()
+    db = SessionLocal()
+    try:
+        rows = db.query(ChatterfyRow).order_by(ChatterfyRow.id.desc()).all()
+    finally:
+        db.close()
+    filtered = []
+    search_lower = safe_text(search).lower()
+    for row in rows:
+        if status and (row.status or "") != status:
+            continue
+        if search_lower:
+            haystack = " | ".join([
+                row.name or "",
+                row.username or "",
+                row.telegram_id or "",
+                row.tags or "",
+                row.status or "",
+                row.offer or "",
+                row.manager or "",
+                row.geo or "",
+            ]).lower()
+            if search_lower not in haystack:
+                continue
+        filtered.append(row)
+    return filtered
+
+
+def import_chatterfy_from_csv_if_needed():
+    ensure_chatterfy_table()
+    db = SessionLocal()
+    try:
+        if db.query(ChatterfyRow).count() > 0:
+            return
+    finally:
+        db.close()
+    source_path = "/Users/ivansviderko/Downloads/Выгрузка (16.03-31.03.26) - Chatterfy.csv"
+    if not os.path.exists(source_path):
+        return
+    df = pd.read_csv(source_path)
+    import_chatterfy_dataframe(df, os.path.basename(source_path))
+
 def get_partner_period_options():
     ensure_partner_table()
     db = SessionLocal()
@@ -1240,13 +1402,29 @@ def refresh_cap_current_ftd_from_partner():
         db.close()
 
 
-def get_partner_summary_by_buyer_geo():
+def is_partner_row_qualified_for_cap(row, cap):
+    deposit_amount = safe_number(getattr(row, "deposit_amount", 0))
+    bet_amount = safe_number(getattr(row, "bet_amount", 0))
+    baseline = safe_cap_number(getattr(cap, "baseline", 0))
+    if deposit_amount <= 0:
+        return False
+    if baseline > 0 and deposit_amount < baseline:
+        return False
+    if baseline > 0 and bet_amount < baseline:
+        return False
+    return True
+
+
+def get_statistic_support_maps():
+    import_chatterfy_from_csv_if_needed()
     ensure_partner_table()
+    ensure_chatterfy_table()
     Base.metadata.create_all(bind=engine, tables=[CapRow.__table__])
     db = SessionLocal()
     try:
         caps = db.query(CapRow).all()
         partner_rows = db.query(PartnerRow).all()
+        chatterfy_rows = db.query(ChatterfyRow).all()
     finally:
         db.close()
 
@@ -1257,7 +1435,7 @@ def get_partner_summary_by_buyer_geo():
             continue
         caps_by_sub.setdefault(promo_key, []).append(cap)
 
-    summary = {}
+    partner_by_flow = {}
     for row in partner_rows:
         promo_key = (row.sub_id or "").strip().upper()
         matched_caps = caps_by_sub.get(promo_key, [])
@@ -1265,53 +1443,11 @@ def get_partner_summary_by_buyer_geo():
             flow_parts = [part.strip() for part in safe_text(cap.flow).split("/") if part.strip()]
             platform = flow_parts[0] if len(flow_parts) > 0 else ""
             manager = flow_parts[1] if len(flow_parts) > 1 else safe_text(cap.owner_name)
-            geo = normalize_geo_value(flow_parts[2] if len(flow_parts) > 2 else (cap.geo or row.country or ""))
-            if not platform or not manager or not geo:
-                continue
-            key = (platform.lower(), manager.lower(), geo)
-            info = summary.setdefault(key, {
-                "partner_ftd_total": 0.0,
-                "partner_qual_ftd": 0.0,
-                "partner_income": 0.0,
-            })
-            if safe_number(row.deposit_amount) > 0:
-                info["partner_ftd_total"] += 1
-            if safe_number(row.company_income) > 0 or safe_number(row.cpa_amount) > 0:
-                info["partner_qual_ftd"] += 1
-            info["partner_income"] += safe_number(row.company_income)
-    return summary
-
-
-def get_statistic_cap_partner_summary():
-    ensure_partner_table()
-    Base.metadata.create_all(bind=engine, tables=[CapRow.__table__])
-    db = SessionLocal()
-    try:
-        caps = db.query(CapRow).all()
-        partner_rows = db.query(PartnerRow).all()
-    finally:
-        db.close()
-
-    caps_by_sub = {}
-    for cap in caps:
-        promo_key = (cap.promo_code or "").strip().upper()
-        if not promo_key:
-            continue
-        caps_by_sub.setdefault(promo_key, []).append(cap)
-
-    summary = {}
-    for row in partner_rows:
-        promo_key = (row.sub_id or "").strip().upper()
-        matched_caps = caps_by_sub.get(promo_key, [])
-        for cap in matched_caps:
-            flow_parts = [part.strip() for part in safe_text(cap.flow).split("/") if part.strip()]
-            platform = flow_parts[0] if len(flow_parts) > 0 else ""
-            manager = flow_parts[1] if len(flow_parts) > 1 else safe_text(cap.owner_name)
-            geo_code = normalize_geo_value(flow_parts[2] if len(flow_parts) > 2 else (cap.code or ""))
+            geo_code = normalize_geo_value(flow_parts[2] if len(flow_parts) > 2 else (cap.code or cap.geo or row.country or ""))
             if not platform or not manager or not geo_code:
                 continue
-            key = (platform.lower(), manager.lower(), geo_code)
-            info = summary.setdefault(key, {
+            key = build_flow_key(platform, manager, geo_code)
+            info = partner_by_flow.setdefault(key, {
                 "stat_total_ftd": 0.0,
                 "stat_qual_ftd": 0.0,
                 "stat_rate": safe_cap_number(cap.rate),
@@ -1323,37 +1459,64 @@ def get_statistic_cap_partner_summary():
             })
             info["stat_has_cap"] = 1.0
             info["stat_rate"] = safe_cap_number(cap.rate) or info["stat_rate"]
-            info["stat_cap_limit"] = max(info["stat_cap_limit"], safe_number(cap.cap_value))
+            info["stat_cap_limit"] += safe_number(cap.cap_value)
             if safe_number(row.deposit_amount) > 0:
                 info["stat_total_ftd"] += 1
-            if safe_number(row.company_income) > 0 or safe_number(row.cpa_amount) > 0:
+            if is_partner_row_qualified_for_cap(row, cap):
                 info["stat_qual_ftd"] += 1
+                info["stat_income"] += safe_cap_number(cap.rate)
             info["stat_promos"].add(cap.promo_code or "")
 
-    for info in summary.values():
-        info["stat_income"] = info["stat_qual_ftd"] * safe_number(info["stat_rate"])
+    for info in partner_by_flow.values():
         info["stat_cap_fill"] = cap_fill_percent(info["stat_total_ftd"], info["stat_cap_limit"])
-    return summary
+
+    chatterfy_by_ad = {}
+    chatterfy_by_flow = {}
+    for row in chatterfy_rows:
+        ad_key = build_ad_offer_key(row.launch_date, row.platform, row.manager, row.geo, row.offer)
+        flow_key = build_flow_key(row.flow_platform or row.platform, row.flow_manager or row.manager, row.flow_geo or row.geo)
+        row_identity = safe_text(row.external_id) or safe_text(row.telegram_id) or f"row-{row.id}"
+        if all(ad_key):
+            chatterfy_by_ad.setdefault(ad_key, set()).add(row_identity)
+        if all(flow_key):
+            chatterfy_by_flow.setdefault(flow_key, set()).add(row_identity)
+
+    chatterfy_by_ad = {key: float(len(values)) for key, values in chatterfy_by_ad.items()}
+    chatterfy_by_flow = {key: float(len(values)) for key, values in chatterfy_by_flow.items()}
+    return partner_by_flow, chatterfy_by_ad, chatterfy_by_flow
 
 
 def enrich_statistic_rows(rows):
-    summary = get_statistic_cap_partner_summary()
+    partner_by_flow, chatterfy_by_ad, chatterfy_by_flow = get_statistic_support_maps()
+    ad_bucket_weights = {}
+    ad_bucket_counts = {}
+    for item in rows:
+        ad_key = build_ad_offer_key(item.get("launch_date"), item.get("platform"), item.get("manager"), item.get("geo"), item.get("offer"))
+        weight = safe_number(item.get("ftd")) or safe_number(item.get("leads")) or safe_number(item.get("spend")) or 1.0
+        ad_bucket_weights[ad_key] = ad_bucket_weights.get(ad_key, 0.0) + weight
+        ad_bucket_counts[ad_key] = ad_bucket_counts.get(ad_key, 0) + 1
     enriched = []
     for item in rows:
-        key = (
-            safe_text(item.get("platform")).lower(),
-            safe_text(item.get("manager")).lower(),
-            normalize_geo_value(item.get("geo") or ""),
-        )
-        stat = summary.get(key, {})
+        flow_key = build_flow_key(item.get("platform"), item.get("manager"), item.get("geo"))
+        ad_key = build_ad_offer_key(item.get("launch_date"), item.get("platform"), item.get("manager"), item.get("geo"), item.get("offer"))
+        flow_stat = partner_by_flow.get(flow_key, {})
+        chatter_count = chatterfy_by_ad.get(ad_key, 0.0)
+        flow_chatter_count = chatterfy_by_flow.get(flow_key, 0.0)
+        offer_share = (chatter_count / flow_chatter_count) if flow_chatter_count > 0 else 0.0
+        row_weight = safe_number(item.get("ftd")) or safe_number(item.get("leads")) or safe_number(item.get("spend")) or 1.0
+        bucket_weight = ad_bucket_weights.get(ad_key, 0.0)
+        bucket_count = ad_bucket_counts.get(ad_key, 1)
+        creative_share = (row_weight / bucket_weight) if bucket_weight > 0 else (1.0 / bucket_count)
+        share = offer_share * creative_share
         clone = dict(item)
-        clone["stat_total_ftd"] = stat.get("stat_total_ftd", 0.0)
-        clone["stat_qual_ftd"] = stat.get("stat_qual_ftd", 0.0)
-        clone["stat_rate"] = stat.get("stat_rate", 0.0)
-        clone["stat_income"] = stat.get("stat_income", 0.0)
-        clone["stat_cap_limit"] = stat.get("stat_cap_limit", 0.0)
-        clone["stat_cap_fill"] = stat.get("stat_cap_fill", 0.0)
-        clone["stat_has_cap"] = stat.get("stat_has_cap", 0.0)
+        clone["stat_chatterfy"] = chatter_count * creative_share
+        clone["stat_total_ftd"] = flow_stat.get("stat_total_ftd", 0.0) * share
+        clone["stat_qual_ftd"] = flow_stat.get("stat_qual_ftd", 0.0) * share
+        clone["stat_rate"] = flow_stat.get("stat_rate", 0.0)
+        clone["stat_income"] = flow_stat.get("stat_income", 0.0) * share
+        clone["stat_cap_limit"] = flow_stat.get("stat_cap_limit", 0.0) * share
+        clone["stat_cap_fill"] = cap_fill_percent(clone["stat_total_ftd"], clone["stat_cap_limit"])
+        clone["stat_has_cap"] = flow_stat.get("stat_has_cap", 0.0) if share > 0 or flow_stat.get("stat_has_cap", 0.0) else 0.0
         clone["stat_profit"] = clone["stat_income"] - (clone.get("spend") or 0)
         clone["stat_roi"] = (clone["stat_profit"] / clone.get("spend")) * 100 if (clone.get("spend") or 0) > 0 else 0
         enriched.append(clone)
@@ -1545,6 +1708,7 @@ def aggregate_totals(rows):
         "reg": sum(r["reg"] for r in rows),
         "ftd": sum(r["ftd"] for r in rows),
         "spend": sum(r["spend"] for r in rows),
+        "stat_chatterfy": sum(r.get("stat_chatterfy", 0) for r in rows),
         "stat_total_ftd": sum(r.get("stat_total_ftd", 0) for r in rows),
         "stat_qual_ftd": sum(r.get("stat_qual_ftd", 0) for r in rows),
         "stat_income": sum(r.get("stat_income", 0) for r in rows),
@@ -2006,7 +2170,7 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .tree-root summary {{ cursor: pointer; list-style: none; display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap; padding: 14px 16px; font-weight: 900; }}
             .tree-root summary::-webkit-details-marker {{ display: none; }}
             .tree-meta {{ color: var(--muted); font-size: 13px; }}
-            .tree-line {{ display: grid; grid-template-columns: 2.5fr repeat(6, 1fr); gap: 10px; padding: 10px 16px; border-top: 1px solid var(--border); font-size: 14px; align-items: center; }}
+            .tree-line {{ display: grid; grid-template-columns: 2.5fr repeat(7, 1fr); gap: 10px; padding: 10px 16px; border-top: 1px solid var(--border); font-size: 14px; align-items: center; }}
             .tree-level-1 > summary {{ background: rgba(56,189,248,0.09); }}
             .tree-level-2 > summary {{ background: rgba(37,99,235,0.09); }}
             .tree-level-3 > summary {{ background: rgba(34,197,94,0.09); }}
@@ -2053,7 +2217,8 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 background:#ef4444;
                 box-shadow:0 0 0 4px rgba(239,68,68,0.12);
             }}
-            .caps-layout {{ display:grid; grid-template-columns: minmax(340px, 420px) 1fr; gap:16px; align-items:start; }}
+            .caps-layout {{ display:grid; grid-template-columns: minmax(300px, 360px) minmax(0, 1fr); gap:16px; align-items:start; }}
+            .caps-layout > div {{ min-width: 0; }}
             .caps-form {{ display:grid; gap:12px; }}
             .caps-form label {{ display:grid; gap:6px; font-size:12px; font-weight:800; }}
             .caps-form input, .caps-form textarea, .caps-form select {{
@@ -2067,16 +2232,16 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             }}
             .caps-form textarea {{ min-height: 110px; resize: vertical; }}
             .caps-grid-2 {{ display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:10px; }}
-            .caps-table {{ min-width: 1320px; table-layout: fixed; }}
+            .caps-table {{ min-width: 1180px; table-layout: fixed; width: 100%; }}
             .caps-table th, .caps-table td {{
                 white-space: normal;
                 overflow: visible;
                 text-overflow: initial;
                 vertical-align: top;
             }}
-            .caps-table .comment-col {{ min-width: 220px; max-width: 260px; }}
-            .caps-table .agent-col {{ min-width: 140px; }}
-            .caps-actions {{ display:flex; gap:8px; flex-wrap:wrap; min-width:140px; }}
+            .caps-table .comment-col {{ min-width: 180px; max-width: 220px; }}
+            .caps-table .agent-col {{ min-width: 110px; }}
+            .caps-actions {{ display:flex; gap:8px; flex-wrap:wrap; min-width:110px; }}
             .progress-shell {{
                 min-width: 130px;
                 display:grid;
@@ -2272,6 +2437,7 @@ def render_stats_cards(totals):
 def render_statistic_cards(totals):
     cards = [
         ("Spend", format_money(totals["spend"])),
+        ("Chatterfy", format_int_or_float(totals.get("stat_chatterfy", 0))),
         ("Income", format_money(totals.get("stat_income", 0))),
         ("Profit", format_money(totals.get("stat_profit", 0))),
         ("ROI", format_percent(totals.get("stat_roi", 0))),
@@ -2292,7 +2458,7 @@ def render_tree_nodes(nodes, level=1):
     level_class = f"tree-level-{min(level, 5)}"
     for node in nodes:
         m = node["metrics"]
-        meta = f'<span class="tree-meta">Spend: {format_money(m["spend"])} · Income: {format_money(m.get("stat_income", 0))} · Profit: {format_money(m.get("stat_profit", 0))} · ROI: {format_percent(m.get("stat_roi", 0))} · Total FTD: {format_int_or_float(m.get("stat_total_ftd", 0))} · Qual FTD: {format_int_or_float(m.get("stat_qual_ftd", 0))}</span>'
+        meta = f'<span class="tree-meta">Spend: {format_money(m["spend"])} · Chatterfy: {format_int_or_float(m.get("stat_chatterfy", 0))} · Income: {format_money(m.get("stat_income", 0))} · Profit: {format_money(m.get("stat_profit", 0))} · ROI: {format_percent(m.get("stat_roi", 0))} · Total FTD: {format_int_or_float(m.get("stat_total_ftd", 0))} · Qual FTD: {format_int_or_float(m.get("stat_qual_ftd", 0))}</span>'
         if node["children"]:
             children_html = render_tree_nodes(node["children"], level + 1)
             html += f'''
@@ -2306,6 +2472,7 @@ def render_tree_nodes(nodes, level=1):
             <div class="tree-line {level_class}">
                 <div><strong>{escape(node["name"])}</strong> <span class="muted">({escape(node["key"])})</span></div>
                 <div>{format_money(m["spend"])}</div>
+                <div>{format_int_or_float(m.get("stat_chatterfy", 0))}</div>
                 <div>{format_money(m.get("stat_income", 0))}</div>
                 <div>{format_money(m.get("stat_profit", 0))}</div>
                 <div>{format_percent(m.get("stat_roi", 0))}</div>
@@ -2633,7 +2800,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     </div>
                 </div>
                 <div class="table-wrap">
-                    <table class="caps-table" style="min-width:1500px;">
+                    <table class="caps-table">
                         <thead>
                             <tr>
                                 <th>ID</th>
@@ -3110,6 +3277,102 @@ def render_dev_page(title, emoji, active_page, current_user=None):
     return page_shell(title, content, active_page=active_page, current_user=current_user)
 
 
+def chatterfy_page_html(current_user, rows, status="", search="", success_text="", error_text=""):
+    status_values = sorted({safe_text(row.status) for row in rows if safe_text(row.status)})
+    status_options = make_options(status_values, status)
+    total_rows = len(rows)
+    total_tagged = len([row for row in rows if row.offer and row.platform and row.manager and row.geo])
+    total_flows = len({build_flow_key(row.flow_platform or row.platform, row.flow_manager or row.manager, row.flow_geo or row.geo) for row in rows if (row.flow_platform or row.platform)})
+
+    rows_html = ""
+    for row in rows[:500]:
+        rows_html += f"""
+        <tr>
+            <td>{escape(row.name or "")}</td>
+            <td>{escape(row.telegram_id or "")}</td>
+            <td>{escape(row.username or "")}</td>
+            <td>{escape(row.tags or "")}</td>
+            <td>{escape(row.launch_date or "")}</td>
+            <td>{escape(row.platform or "")}</td>
+            <td>{escape(row.manager or "")}</td>
+            <td>{escape(row.geo or "")}</td>
+            <td>{escape(row.offer or "")}</td>
+            <td>{escape(row.status or "")}</td>
+        </tr>
+        """
+
+    message_html = ""
+    if success_text:
+        message_html += f'<div class="notice">{escape(success_text)}</div>'
+    if error_text:
+        message_html += f'<div class="notice notice-danger">{escape(error_text)}</div>'
+
+    content = f"""
+    {message_html}
+
+    <details class="panel">
+        <summary class="panel-title" style="cursor:pointer; list-style:none; display:flex; align-items:center; justify-content:space-between;">
+            <span>Upload Chatterfy</span>
+            <span class="btn" style="width:38px; height:38px; padding:0; border-radius:12px;">+</span>
+        </summary>
+        <div class="panel-subtitle" style="margin-top:10px;">Загрузка выгрузки Chatterfy для связки со Statistic.</div>
+        <form method="post" action="/chatterfy/upload" enctype="multipart/form-data" class="upload-form" style="margin-top:14px;">
+            <label>CSV / XLSX
+                <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
+            </label>
+            <button type="submit" class="upload-btn">Загрузить файл</button>
+        </form>
+    </details>
+
+    <div class="panel compact-panel filters">
+        <div class="panel-title">Фильтры</div>
+        <form method="get" action="/chatterfy">
+            <label>Status<select name="status">{status_options}</select></label>
+            <label>Search<input type="text" name="search" value="{escape(search)}" placeholder="Теги, менеджер, geo, offer"></label>
+            <button type="submit">Фильтровать</button>
+            <a href="/chatterfy" class="ghost-btn">Сбросить</a>
+        </form>
+    </div>
+
+    <div class="panel compact-panel">
+        <div class="stats-grid">
+            <div class="stat-card"><div class="name">Rows</div><div class="value">{total_rows}</div></div>
+            <div class="stat-card"><div class="name">Tagged</div><div class="value">{total_tagged}</div></div>
+            <div class="stat-card"><div class="name">Flows</div><div class="value">{total_flows}</div></div>
+        </div>
+    </div>
+
+    <div class="panel compact-panel">
+        <div class="controls-line">
+            <div>
+                <div class="panel-title" style="margin-bottom:4px;">Chatterfy Export</div>
+                <div class="panel-subtitle">Первые 500 строк из последней выгрузки.</div>
+            </div>
+        </div>
+        <div class="table-wrap">
+            <table style="min-width:1400px;">
+                <thead>
+                    <tr>
+                        <th>Name</th>
+                        <th>Telegram ID</th>
+                        <th>Username</th>
+                        <th>Tags</th>
+                        <th>Date</th>
+                        <th>Platform</th>
+                        <th>Manager</th>
+                        <th>Geo</th>
+                        <th>Offer</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="10">Нет данных</td></tr>'}</tbody>
+            </table>
+        </div>
+    </div>
+    """
+    return page_shell("Chatterfy", content, active_page="chatterfy", current_user=current_user)
+
+
 # =========================================
 # BLOCK 7.5 — USERS
 # =========================================
@@ -3509,11 +3772,12 @@ def export_hierarchy_csv(
     rows = enrich_statistic_rows(aggregate_grouped_rows(get_filtered_data(buyer, manager, geo, offer, search)))
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Geo", "Platform", "Manager", "Offer", "Creative", "Ad Name", "Leads", "Reg", "FB FTD", "Total FTD", "Qual FTD", "Rate", "Spend", "Income", "Profit", "ROI"])
+    writer.writerow(["Geo", "Platform", "Manager", "Offer", "Creative", "Ad Name", "Leads", "Reg", "FB FTD", "Chatterfy", "Total FTD", "Qual FTD", "Rate", "Spend", "Income", "Profit", "ROI"])
     for row in rows:
         writer.writerow([
             row["geo"], row["platform"], row["manager"], row["offer"], row["creative"], row["ad_name"],
             format_int_or_float(row["leads"]), format_int_or_float(row["reg"]), format_int_or_float(row["ftd"]),
+            format_int_or_float(row.get("stat_chatterfy", 0)),
             format_int_or_float(row.get("stat_total_ftd", 0)), format_int_or_float(row.get("stat_qual_ftd", 0)), format_money(row.get("stat_rate", 0)),
             format_money(row["spend"]), format_money(row.get("stat_income", 0)), format_money(row.get("stat_profit", 0)), format_percent(row.get("stat_roi", 0)),
         ])
@@ -3912,7 +4176,7 @@ def show_hierarchy(
 
     <div class="panel compact-panel">
         <div class="panel-title">Statistic</div>
-        <div class="panel-subtitle">FB + Partner + Caps в одной структуре для контроля трафика, FTD, дохода и прибыли.</div>
+        <div class="panel-subtitle">FB + Chatterfy + Partner + Caps в одной структуре для контроля трафика, FTD, квалов, дохода и прибыли.</div>
     </div>
 
     <div class="tree-root">{tree_html}</div>
@@ -4386,31 +4650,48 @@ def run_onexbet_parser(request: Request):
     user = require_login(request)
     enforce_page_access(user, "onexbet_report")
 
-    try:
-        from parser_1xbet_halfmonth import run_parser
+    parser_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "parser_1xbet_halfmonth.py")
 
-        result = run_parser()
-        print("1XBET PARSER RESULT:", result)
-
-        inserted = result.get("inserted", 0) if isinstance(result, dict) else 0
-        period_label = result.get("period_label", "") if isinstance(result, dict) else ""
-
-        success_text = f"Парсер завершен. Загружено строк: {inserted}"
-        if period_label:
-            success_text += f" | Период: {period_label}"
-
+    if not os.path.exists(parser_path):
         return RedirectResponse(
-            url="/1xbet-report?run_ok=" + urlencode({"v": success_text})[2:],
+            url="/1xbet-report?run_error=Файл parser_1xbet_halfmonth.py не найден рядом с app.py",
             status_code=303,
         )
 
-    except Exception as e:
-        error_text = str(e).replace("\n", " | ")[:700]
-        print("1XBET PARSER ERROR:", error_text)
+    try:
+        result = subprocess.run(
+            [sys.executable, parser_path],
+            capture_output=True,
+            text=True,
+            timeout=600,
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+        )
+
+        if result.returncode == 0:
+            return RedirectResponse(
+                url="/1xbet-report?run_ok=Парсер успешно запущен и завершен",
+                status_code=303,
+            )
+
+        error_text = (result.stderr or result.stdout or "Неизвестная ошибка").strip()
+        error_text = error_text.replace("\n", " | ")[:700]
+
         return RedirectResponse(
             url="/1xbet-report?run_error=" + urlencode({"v": error_text})[2:],
             status_code=303,
         )
+
+    except subprocess.TimeoutExpired:
+        return RedirectResponse(
+            url="/1xbet-report?run_error=Парсер превысил лимит времени ожидания",
+            status_code=303,
+        )
+    except Exception as e:
+        return RedirectResponse(
+            url="/1xbet-report?run_error=" + urlencode({"v": str(e)})[2:],
+            status_code=303,
+        )
+@app.get("/1xbet-report", response_class=HTMLResponse)
 @app.get("/1xbet-report", response_class=HTMLResponse)
 def onexbet_report_page(
     request: Request,
@@ -4610,12 +4891,45 @@ def onexbet_report_page(
         )
     )
 @app.get("/chatterfy", response_class=HTMLResponse)
-def chatterfy_page(request: Request):
+def chatterfy_page(
+    request: Request,
+    status: str = Query(default=""),
+    search: str = Query(default=""),
+    message: str = Query(default=""),
+):
     user = get_current_user(request)
     if not user:
         return auth_redirect_response()
     enforce_page_access(user, "chatterfy")
-    return render_dev_page("Chatterfy", "💬", "chatterfy", current_user=user)
+    import_chatterfy_from_csv_if_needed()
+    rows = get_chatterfy_rows(status=status, search=search)
+    return chatterfy_page_html(user, rows, status=status, search=search, success_text=message)
+
+
+@app.post("/chatterfy/upload")
+async def upload_chatterfy_file(request: Request, file: UploadFile = File(...)):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "chatterfy")
+    original_name = file.filename or "chatterfy.csv"
+    ext = os.path.splitext(original_name)[1].lower() or ".csv"
+    filename = f"temp_chatterfy_{uuid.uuid4()}{ext}"
+    try:
+        with open(filename, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        if ext in [".xlsx", ".xls"]:
+            df = pd.read_excel(filename)
+        else:
+            try:
+                df = pd.read_csv(filename)
+            except Exception:
+                df = pd.read_csv(filename, sep=";")
+        import_chatterfy_dataframe(df, original_name)
+        return RedirectResponse(url="/chatterfy?message=Chatterfy загружен", status_code=303)
+    finally:
+        if os.path.exists(filename):
+            os.remove(filename)
 
 
 @app.get("/hold-wager", response_class=HTMLResponse)
