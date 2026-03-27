@@ -2783,7 +2783,7 @@ def sidebar_html(active_page, current_user=None):
         ]),
         ("finance", "/finance", "💸", "Finance", []),
         ("caps", "/caps", "🔶", "Caps", []),
-        ("partner", "/partner-report", "🎰", "1xBet", []),
+        ("partner", "/partner-report", "🎰", "Players", []),
         ("cabinets", "/cabinets", "🗂", "Partners", []),
         ("chatterfy", "/chatterfy", "💬", "Chatterfy", []),
         ("holdwager", "/hold-wager", "🎯", "Hold/Wager", []),
@@ -3171,10 +3171,17 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .toggle-indicator {{
                 width:38px;
                 height:38px;
+                min-width:38px;
+                min-height:38px;
                 padding:0;
                 border-radius:12px;
+                display:inline-flex;
+                align-items:center;
+                justify-content:center;
+                align-self:flex-start;
                 flex: 0 0 auto;
                 position: relative;
+                overflow:hidden;
                 user-select: none;
                 -webkit-user-select: none;
             }}
