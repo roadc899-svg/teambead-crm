@@ -923,7 +923,21 @@ def normalize_geo_value(value):
     raw = safe_text(value)
     if not raw:
         return ""
-    return raw.upper()
+    normalized = raw.strip().upper()
+    geo_aliases = {
+        "SPAIN": "ES",
+        "ESPANA": "ES",
+        "ESPAÑA": "ES",
+        "PERU": "PE",
+        "COLOMBIA": "CO",
+        "CHILE": "CL",
+        "MEXICO": "MX",
+        "BRAZIL": "BR",
+        "PORTUGAL": "PT",
+        "ARGENTINA": "AR",
+        "INDIA": "IN",
+    }
+    return geo_aliases.get(normalized, normalized)
 
 
 def parse_chatterfy_tags(value):
@@ -4568,6 +4582,63 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     if error_text:
         message_html += f'<div class="notice notice-danger">{escape(error_text)}</div>'
 
+    ensure_cabinet_table()
+    ensure_partner_table()
+    db = SessionLocal()
+    try:
+        cabinet_rows = db.query(CabinetRow).order_by(CabinetRow.name.asc(), CabinetRow.id.asc()).all()
+        partner_rows = db.query(PartnerRow).order_by(PartnerRow.cabinet_name.asc(), PartnerRow.id.desc()).all()
+        cap_rows = db.query(CapRow).order_by(CapRow.id.desc()).all()
+    finally:
+        db.close()
+
+    def build_datalist(options):
+        unique = []
+        seen = set()
+        for item in options:
+            value = safe_text(item).strip()
+            if not value:
+                continue
+            key = value.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(value)
+        return "".join(f'<option value="{escape(value)}"></option>' for value in unique)
+
+    advertiser_list = build_datalist(
+        [row.advertiser for row in cabinet_rows]
+        + [row.advertiser for row in cap_rows]
+    )
+    owner_list = build_datalist(
+        [row.manager_name for row in cabinet_rows]
+        + [row.owner_name for row in cap_rows]
+    )
+    cabinet_list = build_datalist(
+        [row.name for row in cabinet_rows]
+        + [row.cabinet_name for row in partner_rows]
+        + [row.buyer for row in cap_rows]
+    )
+    geo_list = build_datalist(
+        [geo_code for row in cabinet_rows for geo_code in split_geo_tokens(row.geo_list)]
+        + [row.country for row in partner_rows]
+        + [row.geo for row in cap_rows]
+    )
+    flow_list = build_datalist(
+        [
+            " / ".join(part for part in [safe_text(row.platform), safe_text(row.manager_name), geo_code] if part)
+            for row in cabinet_rows
+            for geo_code in (split_geo_tokens(row.geo_list) or [""])
+            if any([safe_text(row.platform), safe_text(row.manager_name), geo_code])
+        ]
+        + [row.flow for row in cap_rows]
+    )
+    promo_list = build_datalist(
+        [row.sub_id for row in partner_rows]
+        + [row.promo_code for row in cap_rows]
+    )
+    agent_list = build_datalist([row.agent for row in cap_rows])
+
     current_edit_id = str(form_data.get("edit_id") or "")
     form_title = "Edit Cap" if current_edit_id else "Add Cap"
     submit_label = "Save" if current_edit_id else "Add Cap"
@@ -4580,20 +4651,27 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         <div class="upload-menu-list cap-menu-list">
             <form method="post" action="/caps/save" class="caps-form">
             <input type="hidden" name="edit_id" value="{escape(current_edit_id)}">
+            <datalist id="capAdvertiserOptions">{advertiser_list}</datalist>
+            <datalist id="capOwnerOptions">{owner_list}</datalist>
+            <datalist id="capCabinetOptions">{cabinet_list}</datalist>
+            <datalist id="capFlowOptions">{flow_list}</datalist>
+            <datalist id="capGeoOptions">{geo_list}</datalist>
+            <datalist id="capPromoOptions">{promo_list}</datalist>
+            <datalist id="capAgentOptions">{agent_list}</datalist>
             <div class="caps-grid-2">
                 <label>Advertiser
-                    <input type="text" name="advertiser" value="{escape(form_data.get('advertiser', ''))}">
+                    <input type="text" name="advertiser" list="capAdvertiserOptions" value="{escape(form_data.get('advertiser', ''))}" placeholder="1xBet / BetMen">
                 </label>
                 <label>Owner
-                    <input type="text" name="owner_name" value="{escape(form_data.get('owner_name', ''))}">
+                    <input type="text" name="owner_name" list="capOwnerOptions" value="{escape(form_data.get('owner_name', ''))}" placeholder="Manager / owner">
                 </label>
             </div>
             <div class="caps-grid-2">
                 <label>Cabinet
-                    <input type="text" name="buyer" value="{escape(form_data.get('buyer', ''))}" required>
+                    <input type="text" name="buyer" list="capCabinetOptions" value="{escape(form_data.get('buyer', ''))}" required placeholder="Choose or type cabinet">
                 </label>
                 <label>Flow
-                    <input type="text" name="flow" value="{escape(form_data.get('flow', ''))}">
+                    <input type="text" name="flow" list="capFlowOptions" value="{escape(form_data.get('flow', ''))}" placeholder="Platform / Manager / GEO">
                 </label>
             </div>
             <div class="caps-grid-2">
@@ -4601,7 +4679,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     <input type="text" name="code" value="{escape(form_data.get('code', ''))}">
                 </label>
                 <label>GEO
-                    <input type="text" name="geo" value="{escape(form_data.get('geo', ''))}">
+                    <input type="text" name="geo" list="capGeoOptions" value="{escape(form_data.get('geo', ''))}" placeholder="PE / CO / CL">
                 </label>
             </div>
             <div class="caps-grid-2">
@@ -4622,10 +4700,10 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             </div>
             <div class="caps-grid-2">
                 <label>Promo Code
-                    <input type="text" name="promo_code" value="{escape(form_data.get('promo_code', ''))}">
+                    <input type="text" name="promo_code" list="capPromoOptions" value="{escape(form_data.get('promo_code', ''))}" placeholder="Choose or type promo">
                 </label>
                 <label>Agent
-                    <input type="text" name="agent" value="{escape(form_data.get('agent', ''))}">
+                    <input type="text" name="agent" list="capAgentOptions" value="{escape(form_data.get('agent', ''))}">
                 </label>
             </div>
             <label>Link
@@ -7148,6 +7226,7 @@ def caps_page(
     if not user:
         return auth_redirect_response()
     enforce_page_access(user, "caps")
+    refresh_cap_current_ftd_from_partner()
 
     rows = get_caps_rows(search=search, buyer=buyer, geo=geo, owner_name=owner_name)
     form_data = {}
@@ -7262,6 +7341,7 @@ def save_cap(
         db.commit()
     finally:
         db.close()
+    refresh_cap_current_ftd_from_partner()
     clear_runtime_cache("stat_support::")
     return RedirectResponse(url="/caps?message=Cap+saved", status_code=303)
 
