@@ -2626,6 +2626,14 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 box-shadow: var(--shadow);
                 z-index: 40;
             }}
+            .upload-menu-left .upload-menu-list {{
+                left: 0;
+                right: auto;
+            }}
+            .upload-menu-right .upload-menu-list {{
+                right: 0;
+                left: auto;
+            }}
             .upload-menu-list form {{
                 display:grid;
                 gap:10px;
@@ -4817,7 +4825,7 @@ def partner_report_page_html(
                 <div class="panel-subtitle">Manual uploads by cabinet. These rows feed the shared statistic layer.</div>
             </div>
             <div style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; justify-content:flex-end;">
-                <details class="upload-menu">
+                <details class="upload-menu upload-menu-left" style="z-index:90;">
                     <summary class="btn toggle-indicator"></summary>
                     <div class="upload-menu-list" style="width:380px; max-width:min(380px, calc(100vw - 48px));">
                         <form method="post" action="/partner-report/upload" enctype="multipart/form-data">
