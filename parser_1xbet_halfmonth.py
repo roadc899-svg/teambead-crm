@@ -2,6 +2,7 @@ import os
 import calendar
 from pathlib import Path
 from datetime import date, datetime
+
 import requests
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
@@ -16,8 +17,10 @@ HEADLESS = os.getenv("HEADLESS", "true").lower() == "true"
 
 LOGIN_URL = "https://1xpartners.com/ru/sign-in"
 PLAYERS_REPORT_URL = "https://1xpartners.com/ru/partner/reports/players"
+
 DOWNLOAD_DIR = Path("downloads")
 DOWNLOAD_DIR.mkdir(exist_ok=True)
+
 
 def get_half_month_period(today: date | None = None):
     if today is None:
@@ -43,6 +46,7 @@ def get_half_month_period(today: date | None = None):
         "period_label": f"{start_day:02d}-{end_day:02d}.{month:02d}.{year}",
     }
 
+
 def export_players_report():
     if not PARTNER_LOGIN or not PARTNER_PASSWORD:
         raise RuntimeError("Заполни PARTNER_LOGIN и PARTNER_PASSWORD в .env")
@@ -50,82 +54,151 @@ def export_players_report():
     period = get_half_month_period()
 
     with sync_playwright() as p:
-    browser = p.chromium.launch(
-        headless=True,
-        args=[
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            "--single-process",
-        ],
-    )
+        browser = p.chromium.launch(
+            headless=HEADLESS,
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--single-process",
+            ],
+        )
 
-    context = browser.new_context(ignore_https_errors=True)
-    page = context.new_page()
+        context = browser.new_context(
+            accept_downloads=True,
+            locale="ru-RU",
+            ignore_https_errors=True,
+        )
+        page = context.new_page()
 
-        page.goto(LOGIN_URL, wait_until="domcontentloaded")
+        # 1. Логин
+        page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=90000)
         page.fill('input[type="text"]', PARTNER_LOGIN)
         page.fill('input[type="password"]', PARTNER_PASSWORD)
         page.click('button[type="submit"]')
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state("networkidle", timeout=90000)
 
-        page.goto(PLAYERS_REPORT_URL, wait_until="networkidle")
+        # 2. Переход в отчет по игрокам
+        page.goto(PLAYERS_REPORT_URL, wait_until="domcontentloaded", timeout=90000)
+        page.wait_for_load_state("networkidle", timeout=90000)
 
-        possible_from = [
-            'input[name="dateFrom"]',
-            'input[name="from"]',
-            'input[placeholder*="От"]',
-            'input[placeholder*="С"]',
-        ]
-        possible_to = [
-            'input[name="dateTo"]',
-            'input[name="to"]',
-            'input[placeholder*="До"]',
-            'input[placeholder*="По"]',
-        ]
+        # 3. Выставляем даты
+        date_inputs = page.locator("input")
+        filled_from = False
+        filled_to = False
 
-        for sel in possible_from:
+        for i in range(date_inputs.count()):
             try:
-                page.locator(sel).first.fill(period["date_start"])
-                break
+                inp = date_inputs.nth(i)
+                placeholder = (inp.get_attribute("placeholder") or "").strip()
+                value = ""
+                try:
+                    value = inp.input_value().strip()
+                except Exception:
+                    value = ""
+
+                if not filled_from and ("2026-03-16" in placeholder or "2026-03-16" in value or placeholder == "" or "-" in value):
+                    inp.fill(period["date_start"])
+                    filled_from = True
+                    continue
+
+                if filled_from and not filled_to:
+                    inp.fill(period["date_end"])
+                    filled_to = True
+                    break
             except Exception:
                 pass
 
-        for sel in possible_to:
+        # fallback по name
+        if not filled_from:
+            for sel in ['input[name="dateFrom"]', 'input[name="from"]']:
+                try:
+                    page.locator(sel).first.fill(period["date_start"])
+                    filled_from = True
+                    break
+                except Exception:
+                    pass
+
+        if not filled_to:
+            for sel in ['input[name="dateTo"]', 'input[name="to"]']:
+                try:
+                    page.locator(sel).first.fill(period["date_end"])
+                    filled_to = True
+                    break
+                except Exception:
+                    pass
+
+        # 4. Ставим галочку "Только новые игроки"
+        checked_new_players = False
+        try:
+            label = page.locator('label:has-text("Только новые игроки")')
+            if label.count() > 0:
+                checkbox = label.locator('input[type="checkbox"]').first
+                if not checkbox.is_checked():
+                    checkbox.check()
+                checked_new_players = True
+        except Exception:
+            pass
+
+        if not checked_new_players:
             try:
-                page.locator(sel).first.fill(period["date_end"])
-                break
+                all_checkboxes = page.locator('input[type="checkbox"]')
+                if all_checkboxes.count() > 0:
+                    cb = all_checkboxes.nth(0)
+                    if not cb.is_checked():
+                        cb.check()
             except Exception:
                 pass
 
+        # 5. Нажимаем "СГЕНЕРИРОВАТЬ ОТЧЕТ"
+        generated = False
         for sel in [
-            'button:has-text("Показать")',
-            'button:has-text("Применить")',
-            'button:has-text("Сформировать")',
-            'button:has-text("Show")',
-            'button:has-text("Apply")',
+            'button:has-text("СГЕНЕРИРОВАТЬ ОТЧЕТ")',
+            'button:has-text("Сгенерировать отчет")',
+            'text=СГЕНЕРИРОВАТЬ ОТЧЕТ',
         ]:
             try:
-                page.locator(sel).first.click()
-                page.wait_for_load_state("networkidle")
+                page.locator(sel).first.click(timeout=10000)
+                page.wait_for_load_state("networkidle", timeout=90000)
+                generated = True
                 break
             except Exception:
                 pass
 
+        if not generated:
+            browser.close()
+            raise RuntimeError("Не удалось нажать кнопку 'СГЕНЕРИРОВАТЬ ОТЧЕТ'")
+
+        # 6. Открываем меню "ЭКСПОРТ"
+        export_opened = False
+        for sel in [
+            'button:has-text("ЭКСПОРТ")',
+            'text=ЭКСПОРТ',
+        ]:
+            try:
+                page.locator(sel).first.click(timeout=10000)
+                export_opened = True
+                break
+            except Exception:
+                pass
+
+        if not export_opened:
+            browser.close()
+            raise RuntimeError("Не удалось открыть меню 'ЭКСПОРТ'")
+
+        # 7. Качаем CSV
         file_path = None
         for sel in [
-            'button:has-text("Экспорт")',
-            'button:has-text("Export")',
-            'a:has-text("Экспорт")',
-            'a:has-text("Export")',
-            '[download]',
+            'text=CSV',
+            'a:has-text("CSV")',
+            'button:has-text("CSV")',
         ]:
             try:
-                with page.expect_download(timeout=15000) as d:
-                    page.locator(sel).first.click()
+                with page.expect_download(timeout=30000) as d:
+                    page.locator(sel).first.click(timeout=10000)
                 download = d.value
-                filename = download.suggested_filename or f"1xbet_players_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                filename = download.suggested_filename or f"1xbet_players_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
                 file_path = DOWNLOAD_DIR / filename
                 download.save_as(str(file_path))
                 break
@@ -135,9 +208,10 @@ def export_players_report():
         browser.close()
 
         if not file_path:
-            raise RuntimeError("Не удалось скачать отчет по игрокам")
+            raise RuntimeError("Не удалось скачать CSV из меню 'ЭКСПОРТ'")
 
     return file_path, period
+
 
 def upload_to_crm(file_path: Path, period: dict):
     headers = {}
@@ -160,6 +234,7 @@ def upload_to_crm(file_path: Path, period: dict):
 
     response.raise_for_status()
     return response.json()
+
 
 if __name__ == "__main__":
     exported_file, current_period = export_players_report()
