@@ -940,6 +940,22 @@ def normalize_geo_value(value):
     return geo_aliases.get(normalized, normalized)
 
 
+def geo_display_name(value):
+    normalized = normalize_geo_value(value)
+    display_map = {
+        "ES": "Spain",
+        "PE": "Peru",
+        "CO": "Colombia",
+        "CL": "Chile",
+        "MX": "Mexico",
+        "BR": "Brazil",
+        "PT": "Portugal",
+        "AR": "Argentina",
+        "IN": "India",
+    }
+    return display_map.get(normalized, safe_text(value).strip() or normalized)
+
+
 def parse_chatterfy_tags(value):
     tags = [safe_text(item) for item in safe_text(value).split(",") if safe_text(item)]
     result = {
@@ -2042,7 +2058,20 @@ def replace_partner_rows(source_name, rows_to_insert):
     ensure_partner_table()
     db = SessionLocal()
     try:
-        existing_rows = db.query(PartnerRow).filter(PartnerRow.source_name == source_name).all() if source_name else db.query(PartnerRow).all()
+        scope_query = db.query(PartnerRow)
+        target_cabinet = ""
+        target_period_label = ""
+        if rows_to_insert:
+            target_cabinet = safe_text(getattr(rows_to_insert[0], "cabinet_name", ""))
+            target_period_label = safe_text(getattr(rows_to_insert[0], "period_label", ""))
+        if target_cabinet and target_period_label:
+            scope_query = scope_query.filter(
+                PartnerRow.cabinet_name == target_cabinet,
+                PartnerRow.period_label == target_period_label,
+            )
+        elif source_name:
+            scope_query = scope_query.filter(PartnerRow.source_name == source_name)
+        existing_rows = scope_query.all()
         manual_flags = {
             build_partner_row_identity(item): {
                 "manual_hold": 1 if safe_number(getattr(item, "manual_hold", 0)) > 0 else 0,
@@ -2054,7 +2083,12 @@ def replace_partner_rows(source_name, rows_to_insert):
             flags = manual_flags.get(build_partner_row_identity(item), {})
             item.manual_hold = int(flags.get("manual_hold", 0))
             item.manual_blocked = int(flags.get("manual_blocked", 0))
-        if source_name:
+        if target_cabinet and target_period_label:
+            db.query(PartnerRow).filter(
+                PartnerRow.cabinet_name == target_cabinet,
+                PartnerRow.period_label == target_period_label,
+            ).delete()
+        elif source_name:
             db.query(PartnerRow).filter(PartnerRow.source_name == source_name).delete()
         else:
             db.query(PartnerRow).delete()
@@ -3869,8 +3903,9 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             document.addEventListener('click', function(e) {{
                 const wrap = document.querySelector('.column-menu-wrap');
                 const menu = document.getElementById('columnMenu');
-                if (!wrap || !menu) return;
-                if (!wrap.contains(e.target)) menu.classList.remove('open');
+                if (wrap && menu && !wrap.contains(e.target)) {{
+                    menu.classList.remove('open');
+                }}
                 document.querySelectorAll('.theme-menu').forEach(function(item) {{
                     if (!item.contains(e.target)) item.removeAttribute('open');
                 }});
@@ -3925,17 +3960,51 @@ def render_stats_cards(totals):
 def render_statistic_cards(totals):
     cards = [
         ("Spend", format_money(totals["spend"])),
-        ("Chatterfy", format_int_or_float(totals.get("stat_chatterfy", 0))),
-        ("Income", format_money(totals.get("stat_income", 0))),
+        ("Payout", format_money(totals.get("stat_income", 0))),
         ("Profit", format_money(totals.get("stat_profit", 0))),
         ("ROI", format_percent(totals.get("stat_roi", 0))),
         ("FB FTD", format_int_or_float(totals["ftd"])),
         ("Total FTD", format_int_or_float(totals.get("stat_total_ftd", 0))),
         ("Qual FTD", format_int_or_float(totals.get("stat_qual_ftd", 0))),
+        ("Chatterfy", format_int_or_float(totals.get("stat_chatterfy", 0))),
+        ("CPA", format_money(totals.get("cpa_real", 0))),
+        ("Payout / Qual FTD", format_money(totals.get("stat_rate", 0))),
+        ("Cap Fill", format_percent(totals.get("stat_cap_fill", 0))),
     ]
     html = '<div class="panel compact-panel"><div class="stats-grid">'
     for title, value in cards:
         html += f'<div class="stat-card"><div class="name">{title}</div><div class="value">{value}</div></div>'
+    html += '</div></div>'
+    return html
+
+
+def render_analytics_spotlight(rows):
+    geo_rows = aggregate_stat_rows_by_keys(rows, ["geo"])
+    buyer_rows = aggregate_stat_rows_by_keys(rows, ["buyer"])
+    manager_rows = aggregate_stat_rows_by_keys(rows, ["manager"])
+    offer_rows = aggregate_stat_rows_by_keys(rows, ["offer"])
+
+    top_geo = max(geo_rows, key=lambda item: item.get("spend", 0), default={})
+    top_buyer = max(buyer_rows, key=lambda item: item.get("spend", 0), default={})
+    top_manager = max(manager_rows, key=lambda item: item.get("stat_income", 0), default={})
+    top_offer = max(offer_rows, key=lambda item: item.get("stat_income", 0), default={})
+
+    roi_candidates = [item for item in geo_rows if safe_number(item.get("spend", 0)) > 0]
+    best_geo_roi = max(roi_candidates, key=lambda item: item.get("stat_roi", 0), default={})
+
+    cards = [
+        ("Top Geo", safe_text(top_geo.get("geo")) or "—"),
+        ("Top Buyer", safe_text(top_buyer.get("buyer")) or "—"),
+        ("Top Manager", safe_text(top_manager.get("manager")) or "—"),
+        ("Top Offer", safe_text(top_offer.get("offer")) or "—"),
+        ("Best Geo ROI", f"{safe_text(best_geo_roi.get('geo')) or '—'} · {format_percent(best_geo_roi.get('stat_roi', 0))}"),
+        ("Top Geo Payout", format_money(top_geo.get("stat_income", 0))),
+        ("Top Buyer Spend", format_money(top_buyer.get("spend", 0))),
+        ("Top Manager Profit", format_money(top_manager.get("stat_profit", 0))),
+    ]
+    html = '<div class="panel compact-panel"><div class="panel-title" style="margin-bottom:12px;">Analytics Snapshot</div><div class="stats-grid">'
+    for title, value in cards:
+        html += f'<div class="stat-card"><div class="name">{escape(title)}</div><div class="value">{escape(str(value))}</div></div>'
     html += '</div></div>'
     return html
 
@@ -4019,8 +4088,6 @@ def build_dashboard_overview(user, rows, buyer="", manager="", geo="", offer="",
     ensure_cabinet_table()
     ensure_chatterfy_table()
     ensure_caps_table()
-    ensure_task_table()
-
     db = SessionLocal()
     try:
         partner_query = db.query(PartnerRow)
@@ -4075,12 +4142,6 @@ def build_dashboard_overview(user, rows, buyer="", manager="", geo="", offer="",
         or safe_number(item.get("stat_has_cap", 0)) > 0
     )
 
-    tasks_rows = get_tasks_for_user(user)
-    now = datetime.utcnow()
-    open_tasks = [row for row in tasks_rows if safe_text(row.status) != "Выполнено"]
-    blocked_tasks = [row for row in open_tasks if safe_text(row.status) == "Заблокировано"]
-    overdue_tasks = [row for row in open_tasks if getattr(row, "due_at", None) and row.due_at < now]
-
     overview = {
         "cards": [
             ("FB Campaigns", format_int_or_float(len(rows))),
@@ -4090,7 +4151,6 @@ def build_dashboard_overview(user, rows, buyer="", manager="", geo="", offer="",
             ("Chatterfy", format_int_or_float(len(chatterfy_rows))),
             ("Active Cabinets", format_int_or_float(sum(1 for row in cabinets_rows if safe_text(row.status).lower() == "active"))),
             ("Active Caps", format_int_or_float(sum(1 for row in caps_rows if safe_number(row.cap_value) > 0))),
-            ("Open Tasks", format_int_or_float(len(open_tasks))),
         ],
         "rows": [
             {
@@ -4132,14 +4192,6 @@ def build_dashboard_overview(user, rows, buyer="", manager="", geo="", offer="",
                 "primary_value": format_int_or_float(len({safe_text(row.manager_name) for row in cabinets_rows if safe_text(row.manager_name)})),
                 "secondary_value": format_int_or_float(len({geo_code for row in cabinets_rows for geo_code in split_geo_tokens(getattr(row, 'geo_list', ''))})),
                 "notes": "Active partner cabinets matching the selected manager and geo.",
-            },
-            {
-                "source": "Tasks",
-                "tracked": len(tasks_rows),
-                "coverage": format_int_or_float(len(open_tasks)),
-                "primary_value": format_int_or_float(len(blocked_tasks)),
-                "secondary_value": format_int_or_float(len(overdue_tasks)),
-                "notes": "Open, blocked and overdue tasks visible to the current user.",
             },
         ],
     }
@@ -4281,21 +4333,52 @@ def render_statistic_dashboard(rows):
     geo_rows = aggregate_stat_rows_by_keys(rows, ["geo"])
     geo_rows.sort(key=lambda item: item.get("spend", 0), reverse=True)
 
+    buyer_rows = aggregate_stat_rows_by_keys(rows, ["buyer"])
+    buyer_rows.sort(key=lambda item: item.get("spend", 0), reverse=True)
+
+    manager_rows = aggregate_stat_rows_by_keys(rows, ["manager"])
+    manager_rows.sort(key=lambda item: item.get("spend", 0), reverse=True)
+
     flow_rows = aggregate_stat_rows_by_keys(rows, ["platform", "manager", "geo"])
     flow_rows.sort(key=lambda item: item.get("spend", 0), reverse=True)
 
     campaign_rows = list(rows)
     campaign_rows.sort(key=lambda item: item.get("spend", 0), reverse=True)
 
+    buyer_columns = [
+        {"key": "buyer", "label": "Buyer"},
+        {"key": "campaign_count", "label": "Campaigns", "align": "right", "formatter": format_int_or_float},
+        {"key": "offer_count", "label": "Offers", "align": "right", "formatter": format_int_or_float},
+        {"key": "spend", "label": "Spend", "align": "right", "formatter": format_money},
+        {"key": "ftd", "label": "FB FTD", "align": "right", "formatter": format_int_or_float},
+        {"key": "stat_total_ftd", "label": "Total FTD", "align": "right", "formatter": format_int_or_float},
+        {"key": "stat_qual_ftd", "label": "Qual FTD", "align": "right", "formatter": format_int_or_float},
+        {"key": "stat_income", "label": "Payout", "align": "right", "formatter": format_money},
+        {"key": "stat_profit", "label": "Profit", "align": "right", "formatter": format_money},
+        {"key": "stat_roi", "label": "ROI", "align": "right", "formatter": format_percent},
+    ]
+    manager_columns = [
+        {"key": "manager", "label": "Manager"},
+        {"key": "campaign_count", "label": "Campaigns", "align": "right", "formatter": format_int_or_float},
+        {"key": "geo_count", "label": "Geos", "align": "right", "formatter": format_int_or_float},
+        {"key": "spend", "label": "Spend", "align": "right", "formatter": format_money},
+        {"key": "stat_chatterfy", "label": "Chatterfy", "align": "right", "formatter": format_int_or_float},
+        {"key": "stat_total_ftd", "label": "Total FTD", "align": "right", "formatter": format_int_or_float},
+        {"key": "stat_qual_ftd", "label": "Qual FTD", "align": "right", "formatter": format_int_or_float},
+        {"key": "stat_income", "label": "Payout", "align": "right", "formatter": format_money},
+        {"key": "stat_profit", "label": "Profit", "align": "right", "formatter": format_money},
+        {"key": "stat_roi", "label": "ROI", "align": "right", "formatter": format_percent},
+    ]
     geo_columns = [
         {"key": "geo", "label": "Geo"},
         {"key": "campaign_count", "label": "Campaigns", "align": "right", "formatter": format_int_or_float},
+        {"key": "offer_count", "label": "Offers", "align": "right", "formatter": format_int_or_float},
         {"key": "spend", "label": "Spend", "align": "right", "formatter": format_money},
         {"key": "ftd", "label": "FB FTD", "align": "right", "formatter": format_int_or_float},
         {"key": "stat_chatterfy", "label": "Chatterfy", "align": "right", "formatter": format_int_or_float},
         {"key": "stat_total_ftd", "label": "Total FTD", "align": "right", "formatter": format_int_or_float},
         {"key": "stat_qual_ftd", "label": "Qual FTD", "align": "right", "formatter": format_int_or_float},
-        {"key": "stat_income", "label": "Income", "align": "right", "formatter": format_money},
+        {"key": "stat_income", "label": "Payout", "align": "right", "formatter": format_money},
         {"key": "stat_profit", "label": "Profit", "align": "right", "formatter": format_money},
         {"key": "stat_roi", "label": "ROI", "align": "right", "formatter": format_percent},
     ]
@@ -4307,12 +4390,14 @@ def render_statistic_dashboard(rows):
         {"key": "stat_chatterfy", "label": "Chatterfy", "align": "right", "formatter": format_int_or_float},
         {"key": "stat_total_ftd", "label": "Total FTD", "align": "right", "formatter": format_int_or_float},
         {"key": "stat_qual_ftd", "label": "Qual FTD", "align": "right", "formatter": format_int_or_float},
-        {"key": "stat_income", "label": "Income", "align": "right", "formatter": format_money},
+        {"key": "stat_income", "label": "Payout", "align": "right", "formatter": format_money},
         {"key": "stat_profit", "label": "Profit", "align": "right", "formatter": format_money},
         {"key": "stat_roi", "label": "ROI", "align": "right", "formatter": format_percent},
     ]
     for item in flow_rows:
         item["flow_label"] = render_flow_badge(item.get("platform"), item.get("manager"), item.get("geo"))
+    for item in manager_rows:
+        item["geo_count"] = len({safe_text(row.get("geo")) for row in rows if safe_text(row.get("manager")) == safe_text(item.get("manager")) and safe_text(row.get("geo"))})
 
     campaign_columns = [
         {"key": "launch_date", "label": "Start"},
@@ -4326,7 +4411,7 @@ def render_statistic_dashboard(rows):
         {"key": "stat_chatterfy", "label": "Chatterfy", "align": "right", "formatter": format_int_or_float},
         {"key": "stat_total_ftd", "label": "Total FTD", "align": "right", "formatter": format_int_or_float},
         {"key": "stat_qual_ftd", "label": "Qual FTD", "align": "right", "formatter": format_int_or_float},
-        {"key": "stat_income", "label": "Income", "align": "right", "formatter": format_money},
+        {"key": "stat_income", "label": "Payout", "align": "right", "formatter": format_money},
         {"key": "stat_profit", "label": "Profit", "align": "right", "formatter": format_money},
         {"key": "stat_roi", "label": "ROI", "align": "right", "formatter": format_percent},
     ]
@@ -4335,8 +4420,22 @@ def render_statistic_dashboard(rows):
 
     return (
         render_stat_table(
+            "Buyer Overview",
+            "Fast read by buyer: spend, payout, profit and ROI.",
+            buyer_rows,
+            buyer_columns,
+            empty_text="No buyer data yet",
+        )
+        + render_stat_table(
+            "Manager Overview",
+            "See who is carrying spend, payout and profit across geos.",
+            manager_rows,
+            manager_columns,
+            empty_text="No manager data yet",
+        )
+        + render_stat_table(
             "Geo Overview",
-            "Quick read on where money and results are concentrated right now.",
+            "Quick read on where spend, payout and ROI are concentrated right now.",
             geo_rows,
             geo_columns,
             empty_text="No geo data yet",
@@ -4350,7 +4449,7 @@ def render_statistic_dashboard(rows):
         )
         + render_stat_table(
             "Campaign Performance",
-            "Main working table for tracking campaigns, costs, FTD, qualification and final income.",
+            "Main working table for campaign analytics: spend, payout, profit, ROI and qualification.",
             campaign_rows,
             campaign_columns,
             empty_text="No campaign rows yet",
@@ -4545,9 +4644,8 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             <td class="advertiser-col" title="{escape(row.advertiser or '')}">{escape(row.advertiser or "")}</td>
             <td class="owner-col" title="{escape(row.owner_name or '')}">{escape(row.owner_name or "")}</td>
             <td class="buyer-col" title="{escape(row.buyer or '')}">{escape(row.buyer or "")}</td>
-            <td class="flow-col" title="{escape(row.flow or '')}">{escape(row.flow or "")}</td>
             <td class="code-col" title="{escape(row.code or '')}">{escape(row.code or "")}</td>
-            <td class="geo-col" title="{escape(row.geo or '')}">{escape(row.geo or "")}</td>
+            <td class="geo-col" title="{escape(geo_display_name(row.geo or ''))}">{escape(geo_display_name(row.geo or ""))}</td>
             <td class="rate-col" title="{escape(row.rate or '')}">{escape(format_plain_number_text(row.rate))}</td>
             <td class="baseline-col" title="{escape(row.baseline or '')}">{escape(format_plain_number_text(row.baseline))}</td>
             <td class="cap-col">{format_int_or_float(row.cap_value)}</td>
@@ -4607,8 +4705,10 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         return "".join(f'<option value="{escape(value)}"></option>' for value in unique)
 
     advertiser_list = build_datalist(
-        [row.advertiser for row in cabinet_rows]
-        + [row.advertiser for row in cap_rows]
+        [
+            value for value in [row.advertiser for row in cabinet_rows] + [row.advertiser for row in cap_rows]
+            if safe_text(value).strip().lower() in {"1xbet", "betmen"}
+        ]
     )
     owner_list = build_datalist(
         [row.manager_name for row in cabinet_rows]
@@ -4620,22 +4720,9 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         + [row.buyer for row in cap_rows]
     )
     geo_list = build_datalist(
-        [geo_code for row in cabinet_rows for geo_code in split_geo_tokens(row.geo_list)]
-        + [row.country for row in partner_rows]
-        + [row.geo for row in cap_rows]
-    )
-    flow_list = build_datalist(
-        [
-            " / ".join(part for part in [safe_text(row.platform), safe_text(row.manager_name), geo_code] if part)
-            for row in cabinet_rows
-            for geo_code in (split_geo_tokens(row.geo_list) or [""])
-            if any([safe_text(row.platform), safe_text(row.manager_name), geo_code])
-        ]
-        + [row.flow for row in cap_rows]
-    )
-    promo_list = build_datalist(
-        [row.sub_id for row in partner_rows]
-        + [row.promo_code for row in cap_rows]
+        [geo_display_name(geo_code) for row in cabinet_rows for geo_code in split_geo_tokens(row.geo_list)]
+        + [geo_display_name(row.country) for row in partner_rows]
+        + [geo_display_name(row.geo) for row in cap_rows]
     )
     agent_list = build_datalist([row.agent for row in cap_rows])
 
@@ -4654,32 +4741,25 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             <datalist id="capAdvertiserOptions">{advertiser_list}</datalist>
             <datalist id="capOwnerOptions">{owner_list}</datalist>
             <datalist id="capCabinetOptions">{cabinet_list}</datalist>
-            <datalist id="capFlowOptions">{flow_list}</datalist>
             <datalist id="capGeoOptions">{geo_list}</datalist>
-            <datalist id="capPromoOptions">{promo_list}</datalist>
             <datalist id="capAgentOptions">{agent_list}</datalist>
             <div class="caps-grid-2">
                 <label>Advertiser
-                    <input type="text" name="advertiser" list="capAdvertiserOptions" value="{escape(form_data.get('advertiser', ''))}" placeholder="1xBet / BetMen">
+                    <input type="text" name="advertiser" list="capAdvertiserOptions" value="{escape(form_data.get('advertiser', ''))}" placeholder="1xbet / BetMen">
                 </label>
-                <label>Owner
-                    <input type="text" name="owner_name" list="capOwnerOptions" value="{escape(form_data.get('owner_name', ''))}" placeholder="Manager / owner">
-                </label>
-            </div>
-            <div class="caps-grid-2">
-                <label>Cabinet
-                    <input type="text" name="buyer" list="capCabinetOptions" value="{escape(form_data.get('buyer', ''))}" required placeholder="Choose or type cabinet">
-                </label>
-                <label>Flow
-                    <input type="text" name="flow" list="capFlowOptions" value="{escape(form_data.get('flow', ''))}" placeholder="Platform / Manager / GEO">
+                <label>Manager
+                    <input type="text" name="owner_name" list="capOwnerOptions" value="{escape(form_data.get('owner_name', ''))}" placeholder="Manager">
                 </label>
             </div>
+            <label>Cabinet
+                <input type="text" name="buyer" list="capCabinetOptions" value="{escape(form_data.get('buyer', ''))}" required placeholder="Choose or type cabinet">
+            </label>
             <div class="caps-grid-2">
                 <label>CODE
                     <input type="text" name="code" value="{escape(form_data.get('code', ''))}">
                 </label>
                 <label>GEO
-                    <input type="text" name="geo" list="capGeoOptions" value="{escape(form_data.get('geo', ''))}" placeholder="PE / CO / CL">
+                    <input type="text" name="geo" list="capGeoOptions" value="{escape(geo_display_name(form_data.get('geo', '')))}" placeholder="Spain / Peru / Colombia">
                 </label>
             </div>
             <div class="caps-grid-2">
@@ -4700,7 +4780,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             </div>
             <div class="caps-grid-2">
                 <label>Promo Code
-                    <input type="text" name="promo_code" list="capPromoOptions" value="{escape(form_data.get('promo_code', ''))}" placeholder="Choose or type promo">
+                    <input type="text" name="promo_code" value="{escape(form_data.get('promo_code', ''))}">
                 </label>
                 <label>Agent
                     <input type="text" name="agent" list="capAgentOptions" value="{escape(form_data.get('agent', ''))}">
@@ -4733,7 +4813,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     <form method="get" action="/caps">
                         <label>Buyer<select name="buyer">{buyer_options}</select></label>
                         <label>Geo<select name="geo">{geo_options}</select></label>
-                        <label>Owner<select name="owner_name">{owner_options}</select></label>
+                        <label>Manager<select name="owner_name">{owner_options}</select></label>
                         <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="Search caps"></label>
                         <button type="submit" class="btn small-btn">Filter</button>
                         <a href="/caps" class="ghost-btn small-btn">Reset</a>
@@ -4764,9 +4844,8 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                         <tr>
                             <th class="id-col">ID</th>
                             <th class="advertiser-col">Advertiser</th>
-                            <th class="owner-col">Owner</th>
+                            <th class="owner-col">Manager</th>
                             <th class="buyer-col">Cabinet</th>
-                            <th class="flow-col">Flow</th>
                             <th class="code-col">CODE</th>
                             <th class="geo-col">GEO</th>
                             <th class="rate-col">Rate</th>
@@ -4780,7 +4859,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                             <th class="action-col">Action</th>
                         </tr>
                     </thead>
-                    <tbody>{rows_html if rows_html else '<tr><td colspan="16">No caps yet</td></tr>'}</tbody>
+                        <tbody>{rows_html if rows_html else '<tr><td colspan="15">No caps yet</td></tr>'}</tbody>
                 </table>
             </div>
         </div>
@@ -5153,15 +5232,6 @@ def tasks_page_html(current_user, rows, filter_values=None, form_data=None, succ
                 <span class="toggle-indicator" style="width:18px; height:18px; min-width:18px;"></span>
             </summary>
             <div class="upload-menu-list" style="width:min(720px, calc(100vw - 48px));">
-            <form method="post" action="/tasks/upload" enctype="multipart/form-data" class="tasks-form" style="margin-top:14px; margin-bottom:14px;">
-                <label>Task CSV Import
-                    <input type="file" name="file" accept=".csv" required>
-                </label>
-                <label>Assignee
-                    <select name="assigned_to_username" required>{assign_options}</select>
-                </label>
-                <button type="submit" class="ghost-btn">Upload</button>
-            </form>
             <form method="post" action="/tasks/save" class="tasks-form" style="margin-top:14px;">
                 <label>Assignee
                     <select name="assigned_to_username" required>{assign_options}</select>
@@ -6877,11 +6947,13 @@ def render_dashboard_page(
         </div>
     </div>
 
-    {render_dashboard_overview(overview)}
+    {render_analytics_spotlight(rows)}
 
     {render_statistic_cards(totals)}
 
     {render_statistic_dashboard(rows)}
+
+    {render_dashboard_overview(overview)}
     '''
 
     top_actions = f'<a class="small-btn" href="{export_link}">⬇ CSV</a>' if is_admin_role(user) else ""
@@ -7657,6 +7729,8 @@ async def upload_partner_report_file(
             df = read_cellxpert_uploaded_dataframe(filename, ext)
         else:
             df = read_partner_uploaded_dataframe(filename, ext)
+        if df is None or getattr(df, "empty", False):
+            return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=clean_platform, error_text="Partner file is empty."), status_code=400)
         detected_period = (
             detect_partner_period_from_dataframe(df)
             or detect_period_from_dataframe_dates(df, "Registration Date")
@@ -7672,6 +7746,8 @@ async def upload_partner_report_file(
             prefix=source_prefix,
         )
         rows = parse_partner_dataframe(df, source_name=final_source_name, cabinet_name=clean_cabinet_name, partner_platform=clean_platform)
+        if not rows:
+            return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=clean_platform, error_text="No valid player rows found in this file."), status_code=400)
         replace_partner_rows(final_source_name, rows)
         return RedirectResponse(url="/partner-report?message=Upload+saved", status_code=303)
     except Exception as exc:
