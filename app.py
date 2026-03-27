@@ -23,7 +23,8 @@ from datetime import datetime, timedelta, date
 # =========================================
 # BLOCK 1 — DATABASE
 # =========================================
-DATABASE_URL = "sqlite:///./test.db"
+RAW_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./test.db").strip()
+DATABASE_URL = RAW_DATABASE_URL.replace("postgres://", "postgresql://", 1) if RAW_DATABASE_URL.startswith("postgres://") else RAW_DATABASE_URL
 SESSION_COOKIE_NAME = "teambead_session"
 SESSION_DURATION_DAYS = 14
 DATA_UPLOAD_DIR = "./uploaded_data"
@@ -48,10 +49,18 @@ DEFAULT_USERS = [
     },
 ]
 
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
-)
+engine_kwargs = {"pool_pre_ping": True}
+if DATABASE_URL.startswith("sqlite"):
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False},
+        **engine_kwargs,
+    )
+else:
+    engine = create_engine(
+        DATABASE_URL,
+        **engine_kwargs,
+    )
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 
