@@ -2786,6 +2786,22 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 gap:10px;
                 align-items:end;
             }}
+            .cap-menu-list {{
+                width: min(560px, calc(100vw - 48px));
+                gap: 14px;
+                padding: 14px;
+                border-radius: 18px;
+            }}
+            .cap-menu-list .caps-form {{
+                gap: 10px;
+            }}
+            .cap-menu-list .caps-grid-2 {{
+                gap: 10px;
+            }}
+            .cap-menu-list .panel-subtitle {{
+                margin: 0;
+                padding-bottom: 2px;
+            }}
             .upload-menu-list label {{
                 display:grid;
                 gap:6px;
@@ -2919,10 +2935,19 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             }}
             .panel > summary::-webkit-details-marker {{ display:none; }}
             .compact-panel {{ padding: 14px 16px; }}
+            .panel.compact-panel.filters {{
+                padding: 10px 12px;
+                border-radius: 16px;
+                margin-bottom: 12px;
+            }}
+            .panel.compact-panel.filters .panel-title {{
+                font-size: 13px;
+                margin-bottom: 6px;
+            }}
             .panel-title {{ font-size: 15px; font-weight: 900; margin-bottom: 12px; }}
             .panel-subtitle {{ color: var(--muted); font-size: 13px; }}
             .toolbar-grid {{ display: grid; grid-template-columns: 1.35fr 1fr; gap: 16px; align-items: start; margin-bottom: 16px; }}
-            .upload-form, .filters form {{ display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }}
+            .upload-form, .filters form {{ display: flex; gap: 8px; flex-wrap: wrap; align-items: end; }}
             .upload-form label, .filters label {{ display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 800; color: var(--text); }}
             .upload-form input, .filters input, .filters select {{
                 min-width: 150px;
@@ -3175,35 +3200,44 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             }}
             .caps-form textarea {{ min-height: 110px; resize: vertical; }}
             .caps-grid-2 {{ display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:10px; }}
-            .caps-table {{ min-width: 1560px; table-layout: auto; width: 100%; }}
+            .caps-table {{ min-width: 1280px; table-layout: fixed; width: 100%; }}
             .caps-table th, .caps-table td {{
                 white-space: nowrap;
                 overflow: hidden;
                 text-overflow: ellipsis;
                 vertical-align: middle;
-                line-height: 1.35;
+                line-height: 1.2;
+                padding: 8px 10px;
+                font-size: 13px;
             }}
-            .caps-table .id-col {{ width: 72px; min-width: 72px; }}
-            .caps-table .advertiser-col {{ width: 120px; min-width: 120px; }}
-            .caps-table .owner-col {{ width: 110px; min-width: 110px; }}
-            .caps-table .buyer-col {{ width: 130px; min-width: 130px; }}
-            .caps-table .flow-col {{ width: 210px; min-width: 210px; }}
-            .caps-table .code-col {{ width: 90px; min-width: 90px; }}
-            .caps-table .geo-col {{ width: 96px; min-width: 96px; }}
-            .caps-table .rate-col {{ width: 88px; min-width: 88px; }}
-            .caps-table .baseline-col {{ width: 96px; min-width: 96px; }}
-            .caps-table .cap-col {{ width: 86px; min-width: 86px; }}
-            .caps-table .current-col {{ width: 112px; min-width: 112px; }}
-            .caps-table .fill-col {{ width: 132px; min-width: 132px; }}
-            .caps-table .promo-col {{ width: 118px; min-width: 118px; }}
-            .caps-table .agent-col {{ width: 110px; min-width: 110px; }}
-            .caps-table .comment-col {{ width: 220px; min-width: 220px; }}
-            .caps-table .action-col {{ width: 190px; min-width: 190px; }}
+            .caps-table thead th {{
+                font-size: 12px;
+                padding: 8px 10px;
+            }}
+            .caps-table tbody tr {{ height: 42px; }}
+            .caps-table .id-col {{ width: 54px; min-width: 54px; }}
+            .caps-table .advertiser-col {{ width: 92px; min-width: 92px; }}
+            .caps-table .owner-col {{ width: 90px; min-width: 90px; }}
+            .caps-table .buyer-col {{ width: 108px; min-width: 108px; }}
+            .caps-table .flow-col {{ width: 148px; min-width: 148px; }}
+            .caps-table .code-col {{ width: 64px; min-width: 64px; }}
+            .caps-table .geo-col {{ width: 84px; min-width: 84px; }}
+            .caps-table .rate-col {{ width: 66px; min-width: 66px; }}
+            .caps-table .baseline-col {{ width: 76px; min-width: 76px; }}
+            .caps-table .cap-col {{ width: 64px; min-width: 64px; }}
+            .caps-table .current-col {{ width: 90px; min-width: 90px; }}
+            .caps-table .fill-col {{ width: 108px; min-width: 108px; }}
+            .caps-table .promo-col {{ width: 98px; min-width: 98px; }}
+            .caps-table .agent-col {{ width: 84px; min-width: 84px; }}
+            .caps-table .comment-col {{ width: 122px; min-width: 122px; }}
+            .caps-table .action-col {{ width: 148px; min-width: 148px; }}
             .progress-shell {{
-                min-width: 130px;
+                min-width: 0;
                 display:grid;
-                gap:6px;
+                gap:4px;
+                font-size: 12px;
             }}
+            .progress-bar {{ height: 8px; }}
             .confirm-overlay {{
                 position: fixed;
                 inset: 0;
@@ -3829,19 +3863,20 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     form_title = "Edit Cap" if current_edit_id else "Add Cap"
     submit_label = "Save" if current_edit_id else "Add Cap"
     create_panel = f"""
-    <details class="panel" {'open' if current_edit_id else ''}>
-        <summary class="panel-title" style="cursor:pointer; list-style:none; display:flex; align-items:center; justify-content:space-between;">
+    <details class="upload-menu upload-menu-right" {'open' if current_edit_id else ''}>
+        <summary class="btn small-btn" style="min-width:136px;">
             <span>{form_title}</span>
-            <span class="btn toggle-indicator"></span>
+            <span class="toggle-indicator" style="width:18px; height:18px; min-width:18px;"></span>
         </summary>
-        <div class="panel-subtitle" style="margin-top:10px;">Advertiser caps and manual updates.</div>
-        <form method="post" action="/caps/upload" enctype="multipart/form-data" class="caps-form" style="margin-top:14px; margin-bottom:14px;">
-            <label>Upload caps CSV / XLSX
-                <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
-            </label>
-            <button type="submit" class="ghost-btn">Upload</button>
-        </form>
-        <form method="post" action="/caps/save" class="caps-form" style="margin-top:14px;">
+        <div class="upload-menu-list cap-menu-list">
+            <div class="panel-subtitle">Advertiser caps and manual updates.</div>
+            <form method="post" action="/caps/upload" enctype="multipart/form-data" class="caps-form">
+                <label>Upload caps CSV / XLSX
+                    <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
+                </label>
+                <button type="submit" class="ghost-btn">Upload</button>
+            </form>
+            <form method="post" action="/caps/save" class="caps-form">
             <input type="hidden" name="edit_id" value="{escape(current_edit_id)}">
             <div class="caps-grid-2">
                 <label>Advertiser
@@ -3904,69 +3939,69 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 <button type="submit" class="btn">{submit_label}</button>
                 <a href="/caps" class="ghost-btn">Reset</a>
             </div>
-        </form>
+            </form>
+        </div>
     </details>
     """
 
     content = f"""
     {message_html}
-    <div class="caps-layout">
-        <div>{create_panel}</div>
-
-        <div>
-            <div class="panel compact-panel filters">
-                <div class="panel-title">Filters</div>
-                <form method="get" action="/caps">
+    <div>
+        <div class="panel compact-panel filters">
+            <div class="controls-line" style="margin-bottom:0;">
+                <div class="panel-title" style="margin-bottom:0;">Filters</div>
+                <div>{create_panel}</div>
+            </div>
+            <form method="get" action="/caps" style="margin-top:12px;">
                     <label>Buyer<select name="buyer">{buyer_options}</select></label>
                     <label>Geo<select name="geo">{geo_options}</select></label>
                     <label>Owner<select name="owner_name">{owner_options}</select></label>
                     <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="Search caps"></label>
                     <button type="submit" class="btn small-btn">Filter</button>
                     <a href="/caps" class="ghost-btn small-btn">Reset</a>
-                </form>
-            </div>
+            </form>
+        </div>
 
-            <div class="panel compact-panel">
-                <div class="stats-grid">
-                    <div class="stat-card"><div class="name">Caps</div><div class="value">{active_caps}</div></div>
-                    <div class="stat-card"><div class="name">Cap Total</div><div class="value">{format_int_or_float(total_cap)}</div></div>
-                    <div class="stat-card"><div class="name">Current FTD</div><div class="value">{format_int_or_float(total_current)}</div></div>
-                    <div class="stat-card"><div class="name">Fill Avg</div><div class="value">{fill_avg:.0f}%</div></div>
+        <div class="panel compact-panel">
+            <div class="stats-grid">
+                <div class="stat-card"><div class="name">Caps</div><div class="value">{active_caps}</div></div>
+                <div class="stat-card"><div class="name">Cap Total</div><div class="value">{format_int_or_float(total_cap)}</div></div>
+                <div class="stat-card"><div class="name">Current FTD</div><div class="value">{format_int_or_float(total_current)}</div></div>
+                <div class="stat-card"><div class="name">Fill Avg</div><div class="value">{fill_avg:.0f}%</div></div>
+            </div>
+        </div>
+
+        <div class="panel compact-panel">
+            <div class="controls-line">
+                <div>
+                    <div class="panel-title" style="margin-bottom:4px;">Caps Table</div>
+                    <div class="panel-subtitle">Advertiser caps, promo codes and current load.</div>
                 </div>
             </div>
-
-            <div class="panel compact-panel">
-                <div class="controls-line">
-                    <div>
-                        <div class="panel-title" style="margin-bottom:4px;">Caps Table</div>
-                        <div class="panel-subtitle">Advertiser caps, promo codes and current load.</div>
-                    </div>
-                </div>
-                <div class="table-wrap">
-                    <table class="caps-table">
-                        <thead>
-                            <tr>
-                                <th class="id-col">ID</th>
-                                <th class="advertiser-col">Advertiser</th>
-                                <th class="owner-col">Owner</th>
-                                <th class="buyer-col">Cabinet</th>
-                                <th class="flow-col">Flow</th>
-                                <th class="code-col">CODE</th>
-                                <th class="geo-col">GEO</th>
-                                <th class="rate-col">Rate</th>
-                                <th class="baseline-col">Baseline</th>
-                                <th class="cap-col">Cap</th>
-                                <th class="current-col">Current FTD</th>
-                                <th class="fill-col">Fill</th>
-                                <th class="promo-col">Promo Code</th>
-                                <th class="agent-col">Agent</th>
-                                <th class="comment-col">Comments</th>
-                                <th class="action-col">Action</th>
-                            </tr>
-                        </thead>
-                        <tbody>{rows_html if rows_html else '<tr><td colspan="16">No caps yet</td></tr>'}</tbody>
-                    </table>
-                </div>
+            <div class="table-wrap">
+                <table class="caps-table">
+                    <thead>
+                        <tr>
+                            <th class="id-col">ID</th>
+                            <th class="advertiser-col">Advertiser</th>
+                            <th class="owner-col">Owner</th>
+                            <th class="buyer-col">Cabinet</th>
+                            <th class="flow-col">Flow</th>
+                            <th class="code-col">CODE</th>
+                            <th class="geo-col">GEO</th>
+                            <th class="rate-col">Rate</th>
+                            <th class="baseline-col">Baseline</th>
+                            <th class="cap-col">Cap</th>
+                            <th class="current-col">Current FTD</th>
+                            <th class="fill-col">Fill</th>
+                            <th class="promo-col">Promo Code</th>
+                            <th class="agent-col">Agent</th>
+                            <th class="comment-col">Comments</th>
+                            <th class="action-col">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>{rows_html if rows_html else '<tr><td colspan="16">No caps yet</td></tr>'}</tbody>
+                </table>
             </div>
         </div>
     </div>
