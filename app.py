@@ -2,7 +2,7 @@ from fastapi import FastAPI, UploadFile, File, Query, Form, Request, HTTPExcepti
 from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse, Response, FileResponse
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 import pandas as pd
 import shutil
@@ -189,6 +189,7 @@ class PartnerRow(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     source_name = Column(String, default="")
+    cabinet_name = Column(String, default="")
     sub_id = Column(String, index=True, default="")
     player_id = Column(String, default="")
     registration_date = Column(String, default="")
@@ -199,6 +200,18 @@ class PartnerRow(Base):
     cpa_amount = Column(Float, default=0)
     hold_time = Column(String, default="")
     blocked = Column(String, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CabinetRow(Base):
+    __tablename__ = "cabinet_rows"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True, default="")
+    manager_name = Column(String, default="")
+    wallet = Column(String, default="")
+    comments = Column(String, default="")
+    status = Column(String, default="Active")
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -421,6 +434,8 @@ def can_access_page(user, page_key: str) -> bool:
         "users": {"superadmin", "admin"},
         "finance": {"superadmin"},
         "caps": {"superadmin", "admin"},
+        "partner": {"superadmin", "admin"},
+        "cabinets": {"superadmin", "admin"},
         "chatterfy": {"superadmin", "admin"},
         "holdwager": {"superadmin", "admin"},
     }
@@ -478,8 +493,8 @@ def login_page_html(error_text: str = ""):
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <link rel="icon" type="image/jpeg" href="/favicon.jpg?v=2">
-        <link rel="shortcut icon" href="/favicon.ico?v=2">
+        <link rel="icon" type="image/jpeg" href="/favicon.jpg?v=3">
+        <link rel="shortcut icon" href="/favicon.ico?v=3">
         <title>TEAMbead CRM — Login</title>
         <style>
             :root {{
@@ -1183,6 +1198,34 @@ def get_tasks_for_user(current_user, status_filter="", assignee_filter="", searc
 
 def ensure_partner_table():
     Base.metadata.create_all(bind=engine, tables=[PartnerRow.__table__])
+    if DATABASE_URL.startswith("sqlite"):
+        with engine.begin() as conn:
+            columns = [row[1] for row in conn.execute(text("PRAGMA table_info(partner_rows)")).fetchall()]
+            if "cabinet_name" not in columns:
+                conn.execute(text("ALTER TABLE partner_rows ADD COLUMN cabinet_name VARCHAR DEFAULT ''"))
+
+
+def ensure_cabinet_table():
+    Base.metadata.create_all(bind=engine, tables=[CabinetRow.__table__])
+    if DATABASE_URL.startswith("sqlite"):
+        with engine.begin() as conn:
+            columns = [row[1] for row in conn.execute(text("PRAGMA table_info(cabinet_rows)")).fetchall()]
+            if "name" not in columns:
+                conn.execute(text("ALTER TABLE cabinet_rows ADD COLUMN name VARCHAR DEFAULT ''"))
+                if "cabinet_name" in columns:
+                    conn.execute(text("UPDATE cabinet_rows SET name = cabinet_name WHERE COALESCE(name, '') = ''"))
+            if "manager_name" not in columns:
+                conn.execute(text("ALTER TABLE cabinet_rows ADD COLUMN manager_name VARCHAR DEFAULT ''"))
+            if "wallet" not in columns:
+                conn.execute(text("ALTER TABLE cabinet_rows ADD COLUMN wallet VARCHAR DEFAULT ''"))
+                if "wallets" in columns:
+                    conn.execute(text("UPDATE cabinet_rows SET wallet = wallets WHERE COALESCE(wallet, '') = ''"))
+            if "comments" not in columns:
+                conn.execute(text("ALTER TABLE cabinet_rows ADD COLUMN comments VARCHAR DEFAULT ''"))
+            if "status" not in columns:
+                conn.execute(text("ALTER TABLE cabinet_rows ADD COLUMN status VARCHAR DEFAULT 'Active'"))
+                if "is_active" in columns:
+                    conn.execute(text("UPDATE cabinet_rows SET status = CASE WHEN is_active = 1 THEN 'Active' ELSE 'Archived' END WHERE COALESCE(status, '') = ''"))
 
 
 def ensure_chatterfy_table():
@@ -1268,7 +1311,7 @@ def normalize_partner_period(date_start: str = "", date_end: str = ""):
             pass
     return get_half_month_period()
 
-def parse_partner_dataframe(df, source_name=""):
+def parse_partner_dataframe(df, source_name="", cabinet_name=""):
     records = []
     for _, row in df.iterrows():
         sub_id = safe_text(row.get("SubId"))
@@ -1285,6 +1328,7 @@ def parse_partner_dataframe(df, source_name=""):
         cpa_amount = safe_number(row.get("CPA"))
         records.append(PartnerRow(
             source_name=source_name,
+            cabinet_name=safe_text(cabinet_name),
             sub_id=sub_id,
             player_id=player_id,
             registration_date=safe_text(row.get("Дата регистрации")),
@@ -1297,6 +1341,86 @@ def parse_partner_dataframe(df, source_name=""):
             blocked=safe_text(row.get("Заблокирован")),
         ))
     return records
+
+
+def detect_partner_header_index(df) -> int:
+    preview_limit = min(len(df.index), 15)
+    for idx in range(preview_limit):
+        row_values = [safe_text(value).strip().lower() for value in df.iloc[idx].tolist()]
+        if "subid" in row_values and any("игрок" in value for value in row_values):
+            return idx
+    return 0
+
+
+def read_partner_uploaded_dataframe(path: str, ext: str):
+    if ext in [".xlsx", ".xls"]:
+        raw_df = pd.read_excel(path, header=None)
+    else:
+        try:
+            raw_df = pd.read_csv(path, header=None)
+        except Exception:
+            raw_df = pd.read_csv(path, header=None, sep=";")
+
+    header_index = detect_partner_header_index(raw_df)
+    headers = [safe_text(value) for value in raw_df.iloc[header_index].tolist()]
+    data_df = raw_df.iloc[header_index + 1 :].copy()
+    data_df.columns = headers
+    data_df = data_df.reset_index(drop=True)
+    return data_df
+
+
+def get_cabinet_rows(search="", status=""):
+    ensure_cabinet_table()
+    db = SessionLocal()
+    try:
+        rows = db.query(CabinetRow).order_by(CabinetRow.name.asc(), CabinetRow.id.asc()).all()
+    finally:
+        db.close()
+
+    search_lower = safe_text(search).lower()
+    filtered = []
+    for row in rows:
+        if status and safe_text(row.status) != status:
+            continue
+        if search_lower:
+            haystack = " | ".join([
+                row.name or "",
+                row.manager_name or "",
+                row.wallet or "",
+                row.comments or "",
+                row.status or "",
+            ]).lower()
+            if search_lower not in haystack:
+                continue
+        filtered.append(row)
+    return filtered
+
+
+def get_cabinet_names(active_only=False):
+    rows = get_cabinet_rows()
+    names = []
+    for row in rows:
+        if active_only and safe_text(row.status).lower() == "archived":
+            continue
+        name = safe_text(row.name)
+        if name:
+            names.append(name)
+    return names
+
+
+def get_partner_cabinet_options():
+    ensure_partner_table()
+    db = SessionLocal()
+    try:
+        values = db.query(PartnerRow.cabinet_name).distinct().all()
+    finally:
+        db.close()
+    result = []
+    for item in values:
+        value = safe_text(item[0])
+        if value:
+            result.append(value)
+    return sorted(set(result))
 
 
 def replace_partner_rows(source_name, rows_to_insert):
@@ -1889,6 +2013,8 @@ def sidebar_html(active_page, current_user=None):
         ]),
         ("finance", "/finance", "💸", "Finance", []),
         ("caps", "/caps", "🔶", "Caps", []),
+        ("partner", "/partner-report", "🎰", "1xBet", []),
+        ("cabinets", "/cabinets", "🗂", "Cabinets", []),
         ("chatterfy", "/chatterfy", "💬", "Chatterfy", []),
         ("holdwager", "/hold-wager", "🎯", "Hold/Wager", []),
     ]
@@ -1965,8 +2091,8 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <link rel="icon" type="image/jpeg" href="/favicon.jpg?v=2">
-        <link rel="shortcut icon" href="/favicon.ico?v=2">
+        <link rel="icon" type="image/jpeg" href="/favicon.jpg?v=3">
+        <link rel="shortcut icon" href="/favicon.ico?v=3">
         <title>{escape(title)}</title>
         <style>
             :root {{
@@ -2160,6 +2286,10 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 list-style:none;
             }}
             .upload-menu > summary::-webkit-details-marker {{ display:none; }}
+            .upload-menu[open] > summary {{
+                background: linear-gradient(90deg, rgba(37,99,235,0.95), rgba(56,189,248,0.92));
+                color: #ffffff;
+            }}
             .upload-menu-list {{
                 display:grid;
                 gap:12px;
@@ -2196,6 +2326,31 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 color: var(--text);
                 padding: 11px 12px;
                 outline:none;
+            }}
+            .upload-menu-list select,
+            .upload-menu-list textarea {{
+                width:100%;
+                min-width:0;
+                border-radius:12px;
+                border:1px solid var(--border);
+                background: var(--panel-3);
+                color: var(--text);
+                padding: 11px 12px;
+                outline:none;
+            }}
+            .upload-menu-list textarea {{
+                min-height: 96px;
+                resize: vertical;
+            }}
+            input[type="file"]::file-selector-button {{
+                border: 1px solid var(--border);
+                background: var(--panel-2);
+                color: var(--text);
+                border-radius: 10px;
+                padding: 8px 10px;
+                margin-right: 10px;
+                font-weight: 800;
+                cursor: pointer;
             }}
             .theme-menu-list {{
                 display:grid;
@@ -3860,6 +4015,255 @@ def chatterfy_page_html(
     return page_shell("Chatterfy", content, active_page="chatterfy", current_user=current_user, extra_scripts=extra_scripts)
 
 
+def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, success_text="", error_text=""):
+    filter_values = filter_values or {}
+    form_data = form_data or {}
+    status_values = ["Active", "Paused", "Archived"]
+    status_options = make_options(status_values, filter_values.get("status", ""))
+    form_status_options = make_options(status_values, form_data.get("status", "Active") or "Active")
+    open_attr = "open" if form_data.get("edit_id") or form_data.get("name") else ""
+
+    rows_html = ""
+    for row in rows:
+        rows_html += f"""
+        <tr>
+            <td>{escape(str(row.id))}</td>
+            <td>{escape(row.name or "")}</td>
+            <td>{escape(row.manager_name or "")}</td>
+            <td style="white-space:normal; min-width:220px;">{escape(row.wallet or "")}</td>
+            <td>{escape(row.status or "")}</td>
+            <td style="white-space:normal; min-width:260px;">{escape(row.comments or "")}</td>
+            <td>
+                <div style="display:flex; gap:8px;">
+                    <form method="get" action="/cabinets">
+                        <input type="hidden" name="edit" value="{row.id}">
+                        <button type="submit" class="ghost-btn small-btn">Edit</button>
+                    </form>
+                    <form method="post" action="/cabinets/delete" onsubmit="return confirm('Delete this cabinet?');">
+                        <input type="hidden" name="cabinet_id" value="{row.id}">
+                        <button type="submit" class="ghost-btn small-btn">Delete</button>
+                    </form>
+                </div>
+            </td>
+        </tr>
+        """
+
+    message_html = ""
+    if success_text:
+        message_html += f'<div class="notice">{escape(success_text)}</div>'
+    if error_text:
+        message_html += f'<div class="notice notice-danger">{escape(error_text)}</div>'
+
+    content = f"""
+    {message_html}
+
+    <div class="panel compact-panel">
+        <div class="controls-line">
+            <div>
+                <div class="panel-title" style="margin-bottom:4px;">Cabinets</div>
+                <div class="panel-subtitle">Manage 1xBet cabinets, linked wallets and notes.</div>
+            </div>
+            <div style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; justify-content:flex-end;">
+                <details class="upload-menu" {open_attr}>
+                    <summary class="btn toggle-indicator"></summary>
+                    <div class="upload-menu-list" style="width:520px; max-width:min(520px, calc(100vw - 48px));">
+                        <form method="post" action="/cabinets/save">
+                            <input type="hidden" name="edit_id" value="{escape(form_data.get('edit_id', ''))}">
+                            <label>Name
+                                <input type="text" name="name" value="{escape(form_data.get('name', ''))}" required placeholder="Example: 1xBet Main 01">
+                            </label>
+                            <label>Manager
+                                <input type="text" name="manager_name" value="{escape(form_data.get('manager_name', ''))}" placeholder="Example: Maria">
+                            </label>
+                            <label>Wallets
+                                <textarea name="wallet" placeholder="TRC20 wallet, notes or several wallets">{escape(form_data.get('wallet', ''))}</textarea>
+                            </label>
+                            <label>Status
+                                <select name="status">{form_status_options}</select>
+                            </label>
+                            <label>Comments
+                                <textarea name="comments" placeholder="Anything important about this cabinet">{escape(form_data.get('comments', ''))}</textarea>
+                            </label>
+                            <div style="display:flex; gap:10px; justify-content:flex-end;">
+                                <a href="/cabinets" class="ghost-btn small-btn">Reset</a>
+                                <button type="submit" class="btn small-btn">Save</button>
+                            </div>
+                        </form>
+                    </div>
+                </details>
+                <div class="panel compact-panel filters" style="margin:0; min-width:460px;">
+                    <form method="get" action="/cabinets" style="justify-content:flex-end;">
+                        <label>Status<select name="status">{status_options}</select></label>
+                        <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="cabinet, wallet, manager"></label>
+                        <button type="submit" class="btn small-btn">Filter</button>
+                        <a href="/cabinets" class="ghost-btn small-btn">Reset</a>
+                    </form>
+                </div>
+            </div>
+        </div>
+        <div class="table-wrap">
+            <table style="min-width:1200px;">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Name</th>
+                        <th>Manager</th>
+                        <th>Wallets</th>
+                        <th>Status</th>
+                        <th>Comments</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="7">No cabinets yet</td></tr>'}</tbody>
+            </table>
+        </div>
+    </div>
+    """
+    return page_shell("Cabinets", content, active_page="cabinets", current_user=current_user)
+
+
+def partner_report_page_html(
+    current_user,
+    rows,
+    source_name="",
+    cabinet_name="",
+    country="",
+    search="",
+    sort_by="id",
+    order="desc",
+    success_text="",
+    error_text="",
+):
+    all_sources = get_partner_period_options()
+    all_cabinets = sorted(set(get_cabinet_names() + get_partner_cabinet_options()))
+    upload_cabinets = get_cabinet_names(active_only=True) or all_cabinets
+    all_countries = sorted({safe_text(row.country) for row in get_partner_rows_by_period("") if safe_text(row.country)})
+    source_options = make_options(all_sources, source_name)
+    cabinet_options = make_options(all_cabinets, cabinet_name)
+    upload_cabinet_options = "".join([
+        f'<option value="{escape(name)}">{escape(name)}</option>'
+        for name in upload_cabinets
+    ]) or '<option value="">No cabinets yet</option>'
+    country_options = make_options(all_countries, country)
+    totals = aggregate_partner_totals(rows)
+
+    rows_html = ""
+    for row in rows:
+        rows_html += f"""
+        <tr>
+            <td>{escape(row.registration_date or "")}</td>
+            <td>{escape(row.cabinet_name or "")}</td>
+            <td>{escape(row.sub_id or "")}</td>
+            <td>{escape(row.player_id or "")}</td>
+            <td>{escape(row.country or "")}</td>
+            <td>${safe_number(row.deposit_amount):,.2f}</td>
+            <td>${safe_number(row.bet_amount):,.2f}</td>
+            <td>${safe_number(row.company_income):,.2f}</td>
+            <td>${safe_number(row.cpa_amount):,.2f}</td>
+            <td>{escape(row.hold_time or "")}</td>
+            <td>{escape(row.blocked or "")}</td>
+            <td>{escape(row.source_name or "")}</td>
+        </tr>
+        """
+
+    message_html = ""
+    if success_text:
+        message_html += f'<div class="notice">{escape(success_text)}</div>'
+    if error_text:
+        message_html += f'<div class="notice notice-danger">{escape(error_text)}</div>'
+
+    def header_link(field, label):
+        next_order = "asc"
+        arrow = ""
+        if sort_by == field:
+            if order == "asc":
+                next_order = "desc"
+                arrow = " ↑"
+            else:
+                arrow = " ↓"
+        qs = build_query_string(
+            source_name=source_name,
+            cabinet_name=cabinet_name,
+            country=country,
+            search=search,
+            sort_by=field,
+            order=next_order,
+        )
+        return f'<a href="/partner-report?{qs}">{escape(label)}{arrow}</a>'
+
+    content = f"""
+    {message_html}
+
+    <div class="panel compact-panel">
+        <div class="controls-line">
+            <div>
+                <div class="panel-title" style="margin-bottom:4px;">1xBet Report</div>
+                <div class="panel-subtitle">Manual uploads by cabinet. These rows feed the shared statistic layer.</div>
+            </div>
+            <div style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; justify-content:flex-end;">
+                <details class="upload-menu">
+                    <summary class="btn toggle-indicator"></summary>
+                    <div class="upload-menu-list" style="width:380px; max-width:min(380px, calc(100vw - 48px));">
+                        <form method="post" action="/partner-report/upload" enctype="multipart/form-data">
+                            <label>Cabinet
+                                <select name="cabinet_name" required>{upload_cabinet_options}</select>
+                            </label>
+                            <label>Partner File
+                                <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
+                            </label>
+                            <button type="submit" class="btn small-btn">Upload</button>
+                        </form>
+                    </div>
+                </details>
+                <div class="panel compact-panel filters" style="margin:0; min-width:720px;">
+                    <form method="get" action="/partner-report" style="justify-content:flex-end;">
+                        <label>Upload<select name="source_name">{source_options}</select></label>
+                        <label>Cabinet<select name="cabinet_name">{cabinet_options}</select></label>
+                        <label>Country<select name="country">{country_options}</select></label>
+                        <label>Search<input type="text" name="search" value="{escape(search)}" placeholder="subid, player, source"></label>
+                        <button type="submit" class="btn small-btn">Filter</button>
+                        <a href="/partner-report" class="ghost-btn small-btn">Reset</a>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="stats-grid" style="grid-template-columns:repeat(5, minmax(120px, 1fr)); margin-bottom:16px;">
+        <div class="stat-card"><div class="name">Players</div><div class="value">{totals['players']}</div></div>
+        <div class="stat-card"><div class="name">FTD</div><div class="value">{totals['ftd_count']}</div></div>
+        <div class="stat-card"><div class="name">Deposits</div><div class="value">${totals['deposits']:,.2f}</div></div>
+        <div class="stat-card"><div class="name">Income</div><div class="value">${totals['income']:,.2f}</div></div>
+        <div class="stat-card"><div class="name">CPA</div><div class="value">${totals['cpa']:,.2f}</div></div>
+    </div>
+
+    <div class="panel compact-panel">
+        <div class="table-wrap">
+            <table style="min-width:1500px;">
+                <thead>
+                    <tr>
+                        <th>{header_link('registration_date', 'Registration')}</th>
+                        <th>{header_link('cabinet_name', 'Cabinet')}</th>
+                        <th>{header_link('sub_id', 'SubId')}</th>
+                        <th>{header_link('player_id', 'Player ID')}</th>
+                        <th>{header_link('country', 'Country')}</th>
+                        <th>{header_link('deposit_amount', 'Deposit')}</th>
+                        <th>{header_link('bet_amount', 'Bet')}</th>
+                        <th>{header_link('company_income', 'Income')}</th>
+                        <th>{header_link('cpa_amount', 'CPA')}</th>
+                        <th>{header_link('hold_time', 'Hold')}</th>
+                        <th>{header_link('blocked', 'Blocked')}</th>
+                        <th>{header_link('source_name', 'Upload')}</th>
+                    </tr>
+                </thead>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="12">No partner rows yet</td></tr>'}</tbody>
+            </table>
+        </div>
+    </div>
+    """
+    return page_shell("1xBet Report", content, active_page="partner", current_user=current_user)
+
+
 # =========================================
 # BLOCK 7.5 — USERS
 # =========================================
@@ -4177,7 +4581,7 @@ async def upload_file(request: Request, buyer: str = Form(...), file: UploadFile
 
 
 @app.post("/upload/partner")
-async def upload_partner_file(request: Request, file: UploadFile = File(...)):
+async def upload_partner_file(request: Request, file: UploadFile = File(...), cabinet_name: str = Form(default="")):
     user = get_current_user(request)
     if not user:
         return auth_redirect_response()
@@ -4189,12 +4593,15 @@ async def upload_partner_file(request: Request, file: UploadFile = File(...)):
     try:
         with open(filename, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-        if ext in [".xlsx", ".xls"]:
-            df = pd.read_excel(filename, skiprows=6)
-        else:
-            df = pd.read_csv(filename, skiprows=6)
-        replace_partner_rows(original_name, parse_partner_dataframe(df, source_name=original_name))
-        return RedirectResponse(url="/hierarchy", status_code=303)
+        df = read_partner_uploaded_dataframe(filename, ext)
+        clean_cabinet_name = safe_text(cabinet_name)
+        source_name = original_name if not clean_cabinet_name else build_partner_source_name(
+            (detect_partner_period_from_dataframe(df) or get_half_month_period())["date_start"],
+            (detect_partner_period_from_dataframe(df) or get_half_month_period())["date_end"],
+            prefix=clean_cabinet_name.replace("|", "/"),
+        )
+        replace_partner_rows(source_name, parse_partner_dataframe(df, source_name=source_name, cabinet_name=clean_cabinet_name))
+        return RedirectResponse(url="/partner-report?message=Upload+saved", status_code=303)
     finally:
         if os.path.exists(filename):
             os.remove(filename)
@@ -5071,6 +5478,7 @@ async def api_partner_import(
     request: Request,
     file: UploadFile = File(...),
     source_name: str = Form(default="partner_players"),
+    cabinet_name: str = Form(default=""),
     date_start: str = Form(default=""),
     date_end: str = Form(default=""),
     period_mode: str = Form(default="half_month"),
@@ -5118,7 +5526,7 @@ async def api_partner_import(
             prefix=safe_text(source_name) or "partner_players",
         )
 
-        rows = parse_partner_dataframe(df, source_name=final_source_name)
+        rows = parse_partner_dataframe(df, source_name=final_source_name, cabinet_name=cabinet_name)
         replace_partner_rows(final_source_name, rows)
 
         return {
@@ -5128,10 +5536,223 @@ async def api_partner_import(
             "date_start": period["date_start"],
             "date_end": period["date_end"],
             "period_label": period["period_label"],
+            "cabinet_name": cabinet_name,
             "stored_file": temp_path,
         }
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Не удалось обработать файл партнера: {exc}")
+
+
+@app.get("/cabinets", response_class=HTMLResponse)
+def cabinets_page(
+    request: Request,
+    search: str = Query(default=""),
+    status: str = Query(default=""),
+    edit: str = Query(default=""),
+    message: str = Query(default=""),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "cabinets")
+    rows = get_cabinet_rows(search=search, status=status)
+    form_data = {}
+    if edit:
+        ensure_cabinet_table()
+        db = SessionLocal()
+        try:
+            item = db.query(CabinetRow).filter(CabinetRow.id == safe_number(edit)).first()
+            if item:
+                form_data = {
+                    "edit_id": str(item.id),
+                    "name": item.name or "",
+                    "manager_name": item.manager_name or "",
+                    "wallet": item.wallet or "",
+                    "comments": item.comments or "",
+                    "status": item.status or "Active",
+                }
+        finally:
+            db.close()
+    return cabinets_page_html(
+        user,
+        rows,
+        filter_values={"search": search, "status": status},
+        form_data=form_data,
+        success_text=message,
+    )
+
+
+@app.post("/cabinets/save")
+def save_cabinet(
+    request: Request,
+    edit_id: str = Form(default=""),
+    name: str = Form(default=""),
+    manager_name: str = Form(default=""),
+    wallet: str = Form(default=""),
+    comments: str = Form(default=""),
+    status: str = Form(default="Active"),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "cabinets")
+    ensure_cabinet_table()
+
+    clean_name = safe_text(name)
+    form_data = {
+        "edit_id": edit_id,
+        "name": name,
+        "manager_name": manager_name,
+        "wallet": wallet,
+        "comments": comments,
+        "status": status or "Active",
+    }
+    if not clean_name:
+        return HTMLResponse(cabinets_page_html(user, get_cabinet_rows(), form_data=form_data, error_text="Cabinet name is required."), status_code=400)
+
+    db = SessionLocal()
+    try:
+        duplicate = db.query(CabinetRow).filter(CabinetRow.name == clean_name)
+        if edit_id:
+            duplicate = duplicate.filter(CabinetRow.id != safe_number(edit_id))
+        if duplicate.first():
+            return HTMLResponse(cabinets_page_html(user, get_cabinet_rows(), form_data=form_data, error_text="Cabinet with this name already exists."), status_code=400)
+
+        item = db.query(CabinetRow).filter(CabinetRow.id == safe_number(edit_id)).first() if edit_id else None
+        if not item:
+            item = CabinetRow()
+            db.add(item)
+        item.name = clean_name
+        item.manager_name = safe_text(manager_name)
+        item.wallet = safe_text(wallet)
+        item.comments = safe_text(comments)
+        item.status = safe_text(status) or "Active"
+        db.commit()
+    finally:
+        db.close()
+    return RedirectResponse(url="/cabinets?message=Cabinet saved", status_code=303)
+
+
+@app.post("/cabinets/delete")
+def delete_cabinet(request: Request, cabinet_id: str = Form(...)):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "cabinets")
+    ensure_cabinet_table()
+    db = SessionLocal()
+    try:
+        db.query(CabinetRow).filter(CabinetRow.id == safe_number(cabinet_id)).delete()
+        db.commit()
+    finally:
+        db.close()
+    return RedirectResponse(url="/cabinets?message=Cabinet deleted", status_code=303)
+
+
+@app.get("/partner-report", response_class=HTMLResponse)
+def partner_report_page(
+    request: Request,
+    source_name: str = Query(default=""),
+    cabinet_name: str = Query(default=""),
+    country: str = Query(default=""),
+    search: str = Query(default=""),
+    sort_by: str = Query(default="id"),
+    order: str = Query(default="desc"),
+    message: str = Query(default=""),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "partner")
+    rows = get_partner_rows_by_period(source_name)
+
+    search_lower = safe_text(search).lower()
+    filtered = []
+    for row in rows:
+        if cabinet_name and safe_text(row.cabinet_name) != cabinet_name:
+            continue
+        if country and safe_text(row.country) != country:
+            continue
+        if search_lower:
+            haystack = " | ".join([
+                row.sub_id or "",
+                row.player_id or "",
+                row.country or "",
+                row.source_name or "",
+                row.cabinet_name or "",
+                row.registration_date or "",
+            ]).lower()
+            if search_lower not in haystack:
+                continue
+        filtered.append(row)
+
+    reverse = order != "asc"
+    numeric_fields = {"deposit_amount", "bet_amount", "company_income", "cpa_amount"}
+
+    def sort_value(row):
+        value = getattr(row, sort_by, "")
+        if sort_by in numeric_fields:
+            return safe_number(value)
+        if sort_by == "id":
+            return safe_number(row.id)
+        return safe_text(value).lower()
+
+    filtered.sort(key=sort_value, reverse=reverse)
+    return partner_report_page_html(
+        user,
+        filtered,
+        source_name=source_name,
+        cabinet_name=cabinet_name,
+        country=country,
+        search=search,
+        sort_by=sort_by,
+        order=order,
+        success_text=message,
+    )
+
+
+@app.post("/partner-report/upload")
+async def upload_partner_report_file(
+    request: Request,
+    cabinet_name: str = Form(default=""),
+    file: UploadFile = File(...),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "partner")
+    ensure_partner_table()
+    ensure_cabinet_table()
+
+    clean_cabinet_name = safe_text(cabinet_name)
+    if not clean_cabinet_name:
+        return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), error_text="Choose a cabinet before upload."), status_code=400)
+
+    original_name = file.filename or "partner_report.xlsx"
+    ext = os.path.splitext(original_name)[1].lower() or ".xlsx"
+    filename = f"temp_partner_manual_{uuid.uuid4()}{ext}"
+    try:
+        with open(filename, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        df = read_partner_uploaded_dataframe(filename, ext)
+        detected_period = detect_partner_period_from_dataframe(df) or get_half_month_period()
+        source_prefix = clean_cabinet_name.replace("|", "/")
+        final_source_name = build_partner_source_name(
+            detected_period["date_start"],
+            detected_period["date_end"],
+            prefix=source_prefix,
+        )
+        rows = parse_partner_dataframe(df, source_name=final_source_name, cabinet_name=clean_cabinet_name)
+        replace_partner_rows(final_source_name, rows)
+        return RedirectResponse(url="/partner-report?message=Upload+saved", status_code=303)
+    except Exception as exc:
+        return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), error_text=f"Could not process partner file: {exc}"), status_code=400)
+    finally:
+        if os.path.exists(filename):
+            os.remove(filename)
+
+
 @app.get("/chatterfy", response_class=HTMLResponse)
 def chatterfy_page(
     request: Request,
