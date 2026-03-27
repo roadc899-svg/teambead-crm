@@ -4368,6 +4368,7 @@ def run_onexbet_parser(request: Request):
             status_code=303,
         )
 @app.get("/1xbet-report", response_class=HTMLResponse)
+@app.get("/1xbet-report", response_class=HTMLResponse)
 def onexbet_report_page(
     request: Request,
     period: str = Query(default=""),
@@ -4455,12 +4456,13 @@ def onexbet_report_page(
             <td colspan="11" style="text-align:center;padding:24px;">Нет данных по выбранному периоду</td>
         </tr>
         """
-notice_html = ""
-if run_ok:
-    notice_html = f'<div class="notice">{escape(run_ok)}</div>'
-elif run_error:
-    notice_html = f'<div class="notice notice-danger">{escape(run_error)}</div>'
-    
+
+    notice_html = ""
+    if run_ok:
+        notice_html = f'<div class="notice">{escape(run_ok)}</div>'
+    elif run_error:
+        notice_html = f'<div class="notice notice-danger">{escape(run_error)}</div>'
+
     content = f"""
     {notice_html}
 
