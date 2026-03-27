@@ -2,7 +2,7 @@ from fastapi import FastAPI, UploadFile, File, Query, Form, Request, HTTPExcepti
 from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse, Response, FileResponse
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, text
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, text, or_
 from sqlalchemy.orm import sessionmaker, declarative_base
 import pandas as pd
 import shutil
@@ -61,8 +61,11 @@ else:
         DATABASE_URL,
         **engine_kwargs,
     )
-SessionLocal = sessionmaker(bind=engine)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 Base = declarative_base()
+ENSURED_TABLES = set()
+RUNTIME_INDEXES_READY = False
+AUTO_IMPORT_CHECKS = set()
 
 
 # =========================================
@@ -296,6 +299,43 @@ class ChatterfyIdRow(Base):
 
 
 Base.metadata.create_all(bind=engine)
+
+
+def ensure_table_once(key: str, tables, sqlite_callback=None):
+    if key in ENSURED_TABLES:
+        return
+    Base.metadata.create_all(bind=engine, tables=tables)
+    if DATABASE_URL.startswith("sqlite") and sqlite_callback:
+        sqlite_callback()
+    ENSURED_TABLES.add(key)
+
+
+def ensure_runtime_indexes():
+    global RUNTIME_INDEXES_READY
+    if RUNTIME_INDEXES_READY or DATABASE_URL.startswith("sqlite"):
+        RUNTIME_INDEXES_READY = True
+        return
+    with engine.begin() as conn:
+        index_statements = [
+            "CREATE INDEX IF NOT EXISTS ix_fb_rows_scope ON fb_rows (uploader, manager, geo, offer)",
+            "CREATE INDEX IF NOT EXISTS ix_fb_rows_dates ON fb_rows (date_start, date_end)",
+            "CREATE INDEX IF NOT EXISTS ix_cap_rows_scope ON cap_rows (buyer, geo, owner_name)",
+            "CREATE INDEX IF NOT EXISTS ix_cap_rows_promo ON cap_rows (promo_code)",
+            "CREATE INDEX IF NOT EXISTS ix_partner_rows_scope ON partner_rows (source_name, period_label, cabinet_name, country)",
+            "CREATE INDEX IF NOT EXISTS ix_partner_rows_lookup ON partner_rows (sub_id, player_id)",
+            "CREATE INDEX IF NOT EXISTS ix_chatterfy_rows_scope ON chatterfy_rows (period_label, status, manager, geo, offer)",
+            "CREATE INDEX IF NOT EXISTS ix_chatterfy_rows_lookup ON chatterfy_rows (telegram_id, external_id)",
+            "CREATE INDEX IF NOT EXISTS ix_chatterfy_id_rows_lookup ON chatterfy_id_rows (telegram_id, pp_player_id)",
+            "CREATE INDEX IF NOT EXISTS ix_task_rows_scope ON task_rows (assigned_to_username, status, due_at)",
+            "CREATE INDEX IF NOT EXISTS ix_cabinet_rows_scope ON cabinet_rows (status, name, manager_name)",
+            "CREATE INDEX IF NOT EXISTS ix_finance_wallet_rows_wallet ON finance_wallet_rows (wallet)",
+        ]
+        for statement in index_statements:
+            conn.execute(text(statement))
+    RUNTIME_INDEXES_READY = True
+
+
+ensure_runtime_indexes()
 
 
 # =========================================
@@ -963,6 +1003,14 @@ def ensure_upload_dir():
     os.makedirs(PARTNER_UPLOAD_DIR, exist_ok=True)
 
 
+def ensure_caps_table():
+    ensure_table_once("cap_rows", [CapRow.__table__])
+
+
+def ensure_task_table():
+    ensure_table_once("task_rows", [TaskRow.__table__])
+
+
 # =========================================
 # BLOCK 5 — DATA ACCESS
 # =========================================
@@ -976,50 +1024,56 @@ def get_all_rows():
 
 
 def get_filtered_data(buyer="", manager="", geo="", offer="", search="", period_label=""):
-    rows = get_all_rows()
+    db = SessionLocal()
+    try:
+        query = db.query(FBRow)
+        if buyer:
+            query = query.filter(FBRow.uploader == buyer)
+        if manager:
+            query = query.filter(FBRow.manager == manager)
+        if geo:
+            query = query.filter(FBRow.geo == geo)
+        if offer:
+            query = query.filter(FBRow.offer == offer)
+        if search:
+            search_pattern = f"%{safe_text(search).strip()}%"
+            query = query.filter(or_(
+                FBRow.ad_name.ilike(search_pattern),
+                FBRow.platform.ilike(search_pattern),
+                FBRow.manager.ilike(search_pattern),
+                FBRow.geo.ilike(search_pattern),
+                FBRow.offer.ilike(search_pattern),
+                FBRow.creative.ilike(search_pattern),
+                FBRow.uploader.ilike(search_pattern),
+            ))
+        rows = query.all()
+    finally:
+        db.close()
+
     filtered = []
-    search_lower = (search or "").lower().strip()
 
     for row in rows:
-        if buyer and (row.uploader or "") != buyer:
-            continue
-        if manager and (row.manager or "") != manager:
-            continue
-        if geo and (row.geo or "") != geo:
-            continue
-        if offer and (row.offer or "") != offer:
-            continue
         if period_label and fb_row_period_label(row) != period_label:
             continue
-        if search_lower:
-            haystack = " | ".join([
-                row.ad_name or "",
-                row.platform or "",
-                row.manager or "",
-                row.geo or "",
-                row.offer or "",
-                row.creative or "",
-                row.uploader or "",
-            ]).lower()
-            if search_lower not in haystack:
-                continue
         filtered.append(row)
     return filtered
 
 
 
 def get_filter_options():
-    rows = get_all_rows()
-    return (
-        sorted({r.uploader for r in rows if r.uploader}),
-        sorted({r.manager for r in rows if r.manager}),
-        sorted({r.geo for r in rows if r.geo}),
-        sorted({r.offer for r in rows if r.offer}),
-    )
+    db = SessionLocal()
+    try:
+        buyers = sorted(value[0] for value in db.query(FBRow.uploader).distinct().all() if value[0])
+        managers = sorted(value[0] for value in db.query(FBRow.manager).distinct().all() if value[0])
+        geos = sorted(value[0] for value in db.query(FBRow.geo).distinct().all() if value[0])
+        offers = sorted(value[0] for value in db.query(FBRow.offer).distinct().all() if value[0])
+        return buyers, managers, geos, offers
+    finally:
+        db.close()
 
 
 def get_caps_rows(search="", buyer="", geo="", owner_name=""):
-    Base.metadata.create_all(bind=engine, tables=[CapRow.__table__])
+    ensure_caps_table()
     db = SessionLocal()
     try:
         query = db.query(CapRow)
@@ -1029,54 +1083,48 @@ def get_caps_rows(search="", buyer="", geo="", owner_name=""):
             query = query.filter(CapRow.geo == geo)
         if owner_name:
             query = query.filter(CapRow.owner_name == owner_name)
-        rows = query.order_by(CapRow.buyer.asc(), CapRow.geo.asc(), CapRow.id.desc()).all()
+        if search:
+            search_pattern = f"%{safe_text(search).strip()}%"
+            query = query.filter(or_(
+                CapRow.advertiser.ilike(search_pattern),
+                CapRow.owner_name.ilike(search_pattern),
+                CapRow.buyer.ilike(search_pattern),
+                CapRow.flow.ilike(search_pattern),
+                CapRow.code.ilike(search_pattern),
+                CapRow.geo.ilike(search_pattern),
+                CapRow.promo_code.ilike(search_pattern),
+                CapRow.comments.ilike(search_pattern),
+                CapRow.agent.ilike(search_pattern),
+            ))
+        return query.order_by(CapRow.buyer.asc(), CapRow.geo.asc(), CapRow.id.desc()).all()
     finally:
         db.close()
 
-    search_lower = (search or "").strip().lower()
-    if not search_lower:
-        return rows
-
-    filtered = []
-    for row in rows:
-        haystack = " | ".join([
-            row.advertiser or "",
-            row.owner_name or "",
-            row.buyer or "",
-            row.flow or "",
-            row.code or "",
-            row.geo or "",
-            row.promo_code or "",
-            row.comments or "",
-            row.agent or "",
-        ]).lower()
-        if search_lower in haystack:
-            filtered.append(row)
-    return filtered
-
 
 def get_caps_filter_options():
-    Base.metadata.create_all(bind=engine, tables=[CapRow.__table__])
+    ensure_caps_table()
     db = SessionLocal()
     try:
-        rows = db.query(CapRow).all()
-        return (
-            sorted({r.buyer for r in rows if r.buyer}),
-            sorted({r.geo for r in rows if r.geo}),
-            sorted({r.owner_name for r in rows if r.owner_name}),
-        )
+        buyers = sorted(value[0] for value in db.query(CapRow.buyer).distinct().all() if value[0])
+        geos = sorted(value[0] for value in db.query(CapRow.geo).distinct().all() if value[0])
+        owners = sorted(value[0] for value in db.query(CapRow.owner_name).distinct().all() if value[0])
+        return buyers, geos, owners
     finally:
         db.close()
 
 
 def import_caps_from_csv_if_needed():
-    Base.metadata.create_all(bind=engine, tables=[CapRow.__table__])
+    if "cap_rows" in AUTO_IMPORT_CHECKS:
+        return
+    ensure_caps_table()
     db = SessionLocal()
     try:
         if db.query(CapRow).count() > 0:
+            AUTO_IMPORT_CHECKS.add("cap_rows")
             return
         source_path = "/Users/ivansviderko/Downloads/Капы.csv"
         if not os.path.exists(source_path):
+            AUTO_IMPORT_CHECKS.add("cap_rows")
             return
         df = pd.read_csv(source_path)
         records = []
@@ -1104,6 +1152,7 @@ def import_caps_from_csv_if_needed():
             db.commit()
     finally:
         db.close()
+    AUTO_IMPORT_CHECKS.add("cap_rows")
 
 
 def parse_datetime_local(value: str):
@@ -1296,7 +1345,7 @@ def get_assignable_users():
 
 
 def get_tasks_for_user(current_user, status_filter="", assignee_filter="", search=""):
-    Base.metadata.create_all(bind=engine, tables=[TaskRow.__table__])
+    ensure_task_table()
     db = SessionLocal()
     try:
         query = db.query(TaskRow)
@@ -1333,8 +1382,7 @@ def get_tasks_for_user(current_user, status_filter="", assignee_filter="", searc
 
 
 def ensure_partner_table():
-    Base.metadata.create_all(bind=engine, tables=[PartnerRow.__table__])
-    if DATABASE_URL.startswith("sqlite"):
+    def sqlite_migration():
         with engine.begin() as conn:
             columns = [row[1] for row in conn.execute(text("PRAGMA table_info(partner_rows)")).fetchall()]
             if "cabinet_name" not in columns:
@@ -1351,11 +1399,11 @@ def ensure_partner_table():
                 conn.execute(text("ALTER TABLE partner_rows ADD COLUMN manual_hold INTEGER DEFAULT 0"))
             if "manual_blocked" not in columns:
                 conn.execute(text("ALTER TABLE partner_rows ADD COLUMN manual_blocked INTEGER DEFAULT 0"))
+    ensure_table_once("partner_rows", [PartnerRow.__table__], sqlite_migration)
 
 
 def ensure_cabinet_table():
-    Base.metadata.create_all(bind=engine, tables=[CabinetRow.__table__])
-    if DATABASE_URL.startswith("sqlite"):
+    def sqlite_migration():
         with engine.begin() as conn:
             columns = [row[1] for row in conn.execute(text("PRAGMA table_info(cabinet_rows)")).fetchall()]
             if "advertiser" not in columns:
@@ -1386,11 +1434,11 @@ def ensure_cabinet_table():
                 conn.execute(text("ALTER TABLE cabinet_rows ADD COLUMN status VARCHAR DEFAULT 'Active'"))
                 if "is_active" in columns:
                     conn.execute(text("UPDATE cabinet_rows SET status = CASE WHEN is_active = 1 THEN 'Active' ELSE 'Archived' END WHERE COALESCE(status, '') = ''"))
+    ensure_table_once("cabinet_rows", [CabinetRow.__table__], sqlite_migration)
 
 
 def ensure_chatterfy_table():
-    Base.metadata.create_all(bind=engine, tables=[ChatterfyRow.__table__])
-    if DATABASE_URL.startswith("sqlite"):
+    def sqlite_migration():
         with engine.begin() as conn:
             columns = [row[1] for row in conn.execute(text("PRAGMA table_info(chatterfy_rows)")).fetchall()]
             if "report_date" not in columns:
@@ -1401,10 +1449,11 @@ def ensure_chatterfy_table():
                 conn.execute(text("ALTER TABLE chatterfy_rows ADD COLUMN period_end VARCHAR DEFAULT ''"))
             if "period_label" not in columns:
                 conn.execute(text("ALTER TABLE chatterfy_rows ADD COLUMN period_label VARCHAR DEFAULT ''"))
+    ensure_table_once("chatterfy_rows", [ChatterfyRow.__table__], sqlite_migration)
 
 
 def ensure_chatterfy_id_table():
-    Base.metadata.create_all(bind=engine, tables=[ChatterfyIdRow.__table__])
+    ensure_table_once("chatterfy_id_rows", [ChatterfyIdRow.__table__])
 
 
 def get_half_month_period(today: date | None = None):
@@ -1558,33 +1607,27 @@ def get_cabinet_rows(search="", status=""):
     ensure_cabinet_table()
     db = SessionLocal()
     try:
-        rows = db.query(CabinetRow).order_by(CabinetRow.name.asc(), CabinetRow.id.asc()).all()
+        query = db.query(CabinetRow)
+        if status:
+            query = query.filter(CabinetRow.status == status)
+        if search:
+            search_pattern = f"%{safe_text(search)}%"
+            query = query.filter(or_(
+                CabinetRow.advertiser.ilike(search_pattern),
+                CabinetRow.platform.ilike(search_pattern),
+                CabinetRow.name.ilike(search_pattern),
+                CabinetRow.geo_list.ilike(search_pattern),
+                CabinetRow.brands.ilike(search_pattern),
+                CabinetRow.team_name.ilike(search_pattern),
+                CabinetRow.manager_name.ilike(search_pattern),
+                CabinetRow.manager_contact.ilike(search_pattern),
+                CabinetRow.wallet.ilike(search_pattern),
+                CabinetRow.comments.ilike(search_pattern),
+                CabinetRow.status.ilike(search_pattern),
+            ))
+        return query.order_by(CabinetRow.name.asc(), CabinetRow.id.asc()).all()
     finally:
         db.close()
-
-    search_lower = safe_text(search).lower()
-    filtered = []
-    for row in rows:
-        if status and safe_text(row.status) != status:
-            continue
-        if search_lower:
-            haystack = " | ".join([
-                row.advertiser or "",
-                row.platform or "",
-                row.name or "",
-                row.geo_list or "",
-                row.brands or "",
-                row.team_name or "",
-                row.manager_name or "",
-                row.manager_contact or "",
-                row.wallet or "",
-                row.comments or "",
-                row.status or "",
-            ]).lower()
-            if search_lower not in haystack:
-                continue
-        filtered.append(row)
-    return filtered
 
 
 def get_cabinet_names(active_only=False):
@@ -1720,8 +1763,28 @@ def get_chatterfy_rows(status="", search="", date_filter="", time_filter="", tel
     ensure_chatterfy_id_table()
     db = SessionLocal()
     try:
-        rows = db.query(ChatterfyRow).order_by(ChatterfyRow.id.desc()).all()
-        id_rows = db.query(ChatterfyIdRow).all()
+        query = db.query(ChatterfyRow)
+        if status:
+            query = query.filter(ChatterfyRow.status == status)
+        if period_label:
+            query = query.filter(ChatterfyRow.period_label == period_label)
+        if telegram_id:
+            query = query.filter(ChatterfyRow.telegram_id.ilike(f"%{safe_text(telegram_id)}%"))
+        if search:
+            search_pattern = f"%{safe_text(search)}%"
+            query = query.filter(or_(
+                ChatterfyRow.name.ilike(search_pattern),
+                ChatterfyRow.username.ilike(search_pattern),
+                ChatterfyRow.telegram_id.ilike(search_pattern),
+                ChatterfyRow.tags.ilike(search_pattern),
+                ChatterfyRow.status.ilike(search_pattern),
+                ChatterfyRow.offer.ilike(search_pattern),
+                ChatterfyRow.manager.ilike(search_pattern),
+                ChatterfyRow.geo.ilike(search_pattern),
+            ))
+        rows = query.order_by(ChatterfyRow.id.desc()).all()
+        telegram_ids = sorted({safe_text(row.telegram_id) for row in rows if safe_text(row.telegram_id)})
+        id_rows = db.query(ChatterfyIdRow).filter(ChatterfyIdRow.telegram_id.in_(telegram_ids)).all() if telegram_ids else []
     finally:
         db.close()
     id_map = {}
@@ -1740,15 +1803,9 @@ def get_chatterfy_rows(status="", search="", date_filter="", time_filter="", tel
         linked_chat = safe_text(linked.chat_link) if linked else ""
         row_period_label = chatterfy_row_period_label(row)
         row_report_date = safe_text(getattr(row, "report_date", "")) or (started_dt.strftime("%Y-%m-%d") if started_dt else "")
-        if status and (row.status or "") != status:
-            continue
-        if period_label and row_period_label != period_label:
-            continue
         if date_filter and date_filter != started_date:
             continue
         if time_filter and not started_time.startswith(time_filter):
-            continue
-        if telegram_id and telegram_id not in safe_text(row.telegram_id):
             continue
         if pp_player_id and pp_player_id not in linked_pp:
             continue
@@ -1782,33 +1839,43 @@ def get_chatterfy_rows(status="", search="", date_filter="", time_filter="", tel
 
 
 def import_chatterfy_from_csv_if_needed():
+    if "chatterfy_rows" in AUTO_IMPORT_CHECKS:
+        return
     ensure_chatterfy_table()
     db = SessionLocal()
     try:
         if db.query(ChatterfyRow).count() > 0:
+            AUTO_IMPORT_CHECKS.add("chatterfy_rows")
             return
     finally:
         db.close()
     source_path = "/Users/ivansviderko/Downloads/Выгрузка (16.03-31.03.26) - Chatterfy.csv"
     if not os.path.exists(source_path):
+        AUTO_IMPORT_CHECKS.add("chatterfy_rows")
         return
     df = pd.read_csv(source_path)
     import_chatterfy_dataframe(df, os.path.basename(source_path))
+    AUTO_IMPORT_CHECKS.add("chatterfy_rows")
 
 
 def import_chatterfy_ids_from_csv_if_needed():
+    if "chatterfy_id_rows" in AUTO_IMPORT_CHECKS:
+        return
     ensure_chatterfy_id_table()
     db = SessionLocal()
     try:
         if db.query(ChatterfyIdRow).count() > 0:
+            AUTO_IMPORT_CHECKS.add("chatterfy_id_rows")
             return
     finally:
         db.close()
     source_path = "/Users/ivansviderko/Downloads/ID_Chatterfy.csv"
     if not os.path.exists(source_path):
+        AUTO_IMPORT_CHECKS.add("chatterfy_id_rows")
         return
     df = pd.read_csv(source_path)
     import_chatterfy_ids_dataframe(df)
+    AUTO_IMPORT_CHECKS.add("chatterfy_id_rows")
 
 def get_partner_period_options():
     ensure_partner_table()
@@ -1825,13 +1892,29 @@ def get_partner_period_options():
         db.close()
 
 
-def get_partner_rows_by_period(period_value=""):
+def get_partner_rows_by_period(period_value="", period_label="", cabinet_name="", country="", search=""):
     ensure_partner_table()
     db = SessionLocal()
     try:
         query = db.query(PartnerRow)
         if period_value:
             query = query.filter(PartnerRow.source_name == period_value)
+        if period_label:
+            query = query.filter(PartnerRow.period_label == period_label)
+        if cabinet_name:
+            query = query.filter(PartnerRow.cabinet_name == cabinet_name)
+        if country:
+            query = query.filter(PartnerRow.country == country)
+        if search:
+            search_pattern = f"%{safe_text(search)}%"
+            query = query.filter(or_(
+                PartnerRow.sub_id.ilike(search_pattern),
+                PartnerRow.player_id.ilike(search_pattern),
+                PartnerRow.country.ilike(search_pattern),
+                PartnerRow.source_name.ilike(search_pattern),
+                PartnerRow.cabinet_name.ilike(search_pattern),
+                PartnerRow.registration_date.ilike(search_pattern),
+            ))
         return query.order_by(PartnerRow.id.desc()).all()
     finally:
         db.close()
@@ -1848,7 +1931,7 @@ def aggregate_partner_totals(rows):
     }
 def refresh_cap_current_ftd_from_partner():
     ensure_partner_table()
-    Base.metadata.create_all(bind=engine, tables=[CapRow.__table__])
+    ensure_caps_table()
     db = SessionLocal()
     try:
         caps = db.query(CapRow).all()
@@ -1886,18 +1969,19 @@ def get_statistic_support_maps(period_label=""):
     import_chatterfy_from_csv_if_needed()
     ensure_partner_table()
     ensure_chatterfy_table()
-    Base.metadata.create_all(bind=engine, tables=[CapRow.__table__])
+    ensure_caps_table()
     db = SessionLocal()
     try:
         caps = db.query(CapRow).all()
-        partner_rows = db.query(PartnerRow).all()
-        chatterfy_rows = db.query(ChatterfyRow).all()
+        partner_query = db.query(PartnerRow)
+        chatterfy_query = db.query(ChatterfyRow)
+        if period_label:
+            partner_query = partner_query.filter(PartnerRow.period_label == period_label)
+            chatterfy_query = chatterfy_query.filter(ChatterfyRow.period_label == period_label)
+        partner_rows = partner_query.all()
+        chatterfy_rows = chatterfy_query.all()
     finally:
         db.close()
-
-    if period_label:
-        partner_rows = [row for row in partner_rows if partner_row_period_label(row) == period_label]
-        chatterfy_rows = [row for row in chatterfy_rows if chatterfy_row_period_label(row) == period_label]
 
     caps_by_sub = {}
     for cap in caps:
@@ -1995,13 +2079,7 @@ def enrich_statistic_rows(rows, period_label=""):
 
 
 def ensure_finance_tables():
-    Base.metadata.create_all(bind=engine, tables=[
-        FinanceWalletRow.__table__,
-        FinanceExpenseRow.__table__,
-        FinanceIncomeRow.__table__,
-        FinanceTransferRow.__table__,
-    ])
-    if DATABASE_URL.startswith("sqlite"):
+    def sqlite_migration():
         with engine.begin() as conn:
             expense_columns = [row[1] for row in conn.execute(text("PRAGMA table_info(finance_expense_rows)")).fetchall()]
             if "wallet_name" not in expense_columns:
@@ -2020,6 +2098,16 @@ def ensure_finance_tables():
                 conn.execute(text("ALTER TABLE finance_income_rows ADD COLUMN from_wallet VARCHAR DEFAULT ''"))
             if "comment" not in income_columns:
                 conn.execute(text("ALTER TABLE finance_income_rows ADD COLUMN comment VARCHAR DEFAULT ''"))
+    ensure_table_once(
+        "finance_tables",
+        [
+            FinanceWalletRow.__table__,
+            FinanceExpenseRow.__table__,
+            FinanceIncomeRow.__table__,
+            FinanceTransferRow.__table__,
+        ],
+        sqlite_migration,
+    )
 
 
 def load_manual_finance():
@@ -2037,7 +2125,7 @@ def load_manual_finance():
 
 
 def import_caps_dataframe(df):
-    Base.metadata.create_all(bind=engine, tables=[CapRow.__table__])
+    ensure_caps_table()
     db = SessionLocal()
     try:
         existing_rows = db.query(CapRow).all()
@@ -2083,7 +2171,7 @@ def import_caps_dataframe(df):
 
 
 def import_tasks_dataframe(df, assigned_user, created_by_user):
-    Base.metadata.create_all(bind=engine, tables=[TaskRow.__table__])
+    ensure_task_table()
     db = SessionLocal()
     try:
         target_user = db.query(User).filter(User.username == assigned_user, User.is_active == 1).first()
@@ -4981,7 +5069,7 @@ def save_task(
     if not user:
         return auth_redirect_response()
     require_any_role(user, "superadmin", "admin")
-    Base.metadata.create_all(bind=engine, tables=[TaskRow.__table__])
+    ensure_task_table()
 
     clean_title = safe_text(title)
     clean_assignee = safe_text(assigned_to_username)
@@ -5054,7 +5142,7 @@ def delete_task(request: Request, task_id: str = Form(...)):
     if not user:
         return auth_redirect_response()
     require_any_role(user, "superadmin", "admin")
-    Base.metadata.create_all(bind=engine, tables=[TaskRow.__table__])
+    ensure_task_table()
     db = SessionLocal()
     try:
         db.query(TaskRow).filter(TaskRow.id == safe_number(task_id)).delete()
@@ -5075,7 +5163,7 @@ def respond_task(
     if not user:
         return auth_redirect_response()
     enforce_page_access(user, "tasks")
-    Base.metadata.create_all(bind=engine, tables=[TaskRow.__table__])
+    ensure_task_table()
     if status not in get_task_status_options():
         return RedirectResponse(url="/tasks?message=Неизвестный статус", status_code=303)
 
@@ -6425,29 +6513,13 @@ def partner_report_page(
         return auth_redirect_response()
     enforce_page_access(user, "partner")
     effective_period_label = resolve_period_label(period_view, period_label)
-    rows = get_partner_rows_by_period(source_name)
-
-    search_lower = safe_text(search).lower()
-    filtered = []
-    for row in rows:
-        if effective_period_label and partner_row_period_label(row) != effective_period_label:
-            continue
-        if cabinet_name and safe_text(row.cabinet_name) != cabinet_name:
-            continue
-        if country and safe_text(row.country) != country:
-            continue
-        if search_lower:
-            haystack = " | ".join([
-                row.sub_id or "",
-                row.player_id or "",
-                row.country or "",
-                row.source_name or "",
-                row.cabinet_name or "",
-                row.registration_date or "",
-            ]).lower()
-            if search_lower not in haystack:
-                continue
-        filtered.append(row)
+    filtered = get_partner_rows_by_period(
+        period_value=source_name,
+        period_label=effective_period_label,
+        cabinet_name=cabinet_name,
+        country=country,
+        search=search,
+    )
 
     reverse = order != "asc"
     numeric_fields = {"deposit_amount", "bet_amount", "company_income", "cpa_amount"}
