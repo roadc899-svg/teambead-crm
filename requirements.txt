@@ -5,6 +5,3 @@ sqlalchemy
 pandas
 python-multipart
 openpyxl
-requests
-python-dotenv
-playwright
