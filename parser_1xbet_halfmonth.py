@@ -136,13 +136,15 @@ def open_players_report(page):
 
 
 def open_date_picker(page):
-    selectors = [
-        'input[placeholder*="2026"]',
-        'input[placeholder*="20"]',
-        'input[readonly]',
-        'input[type="text"]',
+    log("Открываю выбор периода")
+
+    # 1. Если список уже открыт — сразу выбираем "Произвольный период"
+    direct_selectors = [
+        'text=Произвольный период',
+        'div:has-text("Произвольный период")',
+        'li:has-text("Произвольный период")',
     ]
-    for sel in selectors:
+    for sel in direct_selectors:
         try:
             loc = page.locator(sel)
             for i in range(loc.count()):
@@ -150,11 +152,104 @@ def open_date_picker(page):
                 if item.is_visible():
                     item.click(timeout=5000)
                     page.wait_for_timeout(1200)
-                    log(f"date_picker: открыт через {sel}")
+                    log(f"period_mode: выбран через {sel}")
                     return
         except Exception:
             pass
-    raise RuntimeError("Не удалось открыть календарь периода")
+
+    # 2. Сначала открываем dropdown периода
+    opener_selectors = [
+        'text=Произвольн',
+        'div:has-text("Произвольн")',
+        'span:has-text("Произвольн")',
+        'label:has-text("Период")',
+        'div:has-text("Период")',
+        '[class*="select"]',
+        '[class*="dropdown"]',
+    ]
+    for sel in opener_selectors:
+        try:
+            loc = page.locator(sel)
+            for i in range(loc.count()):
+                item = loc.nth(i)
+                if item.is_visible():
+                    item.click(timeout=5000)
+                    page.wait_for_timeout(1000)
+
+                    option = page.locator('text=Произвольный период').first
+                    if option.is_visible():
+                        option.click(timeout=5000)
+                        page.wait_for_timeout(1200)
+                        log(f"period_mode: открыт через {sel} и выбран 'Произвольный период'")
+                        return
+        except Exception:
+            pass
+
+    raise RuntimeError("Не удалось выбрать 'Произвольный период'")
+
+
+def set_date_range_via_inputs(page, period):
+    start = period["date_start"]
+    end = period["date_end"]
+
+    input_selectors = [
+        'input[placeholder*="Начало"]',
+        'input[placeholder*="Конец"]',
+        'input[placeholder*="2026"]',
+        'input[readonly]',
+        'input[type="text"]',
+    ]
+
+    visible_inputs = []
+
+    for sel in input_selectors:
+        try:
+            loc = page.locator(sel)
+            for i in range(loc.count()):
+                item = loc.nth(i)
+                if item.is_visible():
+                    visible_inputs.append(item)
+            if len(visible_inputs) >= 2:
+                break
+        except Exception:
+            pass
+
+    # убираем дубликаты по порядку
+    unique_inputs = []
+    seen = set()
+    for item in visible_inputs:
+        try:
+            box = item.bounding_box()
+            key = (round(box["x"]), round(box["y"])) if box else id(item)
+            if key not in seen:
+                seen.add(key)
+                unique_inputs.append(item)
+        except Exception:
+            unique_inputs.append(item)
+
+    if len(unique_inputs) < 2:
+        raise RuntimeError("Не найдены поля Начало / Конец")
+
+    start_input = unique_inputs[0]
+    end_input = unique_inputs[1]
+
+    try:
+        start_input.click(timeout=5000)
+        start_input.fill("")
+        start_input.type(start, delay=40)
+        start_input.press("Enter")
+        page.wait_for_timeout(600)
+
+        end_input.click(timeout=5000)
+        end_input.fill("")
+        end_input.type(end, delay=40)
+        end_input.press("Enter")
+        page.wait_for_timeout(1200)
+
+        log(f"date_range: заполнен через input {start} - {end}")
+        return True
+    except Exception as e:
+        raise RuntimeError(f"Не удалось ввести даты в поля: {e}")
 
 
 def get_visible_calendar_root(page):
@@ -163,6 +258,7 @@ def get_visible_calendar_root(page):
         '.drp-calendar',
         '.datepicker',
         '.calendar',
+        '[class*="calendar"]',
         '[class*="date"]',
     ]
     for sel in candidates:
@@ -194,7 +290,8 @@ def click_calendar_day(container, day_text, used_indexes=None):
             loc = container.locator(sel)
             count = loc.count()
             for i in range(count):
-                if i in used_indexes:
+                key = (sel, i)
+                if key in used_indexes:
                     continue
                 item = loc.nth(i)
                 try:
@@ -207,7 +304,7 @@ def click_calendar_day(container, day_text, used_indexes=None):
                     if "off" in cls or "disabled" in cls:
                         continue
                     item.click(timeout=5000)
-                    used_indexes.add(i)
+                    used_indexes.add(key)
                     return True
                 except Exception:
                     continue
@@ -216,31 +313,24 @@ def click_calendar_day(container, day_text, used_indexes=None):
     return False
 
 
-def set_date_range(page, period):
+def set_date_range_via_calendar(page, period):
     start = period["date_start"]
     end = period["date_end"]
-
-    log(f"date_range: ставлю {start} - {end}")
 
     start_day = start.split("-")[2]
     end_day = end.split("-")[2]
 
-    open_date_picker(page)
     calendar_root = get_visible_calendar_root(page)
-
     used_indexes = set()
 
-    # дата начала
     start_clicked = click_calendar_day(calendar_root, start_day, used_indexes=used_indexes)
     if not start_clicked:
         raise RuntimeError(f"Не удалось выбрать дату начала: {start_day}")
 
     page.wait_for_timeout(700)
 
-    # дата конца
     end_clicked = click_calendar_day(calendar_root, end_day, used_indexes=used_indexes)
     if not end_clicked:
-        # fallback: иногда после первой даты календарь перерисовывается
         page.wait_for_timeout(700)
         calendar_root = get_visible_calendar_root(page)
         end_clicked = click_calendar_day(calendar_root, end_day, used_indexes=set())
@@ -250,6 +340,30 @@ def set_date_range(page, period):
 
     page.wait_for_timeout(1500)
     log("date_range: диапазон выбран через календарь")
+    return True
+
+
+def set_date_range(page, period):
+    log(f"date_range: ставлю {period['date_start']} - {period['date_end']}")
+
+    # сначала выбираем режим "Произвольный период"
+    open_date_picker(page)
+
+    # сначала пытаемся ввести в поля Начало / Конец
+    try:
+        if set_date_range_via_inputs(page, period):
+            return
+    except Exception as e:
+        log("date_range input fallback:", e)
+
+    # если не получилось — пробуем календарь
+    try:
+        if set_date_range_via_calendar(page, period):
+            return
+    except Exception as e:
+        log("date_range calendar fallback:", e)
+
+    raise RuntimeError("Не удалось заполнить даты периода")
 
 
 def check_new_players(page):
