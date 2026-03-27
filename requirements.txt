@@ -1,10 +1,10 @@
 fastapi
 uvicorn
+gunicorn
 sqlalchemy
 pandas
+python-multipart
 openpyxl
 requests
 python-dotenv
 playwright
-python-multipart
-gunicorn
