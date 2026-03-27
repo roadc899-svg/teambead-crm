@@ -1595,8 +1595,8 @@ def sidebar_html(active_page, current_user=None):
             ("/hierarchy", "Statistic", active_page == "hierarchy"),
         ]),
         ("finance", "/finance", "💸", "Finance", []),
-        ("caps", "/caps", "🧢", "Caps", []),
-        ("onexbet_report", "/1xbet-report", "🎰", "1xBet Отчет", []),
+        ("caps", "/caps", "🔶", "Caps", []),
+        ("onexbet_report", "/1xbet-report", "🎰", "1xBet Report", []),
         ("chatterfy", "/chatterfy", "💬", "Chatterfy", []),
         ("holdwager", "/hold-wager", "🎯", "Hold/Wager", []),
     ]
@@ -1803,7 +1803,7 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 display:grid;
                 gap:12px;
             }}
-            .sidebar-bottom-links {{ display:grid; gap:10px; }}
+            .sidebar-bottom-links {{ display:flex; gap:8px; }}
             .sidebar-user {{
                 border:1px solid var(--border);
                 background: var(--panel);
@@ -1818,6 +1818,16 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 font-size:11px;
                 padding:8px 10px;
             }}
+            .sidebar-bottom-links .sidebar-standalone {{
+                margin-bottom: 0;
+                padding: 9px 12px;
+                border-radius: 12px;
+                font-size: 13px;
+                min-width: 0;
+                flex: 1;
+                justify-content: center;
+            }}
+            .sidebar-bottom-links .side-emoji {{ width: 18px; font-size: 15px; }}
             .sidebar-mini-actions {{
                 display:grid;
                 grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2057,14 +2067,14 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             }}
             .caps-form textarea {{ min-height: 110px; resize: vertical; }}
             .caps-grid-2 {{ display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:10px; }}
-            .caps-table {{ min-width: 1580px; }}
+            .caps-table {{ min-width: 1320px; table-layout: fixed; }}
             .caps-table th, .caps-table td {{
                 white-space: normal;
                 overflow: visible;
                 text-overflow: initial;
                 vertical-align: top;
             }}
-            .caps-table .comment-col {{ min-width: 260px; }}
+            .caps-table .comment-col {{ min-width: 220px; max-width: 260px; }}
             .caps-table .agent-col {{ min-width: 140px; }}
             .caps-actions {{ display:flex; gap:8px; flex-wrap:wrap; min-width:140px; }}
             .progress-shell {{
@@ -2183,7 +2193,7 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 <div class="topbar">
                     <div>
                         <div class="page-title">{escape(title)}</div>
-                        <div class="subtitle">TEAMbead CRM — Facebook аналитика, структура и полный контроль</div>
+                        <div class="subtitle">TeamBead CRM System</div>
                     </div>
                     <div class="top-actions">
                         {top_actions}
@@ -2268,8 +2278,6 @@ def render_statistic_cards(totals):
         ("FB FTD", format_int_or_float(totals["ftd"])),
         ("Total FTD", format_int_or_float(totals.get("stat_total_ftd", 0))),
         ("Qual FTD", format_int_or_float(totals.get("stat_qual_ftd", 0))),
-        ("Rate", format_money(totals.get("stat_rate", 0))),
-        ("Cap Fill", format_percent(totals.get("stat_cap_fill", 0))),
     ]
     html = '<div class="panel compact-panel"><div class="stats-grid">'
     for title, value in cards:
@@ -2284,7 +2292,7 @@ def render_tree_nodes(nodes, level=1):
     level_class = f"tree-level-{min(level, 5)}"
     for node in nodes:
         m = node["metrics"]
-        meta = f'<span class="tree-meta">Spend: {format_money(m["spend"])} · Income: {format_money(m.get("stat_income", 0))} · Profit: {format_money(m.get("stat_profit", 0))} · ROI: {format_percent(m.get("stat_roi", 0))} · Total FTD: {format_int_or_float(m.get("stat_total_ftd", 0))} · Qual FTD: {format_int_or_float(m.get("stat_qual_ftd", 0))} · Rate: {format_money(m.get("stat_rate", 0))} · Cap Fill: {format_percent(m.get("stat_cap_fill", 0))}</span>'
+        meta = f'<span class="tree-meta">Spend: {format_money(m["spend"])} · Income: {format_money(m.get("stat_income", 0))} · Profit: {format_money(m.get("stat_profit", 0))} · ROI: {format_percent(m.get("stat_roi", 0))} · Total FTD: {format_int_or_float(m.get("stat_total_ftd", 0))} · Qual FTD: {format_int_or_float(m.get("stat_qual_ftd", 0))}</span>'
         if node["children"]:
             children_html = render_tree_nodes(node["children"], level + 1)
             html += f'''
@@ -2303,8 +2311,6 @@ def render_tree_nodes(nodes, level=1):
                 <div>{format_percent(m.get("stat_roi", 0))}</div>
                 <div>{format_int_or_float(m.get("stat_total_ftd", 0))}</div>
                 <div>{format_int_or_float(m.get("stat_qual_ftd", 0))}</div>
-                <div>{format_money(m.get("stat_rate", 0))}</div>
-                <div>{format_percent(m.get("stat_cap_fill", 0))}</div>
             </div>
             '''
     return html
@@ -2510,86 +2516,92 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         message_html += f'<div class="notice notice-danger">{escape(error_text)}</div>'
 
     current_edit_id = str(form_data.get("edit_id") or "")
-    form_title = "Редактирование капы" if current_edit_id else "Новая капа"
+    form_title = "Редактирование капы" if current_edit_id else "Добавить капу"
     submit_label = "Сохранить" if current_edit_id else "Добавить капу"
+    create_panel = f"""
+    <details class="panel" {'open' if current_edit_id else ''}>
+        <summary class="panel-title" style="cursor:pointer; list-style:none; display:flex; align-items:center; justify-content:space-between;">
+            <span>{form_title}</span>
+            <span class="btn" style="width:38px; height:38px; padding:0; border-radius:12px;">+</span>
+        </summary>
+        <div class="panel-subtitle" style="margin-top:10px;">Капы рекламодателей и ручное добавление.</div>
+        <form method="post" action="/caps/upload" enctype="multipart/form-data" class="caps-form" style="margin-top:14px; margin-bottom:14px;">
+            <label>Upload caps CSV / XLSX
+                <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
+            </label>
+            <button type="submit" class="ghost-btn">Загрузить капы</button>
+        </form>
+        <form method="post" action="/caps/save" class="caps-form" style="margin-top:14px;">
+            <input type="hidden" name="edit_id" value="{escape(current_edit_id)}">
+            <div class="caps-grid-2">
+                <label>Рекл
+                    <input type="text" name="advertiser" value="{escape(form_data.get('advertiser', ''))}">
+                </label>
+                <label>Имя
+                    <input type="text" name="owner_name" value="{escape(form_data.get('owner_name', ''))}">
+                </label>
+            </div>
+            <div class="caps-grid-2">
+                <label>Кабинет
+                    <input type="text" name="buyer" value="{escape(form_data.get('buyer', ''))}" required>
+                </label>
+                <label>Поток
+                    <input type="text" name="flow" value="{escape(form_data.get('flow', ''))}">
+                </label>
+            </div>
+            <div class="caps-grid-2">
+                <label>CODE
+                    <input type="text" name="code" value="{escape(form_data.get('code', ''))}">
+                </label>
+                <label>GEO
+                    <input type="text" name="geo" value="{escape(form_data.get('geo', ''))}">
+                </label>
+            </div>
+            <div class="caps-grid-2">
+                <label>Ставка
+                    <input type="text" name="rate" value="{escape(form_data.get('rate', ''))}">
+                </label>
+                <label>БЛ
+                    <input type="text" name="baseline" value="{escape(form_data.get('baseline', ''))}">
+                </label>
+            </div>
+            <div class="caps-grid-2">
+                <label>Капа
+                    <input type="number" step="0.01" name="cap_value" value="{escape(form_data.get('cap_value', ''))}" required>
+                </label>
+                <label>Current FTD
+                    <input type="number" step="0.01" name="current_ftd" value="{escape(form_data.get('current_ftd', '0'))}">
+                </label>
+            </div>
+            <div class="caps-grid-2">
+                <label>Промокод
+                    <input type="text" name="promo_code" value="{escape(form_data.get('promo_code', ''))}">
+                </label>
+                <label>Агент
+                    <input type="text" name="agent" value="{escape(form_data.get('agent', ''))}">
+                </label>
+            </div>
+            <label>Ссылка
+                <input type="text" name="link" value="{escape(form_data.get('link', ''))}">
+            </label>
+            <label>КПИ
+                <textarea name="kpi">{escape(form_data.get('kpi', ''))}</textarea>
+            </label>
+            <label>Комментарии
+                <textarea name="comments">{escape(form_data.get('comments', ''))}</textarea>
+            </label>
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                <button type="submit" class="btn">{submit_label}</button>
+                <a href="/caps" class="ghost-btn">Сбросить</a>
+            </div>
+        </form>
+    </details>
+    """
 
     content = f"""
     {message_html}
     <div class="caps-layout">
-        <div class="panel">
-            <div class="panel-title">{form_title}</div>
-            <div class="panel-subtitle">Тут уже можно вести капы вручную и постепенно подвязать авто-прогресс из статистики.</div>
-            <form method="post" action="/caps/upload" enctype="multipart/form-data" class="caps-form" style="margin-top:14px; margin-bottom:14px;">
-                <label>Upload caps CSV / XLSX
-                    <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
-                </label>
-                <button type="submit" class="ghost-btn">Загрузить капы</button>
-            </form>
-            <form method="post" action="/caps/save" class="caps-form" style="margin-top:14px;">
-                <input type="hidden" name="edit_id" value="{escape(current_edit_id)}">
-                <div class="caps-grid-2">
-                    <label>Рекл
-                        <input type="text" name="advertiser" value="{escape(form_data.get('advertiser', ''))}">
-                    </label>
-                    <label>Имя
-                        <input type="text" name="owner_name" value="{escape(form_data.get('owner_name', ''))}">
-                    </label>
-                </div>
-                <div class="caps-grid-2">
-                    <label>Кабинет
-                        <input type="text" name="buyer" value="{escape(form_data.get('buyer', ''))}" required>
-                    </label>
-                    <label>Поток
-                        <input type="text" name="flow" value="{escape(form_data.get('flow', ''))}">
-                    </label>
-                </div>
-                <div class="caps-grid-2">
-                    <label>CODE
-                        <input type="text" name="code" value="{escape(form_data.get('code', ''))}">
-                    </label>
-                    <label>GEO
-                        <input type="text" name="geo" value="{escape(form_data.get('geo', ''))}">
-                    </label>
-                </div>
-                <div class="caps-grid-2">
-                    <label>Ставка
-                        <input type="text" name="rate" value="{escape(form_data.get('rate', ''))}">
-                    </label>
-                    <label>БЛ
-                        <input type="text" name="baseline" value="{escape(form_data.get('baseline', ''))}">
-                    </label>
-                </div>
-                <div class="caps-grid-2">
-                    <label>Капа
-                        <input type="number" step="0.01" name="cap_value" value="{escape(form_data.get('cap_value', ''))}" required>
-                    </label>
-                    <label>Current FTD
-                        <input type="number" step="0.01" name="current_ftd" value="{escape(form_data.get('current_ftd', '0'))}">
-                    </label>
-                </div>
-                <div class="caps-grid-2">
-                    <label>Промокод
-                        <input type="text" name="promo_code" value="{escape(form_data.get('promo_code', ''))}">
-                    </label>
-                    <label>Агент
-                        <input type="text" name="agent" value="{escape(form_data.get('agent', ''))}">
-                    </label>
-                </div>
-                <label>Ссылка
-                    <input type="text" name="link" value="{escape(form_data.get('link', ''))}">
-                </label>
-                <label>КПИ
-                    <textarea name="kpi">{escape(form_data.get('kpi', ''))}</textarea>
-                </label>
-                <label>Комментарии
-                    <textarea name="comments">{escape(form_data.get('comments', ''))}</textarea>
-                </label>
-                <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                    <button type="submit" class="btn">{submit_label}</button>
-                    <a href="/caps" class="ghost-btn">Сбросить</a>
-                </div>
-            </form>
-        </div>
+        <div>{create_panel}</div>
 
         <div>
             <div class="panel compact-panel filters">
@@ -2616,12 +2628,12 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             <div class="panel compact-panel">
                 <div class="controls-line">
                     <div>
-                        <div class="panel-title" style="margin-bottom:4px;">Caps table</div>
-                        <div class="panel-subtitle">CSV уже импортирован, новые капы можно добавлять вручную прямо тут.</div>
+                        <div class="panel-title" style="margin-bottom:4px;">Caps Table</div>
+                        <div class="panel-subtitle">Капы рекламодателей, промокоды и текущая загрузка.</div>
                     </div>
                 </div>
                 <div class="table-wrap">
-                    <table class="caps-table">
+                    <table class="caps-table" style="min-width:1500px;">
                         <thead>
                             <tr>
                                 <th>ID</th>
@@ -2685,69 +2697,20 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
             <td>{escape(item['owner'])}</td>
             <td class="wallet-code">{escape(item['wallet'])}</td>
             <td>{format_money(item['amount'])}</td>
+            <td>CSV</td>
+            <td></td>
         </tr>
         """
 
-    expense_rows = ""
-    for item in snapshot["expenses"]:
-        expense_rows += f"""
-        <tr>
-            <td>{escape(item['date'])}</td>
-            <td>{escape(item['category'])}</td>
-            <td>{format_money(item['amount'])}</td>
-            <td class="wallet-code">{escape(item['paid_by'])}</td>
-            <td>{escape(item['comment'])}</td>
-        </tr>
-        """
-
-    income_rows = ""
-    for item in snapshot["income"]:
-        income_rows += f"""
-        <tr>
-            <td>{escape(item['date'])}</td>
-            <td>{escape(item['category'])}</td>
-            <td>{escape(item['description'])}</td>
-            <td>{format_money(item['amount'])}</td>
-            <td class="wallet-code">{escape(item['wallet'])}</td>
-            <td>{escape(item['reconciliation'])}</td>
-        </tr>
-        """
-
-    pending_rows = ""
-    for item in snapshot["pending"]:
-        pending_rows += f"""
-        <tr>
-            <td>{escape(item['date'])}</td>
-            <td>{escape(item['category'])}</td>
-            <td>{escape(item['description'])}</td>
-            <td>{format_money(item['amount'])}</td>
-            <td class="wallet-code">{escape(item['wallet'])}</td>
-            <td>{escape(item['reconciliation'])}</td>
-        </tr>
-        """
-
-    transfer_rows = ""
-    for item in snapshot["transfers"]:
-        transfer_rows += f"""
-        <tr>
-            <td>{escape(item['date'])}</td>
-            <td>{format_money(item['amount'])}</td>
-            <td class="wallet-code">{escape(item['from_wallet'])}</td>
-            <td class="wallet-code">{escape(item['to_wallet'])}</td>
-            <td>{escape(item['comment'])}</td>
-        </tr>
-        """
-
-    manual_wallet_rows = ""
     for item in manual["wallets"]:
-        manual_wallet_rows += f"""
+        wallet_rows += f"""
         <tr>
-            <td>{item.id}</td>
             <td>{escape(item.category or "")}</td>
             <td>{escape(item.description or "")}</td>
             <td>{escape(item.owner_name or "")}</td>
             <td class="wallet-code">{escape(item.wallet or "")}</td>
             <td>{format_money(item.amount)}</td>
+            <td>Manual</td>
             <td>
                 <div class="caps-actions">
                     <form method="get" action="/finance">
@@ -2764,6 +2727,7 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
         """
 
     manual_expense_rows = ""
+    operation_rows = ""
     for item in manual["expenses"]:
         manual_expense_rows += f"""
         <tr>
@@ -2772,6 +2736,29 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
             <td>{escape(item.category or "")}</td>
             <td>{format_money(item.amount)}</td>
             <td>{escape(item.paid_by or "")}</td>
+            <td>{escape(item.comment or "")}</td>
+            <td>
+                <div class="caps-actions">
+                    <form method="get" action="/finance">
+                        <input type="hidden" name="edit_expense" value="{item.id}">
+                        <button type="submit" class="ghost-btn small-btn">Edit</button>
+                    </form>
+                    <form method="post" action="/finance/expenses/delete" onsubmit="return confirm('Удалить расход?');">
+                        <input type="hidden" name="expense_id" value="{item.id}">
+                        <button type="submit" class="ghost-btn small-btn">Delete</button>
+                    </form>
+                </div>
+            </td>
+        </tr>
+        """
+        operation_rows += f"""
+        <tr>
+            <td>{item.id}</td>
+            <td>Expense</td>
+            <td>{escape(item.expense_date or "")}</td>
+            <td>{escape(item.category or "")}</td>
+            <td>{escape(item.paid_by or "")}</td>
+            <td>{format_money(item.amount)}</td>
             <td>{escape(item.comment or "")}</td>
             <td>
                 <div class="caps-actions">
@@ -2813,6 +2800,29 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
             </td>
         </tr>
         """
+        operation_rows += f"""
+        <tr>
+            <td>{item.id}</td>
+            <td>Income</td>
+            <td>{escape(item.income_date or "")}</td>
+            <td>{escape(item.category or "")}</td>
+            <td>{escape(item.wallet or "")}</td>
+            <td>{format_money(item.amount)}</td>
+            <td>{escape((item.description or "") + (f" · {item.reconciliation}" if item.reconciliation else ""))}</td>
+            <td>
+                <div class="caps-actions">
+                    <form method="get" action="/finance">
+                        <input type="hidden" name="edit_income" value="{item.id}">
+                        <button type="submit" class="ghost-btn small-btn">Edit</button>
+                    </form>
+                    <form method="post" action="/finance/income/delete" onsubmit="return confirm('Удалить приход?');">
+                        <input type="hidden" name="income_id" value="{item.id}">
+                        <button type="submit" class="ghost-btn small-btn">Delete</button>
+                    </form>
+                </div>
+            </td>
+        </tr>
+        """
 
     manual_wallet_total = sum(safe_number(item.amount) for item in manual["wallets"])
     manual_expense_total = sum(safe_number(item.amount) for item in manual["expenses"])
@@ -2825,117 +2835,92 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
         message_html += f'<div class="notice">{escape(success_text)}</div>'
     if error_text:
         message_html += f'<div class="notice notice-danger">{escape(error_text)}</div>'
+    create_panel = f"""
+    <details class="panel" {'open' if form_data else ''}>
+        <summary class="panel-title" style="cursor:pointer; list-style:none; display:flex; align-items:center; justify-content:space-between;">
+            <span>Add Finance Entry</span>
+            <span class="btn" style="width:38px; height:38px; padding:0; border-radius:12px;">+</span>
+        </summary>
+        <div class="panel-subtitle" style="margin-top:10px;">Добавление кошельков, расходов и приходов вручную.</div>
+        <div class="finance-grid" style="margin-top:14px;">
+            <div class="panel">
+                <div class="panel-title">{'Edit Wallet' if form_data.get('wallet_edit_id') else 'Add Wallet'}</div>
+                <form method="post" action="/finance/wallets/save" class="caps-form" style="margin-top:14px;">
+                    <input type="hidden" name="edit_id" value="{escape(form_data.get('wallet_edit_id', ''))}">
+                    <label>Категория<input type="text" name="category" value="{escape(form_data.get('wallet_category', ''))}" placeholder="Binance"></label>
+                    <label>Описание<input type="text" name="description" value="{escape(form_data.get('wallet_description', ''))}" placeholder="Банк"></label>
+                    <label>Метка<input type="text" name="owner_name" value="{escape(form_data.get('wallet_owner_name', ''))}" placeholder="Ivan"></label>
+                    <label>Кошелек<input type="text" name="wallet" value="{escape(form_data.get('wallet_wallet', ''))}" placeholder="Адрес кошелька"></label>
+                    <label>Сумма<input type="number" step="0.01" name="amount" value="{escape(form_data.get('wallet_amount', ''))}" placeholder="0.00"></label>
+                    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                        <button type="submit" class="btn">{wallet_submit_label}</button>
+                        <a href="/finance" class="ghost-btn">Сбросить</a>
+                    </div>
+                </form>
+            </div>
+            <div class="panel">
+                <div class="panel-title">{'Edit Expense' if form_data.get('expense_edit_id') else 'Add Expense'}</div>
+                <form method="post" action="/finance/expenses/save" class="caps-form" style="margin-top:14px;">
+                    <input type="hidden" name="edit_id" value="{escape(form_data.get('expense_edit_id', ''))}">
+                    <label>Дата<input type="text" name="expense_date" value="{escape(form_data.get('expense_date', ''))}" placeholder="26.03"></label>
+                    <label>Категория<input type="text" name="category" value="{escape(form_data.get('expense_category', ''))}" placeholder="Сервисы"></label>
+                    <label>Сумма<input type="number" step="0.01" name="amount" value="{escape(form_data.get('expense_amount', ''))}" placeholder="0.00"></label>
+                    <label>Кто оплатил<input type="text" name="paid_by" value="{escape(form_data.get('expense_paid_by', ''))}" placeholder="Кошелек или человек"></label>
+                    <label>Комментарий<textarea name="comment">{escape(form_data.get('expense_comment', ''))}</textarea></label>
+                    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                        <button type="submit" class="btn">{expense_submit_label}</button>
+                        <a href="/finance" class="ghost-btn">Сбросить</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+        <div class="panel" style="margin-top:16px;">
+            <div class="panel-title">{'Edit Income' if form_data.get('income_edit_id') else 'Add Income'}</div>
+            <form method="post" action="/finance/income/save" class="caps-form" style="margin-top:14px;">
+                <input type="hidden" name="edit_id" value="{escape(form_data.get('income_edit_id', ''))}">
+                <div class="caps-grid-2">
+                    <label>Дата<input type="text" name="income_date" value="{escape(form_data.get('income_date', ''))}" placeholder="26.03"></label>
+                    <label>Категория<input type="text" name="category" value="{escape(form_data.get('income_category', ''))}" placeholder="TeamBead"></label>
+                </div>
+                <div class="caps-grid-2">
+                    <label>Описание<input type="text" name="description" value="{escape(form_data.get('income_description', ''))}" placeholder="PE, CO"></label>
+                    <label>Сумма<input type="number" step="0.01" name="amount" value="{escape(form_data.get('income_amount', ''))}" placeholder="0.00"></label>
+                </div>
+                <div class="caps-grid-2">
+                    <label>Кошелек<input type="text" name="wallet" value="{escape(form_data.get('income_wallet', ''))}" placeholder="Куда пришло"></label>
+                    <label>Сверка<input type="text" name="reconciliation" value="{escape(form_data.get('income_reconciliation', ''))}" placeholder="OK / pending"></label>
+                </div>
+                <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                    <button type="submit" class="btn">{income_submit_label}</button>
+                    <a href="/finance" class="ghost-btn">Сбросить</a>
+                </div>
+            </form>
+        </div>
+    </details>
+    """
 
     content = f"""
     {message_html}
     <div class="panel compact-panel">
         <div class="panel-title">Finance control</div>
-        <div class="panel-subtitle">Кошельки, остатки, расход, приход, ожидание и перемещения. Источник: {escape(snapshot['source_path'])}</div>
-        <form method="post" action="/finance/upload" enctype="multipart/form-data" class="caps-form" style="margin-top:14px;">
-            <label>Upload finance CSV
-                <input type="file" name="file" accept=".csv" required>
-            </label>
-            <button type="submit" class="ghost-btn">Загрузить финансы</button>
-        </form>
+        <div class="panel-subtitle">Актуальные кошельки и ручные финансовые записи.</div>
     </div>
 
     <div class="panel compact-panel">
         <div class="stats-grid">
-            <div class="stat-card"><div class="name">Wallet Balance</div><div class="value">{format_money(snapshot['totals']['wallets'])}</div></div>
-            <div class="stat-card"><div class="name">Expenses</div><div class="value">{format_money(snapshot['totals']['expenses'])}</div></div>
-            <div class="stat-card"><div class="name">Income</div><div class="value">{format_money(snapshot['totals']['income'])}</div></div>
-            <div class="stat-card"><div class="name">Pending</div><div class="value">{format_money(snapshot['totals']['pending'])}</div></div>
-            <div class="stat-card"><div class="name">Transfers</div><div class="value">{format_money(snapshot['totals']['transfers'])}</div></div>
-        </div>
-    </div>
-
-    {render_finance_table("Wallets", "Текущие кошельки и остатки", '<th>Категория</th><th>Описание</th><th>Метка</th><th>Кошелек</th><th>Сумма</th>', wallet_rows, "1150px")}
-
-    <div class="panel compact-panel">
-        <div class="panel-title">Manual finance</div>
-        <div class="panel-subtitle">Пока можно все вносить руками: кошельки, расходы и приходы.</div>
-    </div>
-
-    <div class="finance-grid">
-        <div class="panel">
-            <div class="panel-title">{'Редактировать кошелек' if form_data.get('wallet_edit_id') else 'Добавить кошелек'}</div>
-            <form method="post" action="/finance/wallets/save" class="caps-form" style="margin-top:14px;">
-                <input type="hidden" name="edit_id" value="{escape(form_data.get('wallet_edit_id', ''))}">
-                <label>Категория<input type="text" name="category" value="{escape(form_data.get('wallet_category', ''))}" placeholder="Binance"></label>
-                <label>Описание<input type="text" name="description" value="{escape(form_data.get('wallet_description', ''))}" placeholder="Банк"></label>
-                <label>Метка<input type="text" name="owner_name" value="{escape(form_data.get('wallet_owner_name', ''))}" placeholder="Ivan"></label>
-                <label>Кошелек<input type="text" name="wallet" value="{escape(form_data.get('wallet_wallet', ''))}" placeholder="Адрес кошелька"></label>
-                <label>Сумма<input type="number" step="0.01" name="amount" value="{escape(form_data.get('wallet_amount', ''))}" placeholder="0.00"></label>
-                <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                    <button type="submit" class="btn">{wallet_submit_label}</button>
-                    <a href="/finance" class="ghost-btn">Сбросить</a>
-                </div>
-            </form>
-        </div>
-        <div class="panel">
-            <div class="panel-title">{'Редактировать расход' if form_data.get('expense_edit_id') else 'Добавить расход'}</div>
-            <form method="post" action="/finance/expenses/save" class="caps-form" style="margin-top:14px;">
-                <input type="hidden" name="edit_id" value="{escape(form_data.get('expense_edit_id', ''))}">
-                <label>Дата<input type="text" name="expense_date" value="{escape(form_data.get('expense_date', ''))}" placeholder="26.03"></label>
-                <label>Категория<input type="text" name="category" value="{escape(form_data.get('expense_category', ''))}" placeholder="Сервисы"></label>
-                <label>Сумма<input type="number" step="0.01" name="amount" value="{escape(form_data.get('expense_amount', ''))}" placeholder="0.00"></label>
-                <label>Кто оплатил<input type="text" name="paid_by" value="{escape(form_data.get('expense_paid_by', ''))}" placeholder="Кошелек или человек"></label>
-                <label>Комментарий<textarea name="comment">{escape(form_data.get('expense_comment', ''))}</textarea></label>
-                <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                    <button type="submit" class="btn">{expense_submit_label}</button>
-                    <a href="/finance" class="ghost-btn">Сбросить</a>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <div class="panel">
-        <div class="panel-title">{'Редактировать приход' if form_data.get('income_edit_id') else 'Добавить приход'}</div>
-        <form method="post" action="/finance/income/save" class="caps-form" style="margin-top:14px;">
-            <input type="hidden" name="edit_id" value="{escape(form_data.get('income_edit_id', ''))}">
-            <div class="caps-grid-2">
-                <label>Дата<input type="text" name="income_date" value="{escape(form_data.get('income_date', ''))}" placeholder="26.03"></label>
-                <label>Категория<input type="text" name="category" value="{escape(form_data.get('income_category', ''))}" placeholder="TeamBead"></label>
-            </div>
-            <div class="caps-grid-2">
-                <label>Описание<input type="text" name="description" value="{escape(form_data.get('income_description', ''))}" placeholder="PE, CO"></label>
-                <label>Сумма<input type="number" step="0.01" name="amount" value="{escape(form_data.get('income_amount', ''))}" placeholder="0.00"></label>
-            </div>
-            <div class="caps-grid-2">
-                <label>Кошелек<input type="text" name="wallet" value="{escape(form_data.get('income_wallet', ''))}" placeholder="Куда пришло"></label>
-                <label>Сверка<input type="text" name="reconciliation" value="{escape(form_data.get('income_reconciliation', ''))}" placeholder="OK / pending"></label>
-            </div>
-            <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                <button type="submit" class="btn">{income_submit_label}</button>
-                <a href="/finance" class="ghost-btn">Сбросить</a>
-            </div>
-        </form>
-    </div>
-
-    <div class="panel compact-panel">
-        <div class="stats-grid">
+            <div class="stat-card"><div class="name">Wallets</div><div class="value">{format_money(snapshot['totals']['wallets'] + manual_wallet_total)}</div></div>
+            <div class="stat-card"><div class="name">CSV Wallets</div><div class="value">{format_money(snapshot['totals']['wallets'])}</div></div>
             <div class="stat-card"><div class="name">Manual Wallets</div><div class="value">{format_money(manual_wallet_total)}</div></div>
             <div class="stat-card"><div class="name">Manual Expenses</div><div class="value">{format_money(manual_expense_total)}</div></div>
             <div class="stat-card"><div class="name">Manual Income</div><div class="value">{format_money(manual_income_total)}</div></div>
         </div>
     </div>
 
-    {render_finance_table("Manual wallets", "Ручной список кошельков", '<th>ID</th><th>Категория</th><th>Описание</th><th>Метка</th><th>Кошелек</th><th>Сумма</th><th>Action</th>', manual_wallet_rows, "1240px")}
+    {create_panel}
 
-    <div class="finance-grid">
-        {render_finance_table("Manual expenses", "Ручные расходы", '<th>ID</th><th>Дата</th><th>Категория</th><th>Сумма</th><th>Кто оплатил</th><th>Комментарий</th><th>Action</th>', manual_expense_rows, "1160px")}
-        {render_finance_table("Manual income", "Ручные приходы", '<th>ID</th><th>Дата</th><th>Категория</th><th>Описание</th><th>Сумма</th><th>Кошель</th><th>Сверка</th><th>Action</th>', manual_income_rows, "1240px")}
-    </div>
+    {render_finance_table("Wallets", "Актуальные кошельки в одном списке", '<th>Категория</th><th>Описание</th><th>Метка</th><th>Кошелек</th><th>Сумма</th><th>Source</th><th>Action</th>', wallet_rows, "1320px")}
 
-    <div class="finance-grid">
-        {render_finance_table("Расход", "Кто и за что оплачивал", '<th>Дата</th><th>Категория</th><th>Сумма</th><th>Кто оплатил</th><th>Комментарий</th>', expense_rows)}
-        {render_finance_table("Приход", "Подтвержденные входящие суммы", '<th>Дата</th><th>Категория</th><th>Описание</th><th>Сумма</th><th>Кошель</th><th>Сверка</th>', income_rows)}
-    </div>
-
-    <div class="finance-grid">
-        {render_finance_table("Ожидаем", "Ожидаемые поступления", '<th>Дата</th><th>Категория</th><th>Описание</th><th>Сумма</th><th>Кошель</th><th>Сверка</th>', pending_rows)}
-        {render_finance_table("Перемещения", "Переводы между кошельками", '<th>Дата</th><th>Сумма</th><th>Откуда</th><th>Куда</th><th>Комментарий</th>', transfer_rows)}
-    </div>
+    {render_finance_table("Operations", "Ручные приходы и расходы в одном списке", '<th>ID</th><th>Type</th><th>Дата</th><th>Категория</th><th>Кошелек / Кто оплатил</th><th>Сумма</th><th>Комментарий</th><th>Action</th>', operation_rows, "1360px")}
     """
     return page_shell("Finance", content, active_page="finance", current_user=current_user)
 
@@ -3910,17 +3895,6 @@ def show_hierarchy(
     export_link = f"/export/hierarchy?{export_qs}" if export_qs else "/export/hierarchy"
 
     content = f'''
-    <div class="panel compact-panel">
-        <div class="panel-title">Загрузка статистики</div>
-        <div class="panel-subtitle">Сюда загружается партнерка. Дальше она склеивается с капами и попадает в статистику.</div>
-        <form method="post" action="/upload/partner" enctype="multipart/form-data" class="upload-form" style="margin-top:14px;">
-            <label>Partner CSV
-                <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
-            </label>
-            <button type="submit" class="upload-btn">Загрузить партнерку</button>
-        </form>
-    </div>
-
     <div class="panel compact-panel filters">
         <div class="panel-title">Фильтры</div>
         <form method="get" action="/hierarchy">
@@ -3938,7 +3912,7 @@ def show_hierarchy(
 
     <div class="panel compact-panel">
         <div class="panel-title">Statistic</div>
-        <div class="panel-subtitle">Доход и квал считаются через капу: promo/subid из партнерки → капа → flow → FB. Если капа не найдена, доход по строке будет 0.</div>
+        <div class="panel-subtitle">FB + Partner + Caps в одной структуре для контроля трафика, FTD, дохода и прибыли.</div>
     </div>
 
     <div class="tree-root">{tree_html}</div>
@@ -4555,7 +4529,7 @@ def onexbet_report_page(
     <div class="panel">
         <div class="controls-line">
             <div>
-                <div class="panel-title">1xBet Отчет</div>
+                <div class="panel-title">1xBet Report</div>
                 <div class="panel-subtitle">Выгрузка, которую загружает парсер по игрокам</div>
             </div>
             <form method="post" action="/1xbet-report/run-parser" style="margin:0;">
@@ -4646,7 +4620,7 @@ def onexbet_report_page(
 
     return HTMLResponse(
         page_shell(
-            "1xBet Отчет",
+            "1xBet Report",
             content,
             active_page="onexbet_report",
             current_user=user,
