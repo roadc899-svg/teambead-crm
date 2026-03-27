@@ -1555,6 +1555,24 @@ def detect_partner_period_from_dataframe(df):
     return None
 
 
+def detect_period_from_dataframe_dates(df, column_name: str):
+    if column_name not in list(df.columns):
+        return None
+    try:
+        series = pd.to_datetime(df[column_name], errors="coerce", utc=True).dropna()
+        if series.empty:
+            return None
+        start_dt = series.min().date()
+        end_dt = series.max().date()
+        return {
+            "date_start": start_dt.strftime("%Y-%m-%d"),
+            "date_end": end_dt.strftime("%Y-%m-%d"),
+            "period_label": f"{start_dt.strftime('%d')}-{end_dt.strftime('%d.%m.%Y')}",
+        }
+    except Exception:
+        return None
+
+
 def normalize_partner_period(date_start: str = "", date_end: str = ""):
     clean_start = safe_text(date_start)
     clean_end = safe_text(date_end)
@@ -1571,7 +1589,38 @@ def normalize_partner_period(date_start: str = "", date_end: str = ""):
             pass
     return get_half_month_period()
 
-def parse_partner_dataframe(df, source_name="", cabinet_name=""):
+
+def get_partner_platform_options():
+    return [("1xbet", "1xBet"), ("cellxpert", "CellXpert")]
+
+
+def normalize_partner_platform(value: str = ""):
+    text_value = safe_text(value).strip().lower()
+    if "cell" in text_value:
+        return "cellxpert"
+    return "1xbet"
+
+
+def get_cabinet_platform_map():
+    rows = get_cabinet_rows()
+    result = {}
+    for row in rows:
+        cabinet_name = safe_text(row.name)
+        if cabinet_name:
+            result[cabinet_name] = normalize_partner_platform(row.platform or "")
+    return result
+
+
+def partner_row_platform(row, cabinet_platform_map=None):
+    cabinet_platform_map = cabinet_platform_map or {}
+    cabinet_name = safe_text(getattr(row, "cabinet_name", ""))
+    if cabinet_name and cabinet_name in cabinet_platform_map:
+        return cabinet_platform_map[cabinet_name]
+    source_name = safe_text(getattr(row, "source_name", ""))
+    return normalize_partner_platform(source_name)
+
+
+def parse_1xbet_partner_dataframe(df, source_name="", cabinet_name=""):
     records = []
     for _, row in df.iterrows():
         sub_id = safe_text(row.get("SubId"))
@@ -1608,6 +1657,45 @@ def parse_partner_dataframe(df, source_name="", cabinet_name=""):
     return records
 
 
+def parse_cellxpert_partner_dataframe(df, source_name="", cabinet_name=""):
+    records = []
+    for _, row in df.iterrows():
+        player_id = safe_text(row.get("User ID"))
+        country = normalize_geo_value(row.get("Country"))
+        if not player_id or not country:
+            continue
+        ftd_amount = safe_number(row.get("First Time Deposit Amount"))
+        total_deposits = safe_number(row.get("Deposits"))
+        deposit_amount = ftd_amount if ftd_amount > 0 else total_deposits
+        period_info = get_half_month_period_from_date(row.get("Registration Date"))
+        records.append(PartnerRow(
+            source_name=source_name,
+            cabinet_name=safe_text(cabinet_name),
+            sub_id=safe_text(row.get("User ID")),
+            player_id=player_id,
+            report_date=period_info["report_date"],
+            period_start=period_info["period_start"],
+            period_end=period_info["period_end"],
+            period_label=period_info["period_label"],
+            registration_date=safe_text(row.get("Registration Date")),
+            country=country,
+            deposit_amount=deposit_amount,
+            bet_amount=0.0,
+            company_income=safe_number(row.get("Commissions")),
+            cpa_amount=0.0,
+            hold_time=safe_text(row.get("Activity Count")),
+            blocked=safe_text(row.get("Status")),
+        ))
+    return records
+
+
+def parse_partner_dataframe(df, source_name="", cabinet_name="", partner_platform="1xbet"):
+    platform_key = normalize_partner_platform(partner_platform)
+    if platform_key == "cellxpert":
+        return parse_cellxpert_partner_dataframe(df, source_name=source_name, cabinet_name=cabinet_name)
+    return parse_1xbet_partner_dataframe(df, source_name=source_name, cabinet_name=cabinet_name)
+
+
 def build_partner_row_identity(row):
     return (
         safe_text(getattr(row, "cabinet_name", "")),
@@ -1641,6 +1729,15 @@ def read_partner_uploaded_dataframe(path: str, ext: str):
     data_df.columns = headers
     data_df = data_df.reset_index(drop=True)
     return data_df
+
+
+def read_cellxpert_uploaded_dataframe(path: str, ext: str):
+    if ext in [".xlsx", ".xls"]:
+        return pd.read_excel(path)
+    try:
+        return pd.read_csv(path)
+    except Exception:
+        return pd.read_csv(path, sep=";")
 
 
 def get_cabinet_rows(search="", status=""):
@@ -1722,40 +1819,101 @@ def get_chatterfy_linkage_maps(period_label=""):
     db = SessionLocal()
     try:
         id_rows = db.query(ChatterfyIdRow).all()
-        chatter_query = db.query(ChatterfyRow)
-        if period_label:
-            chatter_query = chatter_query.filter(ChatterfyRow.period_label == period_label)
-        chatter_rows = chatter_query.order_by(ChatterfyRow.id.desc()).all()
+        chatter_rows = db.query(ChatterfyRow).order_by(ChatterfyRow.id.desc()).all()
     finally:
         db.close()
 
     id_by_player = {}
     for item in id_rows:
         player_key = normalize_id_value(item.pp_player_id)
-        if player_key and player_key not in id_by_player:
+        if not player_key:
+            continue
+        current = id_by_player.get(player_key, {})
+        telegram_id = safe_text(item.telegram_id)
+        chat_link = safe_text(item.chat_link)
+        candidate_score = (
+            1 if chat_link else 0,
+            1 if telegram_id else 0,
+            safe_text(item.source_date),
+            safe_number(getattr(item, "id", 0)),
+        )
+        current_score = (
+            1 if safe_text(current.get("chat_link")) else 0,
+            1 if safe_text(current.get("telegram_id")) else 0,
+            safe_text(current.get("source_date")) if current else "",
+            safe_number(current.get("row_id", 0)) if current else 0,
+        )
+        if candidate_score >= current_score:
             id_by_player[player_key] = {
-                "telegram_id": safe_text(item.telegram_id),
+                "row_id": safe_number(getattr(item, "id", 0)),
+                "telegram_id": telegram_id,
                 "pp_player_id": safe_text(item.pp_player_id),
-                "chat_link": safe_text(item.chat_link),
+                "chat_link": chat_link,
+                "source_date": safe_text(item.source_date),
             }
 
     chatter_by_telegram = {}
+    chatter_by_telegram_period = {}
     for item in chatter_rows:
         telegram_key = safe_text(item.telegram_id)
-        if telegram_key and telegram_key not in chatter_by_telegram:
-            chatter_by_telegram[telegram_key] = {
-                "status": safe_text(item.status),
-                "step": safe_text(item.step),
-                "started": safe_text(item.started),
-            }
-    return id_by_player, chatter_by_telegram
+        telegram_digits = normalize_id_value(item.telegram_id)
+        payload = {
+            "status": safe_text(item.status),
+            "step": safe_text(item.step),
+            "started": safe_text(item.started),
+            "period_label": safe_text(item.period_label),
+            "row_id": safe_number(getattr(item, "id", 0)),
+        }
+        for key in [telegram_key, telegram_digits]:
+            if not key:
+                continue
+            chatter_by_telegram.setdefault(key, payload)
+            if period_label and safe_text(item.period_label) == safe_text(period_label):
+                chatter_by_telegram_period.setdefault(key, payload)
+    return id_by_player, chatter_by_telegram_period, chatter_by_telegram
+
+
+def build_cap_scope_key(cabinet_name="", geo_value=""):
+    return (
+        safe_text(cabinet_name).strip().upper(),
+        normalize_geo_value(geo_value),
+    )
+
+
+def build_cap_match_maps(caps):
+    caps_by_promo = {}
+    caps_by_scope = {}
+    for cap in caps:
+        promo_key = safe_text(cap.promo_code).upper()
+        if promo_key:
+            caps_by_promo.setdefault(promo_key, []).append(cap)
+        scope_key = build_cap_scope_key(getattr(cap, "buyer", ""), getattr(cap, "geo", "") or getattr(cap, "code", ""))
+        if all(scope_key):
+            caps_by_scope.setdefault(scope_key, []).append(cap)
+    return caps_by_promo, caps_by_scope
+
+
+def get_caps_for_partner_row(row, caps_by_promo, caps_by_scope, cabinet_platform_map=None):
+    platform_key = partner_row_platform(row, cabinet_platform_map)
+    if platform_key == "cellxpert":
+        return caps_by_scope.get(build_cap_scope_key(getattr(row, "cabinet_name", ""), getattr(row, "country", "")), [])
+    promo_key = safe_text(getattr(row, "sub_id", "")).upper()
+    matched = caps_by_promo.get(promo_key, [])
+    if matched:
+        return matched
+    return caps_by_scope.get(build_cap_scope_key(getattr(row, "cabinet_name", ""), getattr(row, "country", "")), [])
 
 
 def build_chatterfy_player_context(player_id="", period_label=""):
-    id_by_player, chatter_by_telegram = get_chatterfy_linkage_maps(period_label=period_label)
+    id_by_player, chatter_by_telegram_period, chatter_by_telegram = get_chatterfy_linkage_maps(period_label=period_label)
     link = id_by_player.get(normalize_id_value(player_id), {})
     telegram_id = safe_text(link.get("telegram_id"))
-    chatter_info = chatter_by_telegram.get(telegram_id, {})
+    chatter_info = (
+        chatter_by_telegram_period.get(telegram_id)
+        or chatter_by_telegram_period.get(normalize_id_value(telegram_id))
+        or chatter_by_telegram.get(telegram_id, {})
+        or chatter_by_telegram.get(normalize_id_value(telegram_id), {})
+    )
     return {
         "telegram_id": telegram_id,
         "pp_player_id": safe_text(link.get("pp_player_id")) or safe_text(player_id),
@@ -1783,12 +1941,10 @@ def get_hold_wager_rows(period_label="", cabinet_name="", search=""):
         db.close()
 
     caps_by_promo = {}
-    for cap in caps:
-        promo_key = safe_text(cap.promo_code).upper()
-        if promo_key:
-            caps_by_promo.setdefault(promo_key, []).append(cap)
+    cabinet_platform_map = get_cabinet_platform_map()
+    caps_by_promo, caps_by_scope = build_cap_match_maps(caps)
 
-    id_by_player, chatter_by_telegram = get_chatterfy_linkage_maps(period_label=period_label)
+    id_by_player, chatter_by_telegram_period, chatter_by_telegram = get_chatterfy_linkage_maps(period_label=period_label)
 
     search_lower = safe_text(search).lower()
     result = []
@@ -1797,8 +1953,7 @@ def get_hold_wager_rows(period_label="", cabinet_name="", search=""):
             continue
         if safe_number(row.deposit_amount) <= 0:
             continue
-        promo_key = safe_text(row.sub_id).upper()
-        matched_caps = caps_by_promo.get(promo_key, [])
+        matched_caps = get_caps_for_partner_row(row, caps_by_promo, caps_by_scope, cabinet_platform_map)
         if not matched_caps:
             continue
         cap = matched_caps[0]
@@ -1806,7 +1961,7 @@ def get_hold_wager_rows(period_label="", cabinet_name="", search=""):
         bet_amount = safe_number(row.bet_amount)
         baseline = safe_cap_number(cap.baseline)
         fail_baseline = baseline > 0 and deposit_amount < baseline
-        fail_wager = baseline > 0 and bet_amount < baseline
+        fail_wager = partner_row_platform(row, cabinet_platform_map) == "1xbet" and baseline > 0 and bet_amount < baseline
         if not fail_baseline and not fail_wager:
             continue
 
@@ -1820,7 +1975,12 @@ def get_hold_wager_rows(period_label="", cabinet_name="", search=""):
         telegram_id = safe_text(linked.get("telegram_id"))
         chat_link = safe_text(linked.get("chat_link"))
         pp_player_id = safe_text(linked.get("pp_player_id")) or safe_text(row.player_id)
-        chatter_info = chatter_by_telegram.get(telegram_id, {})
+        chatter_info = (
+            chatter_by_telegram_period.get(telegram_id)
+            or chatter_by_telegram_period.get(normalize_id_value(telegram_id))
+            or chatter_by_telegram.get(telegram_id, {})
+            or chatter_by_telegram.get(normalize_id_value(telegram_id), {})
+        )
         item = {
             "row_id": row.id,
             "report_date": safe_text(getattr(row, "report_date", "")) or get_half_month_period_from_date(row.registration_date).get("report_date", ""),
@@ -2107,6 +2267,7 @@ def get_partner_period_options():
 def get_partner_rows_by_period(period_value="", period_label="", cabinet_name="", country="", search=""):
     ensure_partner_table()
     active_cabinets = get_active_cabinet_name_set()
+    cabinet_platform_map = get_cabinet_platform_map()
     db = SessionLocal()
     try:
         query = db.query(PartnerRow)
@@ -2135,11 +2296,17 @@ def get_partner_rows_by_period(period_value="", period_label="", cabinet_name=""
     if active_cabinets:
         rows = [row for row in rows if safe_text(getattr(row, "cabinet_name", "")) in active_cabinets]
 
-    id_by_player, chatter_by_telegram = get_chatterfy_linkage_maps(period_label=period_label)
+    id_by_player, chatter_by_telegram_period, chatter_by_telegram = get_chatterfy_linkage_maps(period_label=period_label)
     for row in rows:
         linked = id_by_player.get(normalize_id_value(getattr(row, "player_id", "")), {})
         telegram_id = safe_text(linked.get("telegram_id"))
-        chatter_info = chatter_by_telegram.get(telegram_id, {})
+        chatter_info = (
+            chatter_by_telegram_period.get(telegram_id)
+            or chatter_by_telegram_period.get(normalize_id_value(telegram_id))
+            or chatter_by_telegram.get(telegram_id, {})
+            or chatter_by_telegram.get(normalize_id_value(telegram_id), {})
+        )
+        row.partner_platform = partner_row_platform(row, cabinet_platform_map)
         row.telegram_id = telegram_id
         row.pp_player_id = safe_text(linked.get("pp_player_id")) or safe_text(getattr(row, "player_id", ""))
         row.chat_link = safe_text(linked.get("chat_link"))
@@ -2164,15 +2331,17 @@ def refresh_cap_current_ftd_from_partner():
     try:
         caps = db.query(CapRow).all()
         partner_rows = db.query(PartnerRow).all()
-        by_sub = {}
-        for row in partner_rows:
-            key = (row.sub_id or "").strip().upper()
-            if not key:
-                continue
-            by_sub.setdefault(key, []).append(row)
+        cabinet_platform_map = get_cabinet_platform_map()
+        caps_by_promo, caps_by_scope = build_cap_match_maps(caps)
         for cap in caps:
-            promo_key = (cap.promo_code or "").strip().upper()
-            matched = by_sub.get(promo_key, [])
+            matched = []
+            promo_key = safe_text(cap.promo_code).upper()
+            if promo_key:
+                matched.extend(caps_by_promo.get(promo_key, []))
+            matched = [
+                row for row in partner_rows
+                if cap in get_caps_for_partner_row(row, caps_by_promo, caps_by_scope, cabinet_platform_map)
+            ]
             cap.current_ftd = float(sum(1 for item in matched if safe_number(item.deposit_amount) > 0))
             db.add(cap)
         db.commit()
@@ -2180,15 +2349,16 @@ def refresh_cap_current_ftd_from_partner():
         db.close()
 
 
-def is_partner_row_qualified_for_cap(row, cap):
+def is_partner_row_qualified_for_cap(row, cap, cabinet_platform_map=None):
     deposit_amount = safe_number(getattr(row, "deposit_amount", 0))
     bet_amount = safe_number(getattr(row, "bet_amount", 0))
     baseline = safe_cap_number(getattr(cap, "baseline", 0))
+    platform_key = partner_row_platform(row, cabinet_platform_map)
     if deposit_amount <= 0:
         return False
     if baseline > 0 and deposit_amount < baseline:
         return False
-    if baseline > 0 and bet_amount < baseline:
+    if platform_key == "1xbet" and baseline > 0 and bet_amount < baseline:
         return False
     return True
 
@@ -2215,17 +2385,12 @@ def get_statistic_support_maps(period_label=""):
     finally:
         db.close()
 
-    caps_by_sub = {}
-    for cap in caps:
-        promo_key = (cap.promo_code or "").strip().upper()
-        if not promo_key:
-            continue
-        caps_by_sub.setdefault(promo_key, []).append(cap)
+    cabinet_platform_map = get_cabinet_platform_map()
+    caps_by_promo, caps_by_scope = build_cap_match_maps(caps)
 
     partner_by_flow = {}
     for row in partner_rows:
-        promo_key = (row.sub_id or "").strip().upper()
-        matched_caps = caps_by_sub.get(promo_key, [])
+        matched_caps = get_caps_for_partner_row(row, caps_by_promo, caps_by_scope, cabinet_platform_map)
         for cap in matched_caps:
             flow_parts = [part.strip() for part in safe_text(cap.flow).split("/") if part.strip()]
             platform = flow_parts[0] if len(flow_parts) > 0 else ""
@@ -2249,7 +2414,7 @@ def get_statistic_support_maps(period_label=""):
             info["stat_cap_limit"] += safe_number(cap.cap_value)
             if safe_number(row.deposit_amount) > 0:
                 info["stat_total_ftd"] += 1
-            if is_partner_row_qualified_for_cap(row, cap):
+            if is_partner_row_qualified_for_cap(row, cap, cabinet_platform_map):
                 info["stat_qual_ftd"] += 1
                 info["stat_income"] += safe_cap_number(cap.rate)
             info["stat_promos"].add(cap.promo_code or "")
@@ -2612,9 +2777,9 @@ def aggregate_for_hierarchy(rows, keys):
 # =========================================
 def sidebar_html(active_page, current_user=None):
     items = [
+        ("dashboard", "/dashboard", "📊", "Dashboard", []),
         ("grouped", "/grouped", "📘", "FB", [
             ("/grouped", "Export", active_page == "grouped"),
-            ("/hierarchy", "Statistic", active_page == "hierarchy"),
         ]),
         ("finance", "/finance", "💸", "Finance", []),
         ("caps", "/caps", "🔶", "Caps", []),
@@ -2638,13 +2803,16 @@ def sidebar_html(active_page, current_user=None):
                 continue
             children = [
                 child for child in children
-                if can_access_page(current_user, "hierarchy" if child[0] == "/hierarchy" else "grouped")
+                if can_access_page(current_user, "grouped")
             ]
+        elif key == "dashboard":
+            if not can_access_page(current_user, "hierarchy"):
+                continue
         elif not can_access_page(current_user, key):
             continue
 
         if children:
-            open_attr = "open" if active_page in ["grouped", "hierarchy"] else ""
+            open_attr = "open" if active_page in ["grouped"] else ""
             html += f'''
             <details class="sidebar-group" {open_attr}>
                 <summary><span class="side-emoji">{icon}</span><span>{title}</span></summary>
@@ -3099,31 +3267,50 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 text-transform: uppercase;
                 letter-spacing: 0.3px;
             }}
-            .panel.compact-panel.filters .controls-line {{
-                margin-bottom: 6px;
-            }}
             .panel.compact-panel.filters form {{
                 display: flex;
                 gap: 8px;
                 flex-wrap: wrap;
                 align-items: end;
-                padding: 10px 12px;
+                padding: 8px 10px;
                 border: 1px solid var(--border);
-                border-radius: 16px;
+                border-radius: 14px;
                 background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
-                box-shadow: var(--shadow);
+                box-shadow: none;
             }}
             .panel.compact-panel.filters label {{
-                min-width: 120px;
+                min-width: 112px;
             }}
             .panel.compact-panel.filters input,
             .panel.compact-panel.filters select {{
-                min-width: 132px;
-                height: 40px;
+                min-width: 128px;
+                height: 38px;
             }}
             .panel.compact-panel.filters .btn,
             .panel.compact-panel.filters .ghost-btn {{
-                height: 40px;
+                height: 38px;
+            }}
+            .toolbar-actions {{
+                display:flex;
+                gap:10px;
+                align-items:center;
+                flex-wrap:wrap;
+                justify-content:flex-end;
+                width:100%;
+            }}
+            .toolbar-actions .panel.compact-panel.filters {{
+                order:1;
+                flex: 1 1 620px;
+                min-width: min(620px, 100%);
+                margin:0;
+            }}
+            .toolbar-actions .upload-menu {{
+                order:2;
+                flex: 0 0 auto;
+            }}
+            .toolbar-actions .column-menu-wrap {{
+                order:3;
+                flex: 0 0 auto;
             }}
             .panel-title {{ font-size: 15px; font-weight: 900; margin-bottom: 12px; }}
             .panel-subtitle {{ color: var(--muted); font-size: 13px; }}
@@ -3177,7 +3364,7 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 border-bottom: 1px solid var(--border);
                 padding: 11px 12px;
                 text-align: left;
-                font-size: 14px;
+                font-size: 13px;
                 white-space: nowrap;
                 overflow: hidden;
                 text-overflow: ellipsis;
@@ -3203,7 +3390,8 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             body.hide-row-colors tbody tr.warn-row,
             body.hide-row-colors tbody tr.bad-row {{ background: transparent !important; }}
             th a {{ color: inherit; text-decoration: none; }}
-            .th-inner {{ display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-right: 10px; }}
+            .th-inner {{ display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-right: 10px; font-size: 13px; font-weight: 900; line-height: 1.15; }}
+            th, th a, th span {{ font-size: 13px; font-weight: 900; line-height: 1.15; }}
             .drag-handle {{ cursor: grab; opacity: 0.75; font-size: 12px; }}
             .dragging {{ opacity: 0.45; }}
             .stat-cell-right {{ text-align: right; }}
@@ -3271,9 +3459,10 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 -webkit-user-select:none;
             }}
             .status-icon-blocked {{
-                background: rgba(239, 68, 68, 0.18);
-                color: #dc2626;
-                border-color: rgba(239, 68, 68, 0.3);
+                background: linear-gradient(180deg, rgba(220, 38, 38, 0.22), rgba(127, 29, 29, 0.18));
+                color: #b91c1c;
+                border-color: rgba(220, 38, 38, 0.42);
+                box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08);
             }}
             .status-icon-waiting {{
                 background: rgba(245, 158, 11, 0.18);
@@ -3780,7 +3969,6 @@ def render_stat_table(title, subtitle, rows, columns, empty_text="No data"):
     return f"""
     <div class="panel compact-panel">
         <div class="panel-title" style="margin-bottom:4px;">{escape(title)}</div>
-        <div class="panel-subtitle">{escape(subtitle)}</div>
         <div class="table-wrap" style="margin-top:14px;">
             <table style="min-width:1200px;">
                 <thead><tr>{head_html}</tr></thead>
@@ -3991,9 +4179,8 @@ def users_page_html(current_user, error_text="", success_text="", form_data=None
         </tr>
         """
 
-    mode_title = "Редактирование пользователя" if current_edit_id else "Новый пользователь"
     submit_label = "Save Changes" if current_edit_id else "Create User"
-    password_hint = "Оставь пустым, если пароль менять не нужно." if current_edit_id else "Пароль"
+    password_hint = "Leave blank to keep current password." if current_edit_id else "Password"
     message_html = ""
     if error_text:
         message_html += f'<div class="notice notice-danger">{escape(error_text)}</div>'
@@ -4001,11 +4188,9 @@ def users_page_html(current_user, error_text="", success_text="", form_data=None
         message_html += f'<div class="notice">{escape(success_text)}</div>'
 
     create_panel = f"""
-    <details class="panel" {'open' if current_edit_id else ''}>
-        <summary class="panel-title" style="cursor:pointer; list-style:none; display:flex; align-items:center; justify-content:space-between;">
-            <span>{'Edit User' if current_edit_id else 'Add User'}</span>
-            <span class="btn toggle-indicator"></span>
-        </summary>
+    <details class="upload-menu upload-menu-right" {'open' if current_edit_id else ''}>
+        <summary class="btn toggle-indicator"></summary>
+        <div class="upload-menu-list" style="width:420px; max-width:min(420px, calc(100vw - 48px));">
         <form method="post" action="/users/save" class="users-form" style="margin-top:14px;">
             <input type="hidden" name="edit_user_id" value="{escape(current_edit_id)}">
             <label>Name
@@ -4025,28 +4210,26 @@ def users_page_html(current_user, error_text="", success_text="", form_data=None
             </label>
             <label class="role-option">
                 <input type="checkbox" name="is_active" value="1" {active_checked}>
-                <span><strong>Active</strong><br><span class="muted">Пользователь может войти.</span></span>
+                <span><strong>Active</strong><br><span class="muted">User can sign in.</span></span>
             </label>
             <div style="display:flex; gap:10px; flex-wrap:wrap;">
                 <button type="submit" class="btn">{submit_label}</button>
                 <a href="/users" class="ghost-btn">Reset</a>
             </div>
         </form>
+        </div>
     </details>
     """
 
     content = f"""
     {message_html}
-    <div class="users-layout">
-        <div>{create_panel}</div>
+    <div class="panel compact-panel">
+        <div class="toolbar-actions">
+            {create_panel}
+        </div>
+    </div>
 
-        <div class="panel">
-            <div class="controls-line">
-                <div>
-                    <div class="panel-title" style="margin-bottom:4px;">Users</div>
-                    <div class="panel-subtitle">Founder, team members and access control.</div>
-                </div>
-            </div>
+    <div class="panel">
             <div class="table-wrap">
                 <table class="users-table">
                     <thead>
@@ -4063,7 +4246,6 @@ def users_page_html(current_user, error_text="", success_text="", form_data=None
                     <tbody>{rows_html}</tbody>
                 </table>
             </div>
-        </div>
     </div>
     """
     return page_shell("Users", content, active_page="users", current_user=current_user)
@@ -4144,7 +4326,6 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             <span class="toggle-indicator" style="width:18px; height:18px; min-width:18px;"></span>
         </summary>
         <div class="upload-menu-list cap-menu-list">
-            <div class="panel-subtitle">Advertiser caps and manual updates.</div>
             <form method="post" action="/caps/save" class="caps-form">
             <input type="hidden" name="edit_id" value="{escape(current_edit_id)}">
             <div class="caps-grid-2">
@@ -4216,19 +4397,20 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     content = f"""
     {message_html}
     <div>
-        <div class="panel compact-panel filters">
-            <div class="controls-line" style="margin-bottom:0;">
-                <div class="panel-title" style="margin-bottom:0;">Filters</div>
-                <div>{create_panel}</div>
+        <div class="panel compact-panel">
+            <div class="toolbar-actions">
+                <div class="panel compact-panel filters">
+                    <form method="get" action="/caps">
+                        <label>Buyer<select name="buyer">{buyer_options}</select></label>
+                        <label>Geo<select name="geo">{geo_options}</select></label>
+                        <label>Owner<select name="owner_name">{owner_options}</select></label>
+                        <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="Search caps"></label>
+                        <button type="submit" class="btn small-btn">Filter</button>
+                        <a href="/caps" class="ghost-btn small-btn">Reset</a>
+                    </form>
+                </div>
+                {create_panel}
             </div>
-            <form method="get" action="/caps" style="margin-top:12px;">
-                    <label>Buyer<select name="buyer">{buyer_options}</select></label>
-                    <label>Geo<select name="geo">{geo_options}</select></label>
-                    <label>Owner<select name="owner_name">{owner_options}</select></label>
-                    <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="Search caps"></label>
-                    <button type="submit" class="btn small-btn">Filter</button>
-                    <a href="/caps" class="ghost-btn small-btn">Reset</a>
-            </form>
         </div>
 
         <div class="panel compact-panel">
@@ -4244,7 +4426,6 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             <div class="controls-line">
                 <div>
                     <div class="panel-title" style="margin-bottom:4px;">Caps Table</div>
-                    <div class="panel-subtitle">Advertiser caps, promo codes and current load.</div>
                 </div>
             </div>
             <div class="table-wrap">
@@ -4327,16 +4508,11 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
 def render_finance_table(title, subtitle, headers, rows_html, min_width="980px"):
     return f"""
     <div class="panel compact-panel">
-        <div class="controls-line">
-            <div>
-                <div class="panel-title" style="margin-bottom:4px;">{escape(title)}</div>
-                <div class="panel-subtitle">{escape(subtitle)}</div>
-            </div>
-        </div>
+        <div class="panel-title" style="margin-bottom:10px;">{escape(title)}</div>
         <div class="table-wrap">
             <table class="finance-table" style="min-width:{escape(min_width)};">
                 <thead><tr>{headers}</tr></thead>
-                <tbody>{rows_html if rows_html else '<tr><td colspan="6">Нет данных</td></tr>'}</tbody>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="6">No data</td></tr>'}</tbody>
             </table>
         </div>
     </div>
@@ -4476,12 +4652,12 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
         message_html += f'<div class="notice notice-danger">{escape(error_text)}</div>'
 
     create_panel = f"""
-    <details class="panel" {'open' if form_data else ''}>
-        <summary class="panel-title" style="cursor:pointer; list-style:none; display:flex; align-items:center; justify-content:space-between;">
-            <span>Manage Finance</span>
-            <span class="btn toggle-indicator"></span>
+    <details class="upload-menu upload-menu-right" {'open' if form_data else ''}>
+        <summary class="btn small-btn" style="min-width:124px;">
+            <span>Manage</span>
+            <span class="toggle-indicator" style="width:18px; height:18px; min-width:18px;"></span>
         </summary>
-        <div class="panel-subtitle" style="margin-top:10px;">Service wallets, expenses, income and transfers.</div>
+        <div class="upload-menu-list" style="width:min(1120px, calc(100vw - 48px));">
         <div class="finance-grid" style="margin-top:14px;">
             <div class="panel">
                 <div class="panel-title">{'Edit Service Wallet' if form_data.get('wallet_edit_id') else 'Add Service Wallet'}</div>
@@ -4559,6 +4735,7 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
                 </form>
             </div>
         </div>
+        </div>
     </details>
     """
 
@@ -4568,16 +4745,18 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
         <div class="controls-line">
             <div>
                 <div class="panel-title">Finance</div>
-                <div class="panel-subtitle">Service wallets, operations and current balances.</div>
             </div>
-            <div class="panel compact-panel filters" style="margin:0; min-width:640px;">
-                <form method="get" action="/finance" style="justify-content:flex-end;">
-                    <label>Date From<input type="date" name="date_from" value="{escape(date_from)}"></label>
-                    <label>Date To<input type="date" name="date_to" value="{escape(date_to)}"></label>
-                    <label>Year<select name="year">{year_options}</select></label>
-                    <button type="submit" class="btn small-btn">Filter</button>
-                    <a href="/finance" class="ghost-btn small-btn">Reset</a>
-                </form>
+            <div class="toolbar-actions">
+                <div class="panel compact-panel filters">
+                    <form method="get" action="/finance" style="justify-content:flex-end;">
+                        <label>Date From<input type="date" name="date_from" value="{escape(date_from)}"></label>
+                        <label>Date To<input type="date" name="date_to" value="{escape(date_to)}"></label>
+                        <label>Year<select name="year">{year_options}</select></label>
+                        <button type="submit" class="btn small-btn">Filter</button>
+                        <a href="/finance" class="ghost-btn small-btn">Reset</a>
+                    </form>
+                </div>
+                {create_panel}
             </div>
         </div>
     </div>
@@ -4591,14 +4770,11 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
             <div class="stat-card"><div class="name">Transfers</div><div class="value">{format_money(sum(safe_number(x.amount) for x in manual['transfers']))}</div></div>
         </div>
     </div>
+    {render_finance_table("Service Wallets", "", '<th>Type</th><th>Wallet Name</th><th>Owner</th><th>Wallet</th><th>Opening Balance</th><th>Action</th>', service_wallet_rows, "1240px")}
 
-    {create_panel}
+    {render_finance_table("Wallet Balances", "", '<th>Wallet</th><th>Current Balance</th>', balance_rows, "980px")}
 
-    {render_finance_table("Кошельки сервисов", "Manual wallet registry with owners and starting balances.", '<th>Type</th><th>Wallet Name</th><th>Owner</th><th>Wallet</th><th>Opening Balance</th><th>Action</th>', service_wallet_rows, "1240px")}
-
-    {render_finance_table("Баланс по кошелькам", "Current balance by wallet after manual income, expenses and transfers.", '<th>Wallet</th><th>Current Balance</th>', balance_rows, "980px")}
-
-    {render_finance_table("Операции", "Filtered manual expenses, income and transfers.", '<th>ID</th><th>Type</th><th>Date</th><th>Category</th><th>Wallet Name / To</th><th>From Wallet</th><th>Amount</th><th>Comment</th><th>Action</th>', operation_rows, "1560px")}
+    {render_finance_table("Operations", "", '<th>ID</th><th>Type</th><th>Date</th><th>Category</th><th>Wallet Name / To</th><th>From Wallet</th><th>Amount</th><th>Comment</th><th>Action</th>', operation_rows, "1560px")}
     """
     return page_shell("Finance", content, active_page="finance", current_user=current_user)
 
@@ -4626,11 +4802,11 @@ def tasks_page_html(current_user, rows, filter_values=None, form_data=None, succ
     )
     assignee_filter_rendered = ""
     if is_admin_role(current_user):
-        clean_html = '<option value="">Все</option>'
+        clean_html = '<option value="">All</option>'
         for item in assignable_users:
             selected = "selected" if filter_values.get("assignee", "") == item.username else ""
             clean_html += f'<option value="{escape(item.username)}" {selected}>{escape((item.display_name or item.username) + " · " + (item.role or ""))}</option>'
-        assignee_filter_rendered = f'<label>Кому<select name="assignee">{clean_html}</select></label>'
+        assignee_filter_rendered = f'<label>Assignee<select name="assignee">{clean_html}</select></label>'
 
     assign_options = ""
     for item in assignable_users:
@@ -4641,45 +4817,47 @@ def tasks_page_html(current_user, rows, filter_values=None, form_data=None, succ
     if is_admin_role(current_user):
         due_selects = build_task_datetime_selects("due", form_data.get("due_at", ""))
         create_block = f"""
-        <details class="panel">
-            <summary class="panel-title" style="cursor:pointer; list-style:none; display:flex; align-items:center; justify-content:space-between;">
+        <details class="upload-menu upload-menu-right" {'open' if form_data else ''}>
+            <summary class="btn small-btn" style="min-width:112px;">
                 <span>Add Task</span>
-                <span class="btn toggle-indicator"></span>
+                <span class="toggle-indicator" style="width:18px; height:18px; min-width:18px;"></span>
             </summary>
+            <div class="upload-menu-list" style="width:min(720px, calc(100vw - 48px));">
             <form method="post" action="/tasks/upload" enctype="multipart/form-data" class="tasks-form" style="margin-top:14px; margin-bottom:14px;">
                 <label>Task CSV Import
                     <input type="file" name="file" accept=".csv" required>
                 </label>
-                <label>Кому
+                <label>Assignee
                     <select name="assigned_to_username" required>{assign_options}</select>
                 </label>
                 <button type="submit" class="ghost-btn">Upload</button>
             </form>
             <form method="post" action="/tasks/save" class="tasks-form" style="margin-top:14px;">
-                <label>Кому
+                <label>Assignee
                     <select name="assigned_to_username" required>{assign_options}</select>
                 </label>
-                <label>Задача
+                <label>Task
                     <input type="text" name="title" value="{escape(form_data.get('title', ''))}" required placeholder="Example: Check KPI for Peru">
                 </label>
-                <label>Описание
+                <label>Description
                     <textarea name="description" placeholder="What needs to be done and what result is expected">{escape(form_data.get('description', ''))}</textarea>
                 </label>
                 <div>
-                    <div class="panel-subtitle" style="margin-bottom:8px;">Due Date</div>
+                    <div class="muted" style="margin-bottom:8px; font-size:12px; font-weight:800;">Due Date</div>
                     {due_selects}
                 </div>
-                <label>Примечания
+                <label>Notes
                     <textarea name="notes" placeholder="Extra context, links or agreements">{escape(form_data.get('notes', ''))}</textarea>
                 </label>
                 <button type="submit" class="btn">Add Task</button>
             </form>
+            </div>
         </details>
         """
 
     task_cards = ""
     for row in rows:
-        response_html = f'<div class="task-note">{escape(row.response_text)}</div>' if (row.response_text or "").strip() else '<div class="task-answer-empty">Ответа пока нет</div>'
+        response_html = f'<div class="task-note">{escape(row.response_text)}</div>' if (row.response_text or "").strip() else '<div class="task-answer-empty">No reply yet</div>'
         due_text = format_datetime_human(row.due_at)
         answered_text = format_datetime_human(row.answered_at) if row.answered_at else "Нет ответа"
         admin_controls = ""
@@ -4714,37 +4892,48 @@ def tasks_page_html(current_user, rows, filter_values=None, form_data=None, succ
         <div class="task-card">
             <div class="task-head">
                 <div>
-                    <div class="task-title">{escape(row.title or "Без названия")}</div>
-                    <div class="muted">{escape(row.description or "Без описания")}</div>
+                    <div class="task-title">{escape(row.title or "Untitled")}</div>
+                    <div class="muted">{escape(row.description or "No description")}</div>
                 </div>
                 <div class="task-meta">
-                    <div class="task-chip">Статус: {escape(row.status or "Не начато")}</div>
-                    <div class="task-chip">Срок: {escape(due_text)}</div>
-                    <div class="task-chip">Ответ: {escape(answered_text)}</div>
+                    <div class="task-chip">Status: {escape(row.status or "Not started")}</div>
+                    <div class="task-chip">Due: {escape(due_text)}</div>
+                    <div class="task-chip">Reply: {escape(answered_text)}</div>
                     {admin_controls}
                 </div>
             </div>
             <div class="task-body">
                 <div>
-                    <div class="panel-subtitle" style="margin-bottom:8px;">Task Brief</div>
+                    <div class="muted" style="margin-bottom:8px; font-size:12px; font-weight:800;">Task Brief</div>
                     <div class="task-note">{escape(row.notes or "No extra notes")}</div>
                 </div>
                 <div>
-                    <div class="panel-subtitle" style="margin-bottom:8px;">Assignee Reply</div>
+                    <div class="muted" style="margin-bottom:8px; font-size:12px; font-weight:800;">Assignee Reply</div>
                     {response_html}
                 </div>
             </div>
-            <div class="muted" style="margin-top:12px;">От {escape(row.created_by_name or row.created_by_username)} · создано {escape(format_datetime_human(row.created_at))}</div>
+            <div class="muted" style="margin-top:12px;">By {escape(row.created_by_name or row.created_by_username)} · created {escape(format_datetime_human(row.created_at))}</div>
             {respond_block}
         </div>
         """
 
-    subtitle = "Tasks and deadlines." if is_admin_role(current_user) else "Your current tasks."
     content = f"""
     {message_html}
     <div class="panel compact-panel">
-        <div class="panel-title">Tasks</div>
-        <div class="panel-subtitle">{subtitle}</div>
+        <div class="controls-line">
+            <div class="toolbar-actions">
+                <div class="panel compact-panel filters">
+                    <form method="get" action="/tasks">
+                        {assignee_filter_rendered}
+                        <label>Статус<select name="status">{status_options_html}</select></label>
+                        <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="Search tasks"></label>
+                        <button type="submit" class="btn small-btn">Filter</button>
+                        <a href="/tasks" class="ghost-btn small-btn">Reset</a>
+                    </form>
+                </div>
+                {create_block}
+            </div>
+        </div>
     </div>
 
     <div class="panel compact-panel">
@@ -4757,19 +4946,8 @@ def tasks_page_html(current_user, rows, filter_values=None, form_data=None, succ
     </div>
 
     <div class="tasks-layout">
-        {create_block}
         <div>
-            <div class="panel compact-panel filters">
-                <div class="panel-title">Filters</div>
-                <form method="get" action="/tasks">
-                    {assignee_filter_rendered}
-                    <label>Статус<select name="status">{status_options_html}</select></label>
-                    <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="Search tasks"></label>
-                    <button type="submit" class="btn small-btn">Filter</button>
-                    <a href="/tasks" class="ghost-btn small-btn">Reset</a>
-                </form>
-            </div>
-            <div class="task-stack">{task_cards if task_cards else '<div class="panel">Нет задач</div>'}</div>
+            <div class="task-stack">{task_cards if task_cards else '<div class="panel">No tasks</div>'}</div>
         </div>
     </div>
     """
@@ -5067,11 +5245,22 @@ def chatterfy_page_html(
     {message_html}
 
     <div class="panel compact-panel">
-        <div class="controls-line">
-            <div>
-                <div class="panel-title" style="margin-bottom:4px;">Chatterfy Report</div>
-            </div>
-            <div style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; justify-content:flex-end;">
+        <div class="toolbar-actions">
+                <div class="panel compact-panel filters">
+                    <form method="get" action="/chatterfy" style="justify-content:flex-end;">
+                        <label>Date<input type="text" name="date_filter" value="{escape(date_filter)}" placeholder="27.03.2026"></label>
+                        <label>Time<input type="text" name="time_filter" value="{escape(time_filter)}" placeholder="09:3"></label>
+                        <label>View<select name="period_view">{period_view_options}</select></label>
+                        <label>Period<select name="period_label">{period_options}</select></label>
+                        <label>Telegram ID<input type="text" name="telegram_id" value="{escape(telegram_id)}" placeholder="5065148172"></label>
+                        <label>ID in PP<input type="text" name="pp_player_id" value="{escape(pp_player_id)}" placeholder="1601157577"></label>
+                        <label>Status<select name="status">{status_options}</select></label>
+                        <label>Search<input type="text" name="search" value="{escape(search)}" placeholder="tags, manager, geo, offer"></label>
+                        <input type="hidden" name="page" value="1">
+                        <button type="submit" class="btn small-btn">Filter</button>
+                        <a href="/chatterfy" class="ghost-btn small-btn">Reset</a>
+                    </form>
+                </div>
                 <details class="upload-menu">
                     <summary class="btn toggle-indicator" style="width:34px; height:34px; border-radius:10px;"></summary>
                     <div class="upload-menu-list">
@@ -5089,26 +5278,7 @@ def chatterfy_page_html(
                         </form>
                     </div>
                 </details>
-                <div class="panel compact-panel filters" style="margin:0; min-width:620px;">
-                    <form method="get" action="/chatterfy" style="justify-content:flex-end;">
-                        <label>Date<input type="text" name="date_filter" value="{escape(date_filter)}" placeholder="27.03.2026"></label>
-                        <label>Time<input type="text" name="time_filter" value="{escape(time_filter)}" placeholder="09:3"></label>
-                        <label>View<select name="period_view">{period_view_options}</select></label>
-                        <label>Period<select name="period_label">{period_options}</select></label>
-                        <label>Telegram ID<input type="text" name="telegram_id" value="{escape(telegram_id)}" placeholder="5065148172"></label>
-                        <label>ID in PP<input type="text" name="pp_player_id" value="{escape(pp_player_id)}" placeholder="1601157577"></label>
-                        <label>Status<select name="status">{status_options}</select></label>
-                        <label>Search<input type="text" name="search" value="{escape(search)}" placeholder="tags, manager, geo, offer"></label>
-                        <input type="hidden" name="page" value="1">
-                        <button type="submit" class="btn small-btn">Filter</button>
-                        <a href="/chatterfy" class="btn small-btn">Reset</a>
-                    </form>
-                </div>
-            </div>
-        </div>
-        <div class="controls-line" style="margin-top:12px;">
-            <div></div>
-            <div class="column-menu-wrap">
+                <div class="column-menu-wrap">
                 <button type="button" class="ghost-btn small-btn" onclick="toggleChatterfyColumnMenu()">⚙️ Columns</button>
                 <div class="column-menu" id="chatterfyColumnMenu">
                     <div class="column-actions">
@@ -5141,11 +5311,11 @@ def chatterfy_page_html(
                         <th data-col="status"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("status", "Status")}<span class="resizer"></span></div></th>
                     </tr>
                 </thead>
-                <tbody>{rows_html if rows_html else '<tr><td colspan="16">Нет данных</td></tr>'}</tbody>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="16">No data</td></tr>'}</tbody>
             </table>
         </div>
         <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:14px; flex-wrap:wrap;">
-            <div class="panel-subtitle">Showing {len(rows)} of {total_count}</div>
+            <div class="user-chip">{len(rows)} / {total_count}</div>
             <div style="display:flex; gap:8px; align-items:center;">
                 {f'<a href="{prev_link}" class="ghost-btn small-btn">Prev</a>' if prev_link else '<span class="ghost-btn small-btn" style="opacity:0.45; pointer-events:none;">Prev</span>'}
                 <span class="user-chip">Page {page} / {total_pages}</span>
@@ -5207,16 +5377,19 @@ def hold_wager_page_html(current_user, rows, cabinet_name="", period_view="all",
 
     content = f"""
     {message_html}
-    <div class="panel compact-panel filters">
-        <div class="panel-title">Filters</div>
-        <form method="get" action="/hold-wager">
-            <label>View<select name="period_view">{period_view_options}</select></label>
-            <label>Period<select name="period_label">{period_options}</select></label>
-            <label>Cabinet<select name="cabinet_name">{cabinet_options}</select></label>
-            <label>Search<input type="text" name="search" value="{escape(search)}" placeholder="subid, player id, country"></label>
-            <button type="submit" class="btn small-btn">Filter</button>
-            <a href="/hold-wager" class="ghost-btn small-btn">Reset</a>
-        </form>
+    <div class="panel compact-panel">
+        <div class="toolbar-actions">
+            <div class="panel compact-panel filters">
+                <form method="get" action="/hold-wager">
+                    <label>View<select name="period_view">{period_view_options}</select></label>
+                    <label>Period<select name="period_label">{period_options}</select></label>
+                    <label>Cabinet<select name="cabinet_name">{cabinet_options}</select></label>
+                    <label>Search<input type="text" name="search" value="{escape(search)}" placeholder="subid, player id, country"></label>
+                    <button type="submit" class="btn small-btn">Filter</button>
+                    <a href="/hold-wager" class="ghost-btn small-btn">Reset</a>
+                </form>
+            </div>
+        </div>
     </div>
 
     <div class="panel compact-panel">
@@ -5228,12 +5401,6 @@ def hold_wager_page_html(current_user, rows, cabinet_name="", period_view="all",
     </div>
 
     <div class="panel compact-panel">
-        <div class="controls-line">
-            <div>
-                <div class="panel-title" style="margin-bottom:4px;">Hold/Wager Review</div>
-        <div class="panel-subtitle">Players from 1xBet who do not pass cap baseline rules, with linked status and quick chat access.</div>
-            </div>
-        </div>
         <div class="table-wrap">
             <table style="min-width:1600px;">
                 <thead>
@@ -5316,12 +5483,15 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
     {message_html}
 
     <div class="panel compact-panel">
-        <div class="controls-line">
-            <div>
-                <div class="panel-title" style="margin-bottom:4px;">Partners</div>
-                <div class="panel-subtitle">Manage partners, platforms, cabinet names, contacts and linked wallets.</div>
-            </div>
-            <div style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; justify-content:flex-end;">
+        <div class="toolbar-actions">
+                <div class="panel compact-panel filters">
+                    <form method="get" action="/cabinets" style="justify-content:flex-end;">
+                        <label>Status<select name="status">{status_options}</select></label>
+                        <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="advertiser, platform, cabinet, geo, brands, team"></label>
+                        <button type="submit" class="btn small-btn">Filter</button>
+                        <a href="/cabinets" class="ghost-btn small-btn">Reset</a>
+                    </form>
+                </div>
                 <details class="upload-menu" {open_attr}>
                     <summary class="btn toggle-indicator"></summary>
                     <div class="upload-menu-list" style="width:520px; max-width:min(520px, calc(100vw - 48px));">
@@ -5367,15 +5537,6 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
                         </form>
                     </div>
                 </details>
-                <div class="panel compact-panel filters" style="margin:0; min-width:460px;">
-                    <form method="get" action="/cabinets" style="justify-content:flex-end;">
-                        <label>Status<select name="status">{status_options}</select></label>
-                        <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="advertiser, platform, cabinet, geo, brands, team"></label>
-                        <button type="submit" class="btn small-btn">Filter</button>
-                        <a href="/cabinets" class="ghost-btn small-btn">Reset</a>
-                    </form>
-                </div>
-            </div>
         </div>
         <div class="table-wrap">
             <table style="min-width:1200px;">
@@ -5409,6 +5570,7 @@ def partner_report_page_html(
     rows,
     source_name="",
     cabinet_name="",
+    upload_platform="1xbet",
     country="",
     search="",
     period_view="all",
@@ -5429,6 +5591,10 @@ def partner_report_page_html(
     period_options = make_options(build_period_options(), period_label)
     source_options = make_options(all_sources, source_name)
     cabinet_options = make_options(all_cabinets, cabinet_name)
+    upload_platform_options = "".join([
+        f'<option value="{escape(value)}" {"selected" if normalize_partner_platform(upload_platform) == value else ""}>{escape(label)}</option>'
+        for value, label in get_partner_platform_options()
+    ])
     upload_cabinet_options = "".join([
         f'<option value="{escape(name)}">{escape(name)}</option>'
         for name in upload_cabinets
@@ -5447,6 +5613,7 @@ def partner_report_page_html(
             <td>{escape(partner_row_period_label(row))}</td>
             <td>{escape(row.registration_date or "")}</td>
             <td>{escape(row.cabinet_name or "")}</td>
+            <td>{escape('CellXpert' if getattr(row, 'partner_platform', '1xbet') == 'cellxpert' else '1xBet')}</td>
             <td>{escape(row.sub_id or "")}</td>
             <td>{escape(row.player_id or "")}</td>
             <td>{escape(getattr(row, "telegram_id", "") or "")}</td>
@@ -5493,27 +5660,8 @@ def partner_report_page_html(
     {message_html}
 
     <div class="panel compact-panel">
-        <div class="controls-line">
-            <div>
-                <div class="panel-title" style="margin-bottom:4px;">1xBet Report</div>
-                <div class="panel-subtitle">Manual uploads by cabinet. These rows feed the shared statistic layer.</div>
-            </div>
-            <div style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; justify-content:flex-end;">
-                <details class="upload-menu upload-menu-left" style="z-index:90;">
-                    <summary class="btn toggle-indicator"></summary>
-                    <div class="upload-menu-list" style="width:380px; max-width:min(380px, calc(100vw - 48px));">
-                        <form method="post" action="/partner-report/upload" enctype="multipart/form-data">
-                            <label>Cabinet
-                                <select name="cabinet_name" required>{upload_cabinet_options}</select>
-                            </label>
-                            <label>Partner File
-                                <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
-                            </label>
-                            <button type="submit" class="btn small-btn">Upload</button>
-                        </form>
-                    </div>
-                </details>
-                <div class="panel compact-panel filters" style="margin:0; min-width:720px;">
+        <div class="toolbar-actions">
+                <div class="panel compact-panel filters">
                     <form method="get" action="/partner-report" style="justify-content:flex-end;">
                         <label>Upload<select name="source_name">{source_options}</select></label>
                         <label>View<select name="period_view">{period_view_options}</select></label>
@@ -5525,7 +5673,23 @@ def partner_report_page_html(
                         <a href="/partner-report" class="ghost-btn small-btn">Reset</a>
                     </form>
                 </div>
-            </div>
+                <details class="upload-menu upload-menu-left" style="z-index:90;">
+                    <summary class="btn toggle-indicator"></summary>
+                    <div class="upload-menu-list" style="width:380px; max-width:min(380px, calc(100vw - 48px));">
+                        <form method="post" action="/partner-report/upload" enctype="multipart/form-data">
+                            <label>Platform
+                                <select name="partner_platform" required>{upload_platform_options}</select>
+                            </label>
+                            <label>Cabinet
+                                <select name="cabinet_name" required>{upload_cabinet_options}</select>
+                            </label>
+                            <label>Partner File
+                                <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
+                            </label>
+                            <button type="submit" class="btn small-btn">Upload</button>
+                        </form>
+                    </div>
+                </details>
         </div>
     </div>
 
@@ -5546,6 +5710,7 @@ def partner_report_page_html(
                         <th>{header_link('period_label', 'Period')}</th>
                         <th>{header_link('registration_date', 'Registration')}</th>
                         <th>{header_link('cabinet_name', 'Cabinet')}</th>
+                        <th>{header_link('partner_platform', 'Platform')}</th>
                         <th>{header_link('sub_id', 'Promo/Link')}</th>
                         <th>{header_link('player_id', 'Player ID')}</th>
                         <th>{header_link('telegram_id', 'ID Chatterfy')}</th>
@@ -5560,7 +5725,7 @@ def partner_report_page_html(
                         <th>{header_link('source_name', 'Upload')}</th>
                     </tr>
                 </thead>
-                <tbody>{rows_html if rows_html else '<tr><td colspan="16">No partner rows yet</td></tr>'}</tbody>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="17">No partner rows yet</td></tr>'}</tbody>
             </table>
         </div>
     </div>
@@ -5678,7 +5843,7 @@ def save_task(
     finally:
         db.close()
 
-    return RedirectResponse(url="/tasks?message=Задача поставлена", status_code=303)
+    return RedirectResponse(url="/tasks?message=Task+created", status_code=303)
 
 
 @app.post("/tasks/upload")
@@ -5716,7 +5881,7 @@ def delete_task(request: Request, task_id: str = Form(...)):
         db.commit()
     finally:
         db.close()
-    return RedirectResponse(url="/tasks?message=Задача удалена", status_code=303)
+    return RedirectResponse(url="/tasks?message=Task+deleted", status_code=303)
 
 
 @app.post("/tasks/respond")
@@ -5738,7 +5903,7 @@ def respond_task(
     try:
         task = db.query(TaskRow).filter(TaskRow.id == safe_number(task_id)).first()
         if not task:
-            return RedirectResponse(url="/tasks?message=Задача не найдена", status_code=303)
+            return RedirectResponse(url="/tasks?message=Task+not+found", status_code=303)
         if not is_admin_role(user) and task.assigned_to_username != user.get("username"):
             raise HTTPException(status_code=403)
         task.status = status
@@ -6097,32 +6262,26 @@ def show_grouped_table(
     upload_block = ""
     if is_admin_role(user):
         upload_block = '''
-        <div class="panel compact-panel">
-            <div class="panel-title">Upload Data</div>
-            <form method="post" action="/upload" enctype="multipart/form-data" class="upload-form">
-                <label>Buyer
-                    <input type="text" name="buyer" required placeholder="Example: TeamBead1">
-                </label>
-                <label>CSV / XLSX
-                    <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
-                </label>
-                <button type="submit" class="upload-btn">Upload</button>
-            </form>
-            <div class="hint">If you upload the same buyer again, old rows are replaced with new ones.</div>
-        </div>
+        <details class="upload-menu upload-menu-right">
+            <summary class="btn toggle-indicator"></summary>
+            <div class="upload-menu-list" style="width:360px; max-width:min(360px, calc(100vw - 48px));">
+                <form method="post" action="/upload" enctype="multipart/form-data">
+                    <label>Buyer
+                        <input type="text" name="buyer" required placeholder="Example: TeamBead1">
+                    </label>
+                    <label>CSV / XLSX
+                        <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
+                    </label>
+                    <button type="submit" class="btn small-btn">Upload</button>
+                </form>
+            </div>
+        </details>
         '''
-    elif user.get("role") == "buyer":
-        upload_block = '<div class="panel compact-panel"><div class="panel-title">Access</div><div class="hint">Buyer can only view data for their own buyer. Upload and CSV are hidden.</div></div>'
-    else:
-        upload_block = '<div class="panel compact-panel"><div class="panel-title">Access</div><div class="hint">Operator can only view FB pages without upload and CSV access.</div></div>'
 
     content = f'''
-    <div class="toolbar-grid">
-        {upload_block}
-
-        <div class="panel compact-panel">
-            <div class="panel-title">Filters</div>
-            <div class="filters">
+    <div class="panel compact-panel">
+        <div class="toolbar-actions">
+            <div class="panel compact-panel filters">
                 <form method="get" action="/grouped">
                     {'<label>Buyer<select name="buyer">' + buyer_options + '</select></label>' if is_admin_role(user) or user.get("role") == "operator" else ''}
                     <label>Manager<select name="manager">{manager_options}</select></label>
@@ -6135,19 +6294,9 @@ def show_grouped_table(
                     <a href="/grouped" class="ghost-btn small-btn">Reset</a>
                 </form>
             </div>
-        </div>
-    </div>
-
-    {render_stats_cards(totals)}
-
-    <div class="panel compact-panel">
-        <div class="controls-line">
-            <div>
-                <div class="panel-title" style="margin-bottom:4px;">Export Table</div>
-                <div class="panel-subtitle">Columns can be dragged by the header and resized from the right edge.</div>
-            </div>
+            {upload_block}
             <div class="column-menu-wrap">
-                <button type="button" class="ghost-btn small-btn" onclick="toggleColumnMenu()">⚙️ Колонки</button>
+                <button type="button" class="ghost-btn small-btn" onclick="toggleColumnMenu()">⚙️ Columns</button>
                 <div class="column-menu" id="columnMenu">
                     <div class="column-actions">
                         <button type="button" class="ghost-btn small-btn" onclick="showAllColumns()">Show All</button>
@@ -6157,11 +6306,15 @@ def show_grouped_table(
                 </div>
             </div>
         </div>
+    </div>
 
+    {render_stats_cards(totals)}
+
+    <div class="panel compact-panel">
         <div class="table-wrap">
             <table id="groupedTable">
                 <thead><tr>{head_html}</tr></thead>
-                <tbody>{rows_html if rows_html else '<tr><td colspan="19">Нет данных</td></tr>'}</tbody>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="19">No data</td></tr>'}</tbody>
             </table>
         </div>
     </div>
@@ -6331,8 +6484,7 @@ def show_grouped_table(
 # =========================================
 # BLOCK 11 — STATISTIC PAGE
 # =========================================
-@app.get("/hierarchy", response_class=HTMLResponse)
-def show_hierarchy(
+def render_dashboard_page(
     request: Request,
     buyer: str = Query(default=""),
     manager: str = Query(default=""),
@@ -6367,33 +6519,59 @@ def show_hierarchy(
     export_link = f"/export/hierarchy?{export_qs}" if export_qs else "/export/hierarchy"
 
     content = f'''
-    <div class="panel compact-panel filters">
-        <div class="panel-title">Filters</div>
-        <form method="get" action="/hierarchy">
-            {'<label>Buyer<select name="buyer">' + buyer_options + '</select></label>' if is_admin_role(user) or user.get("role") == "operator" else ''}
-            <label>Manager<select name="manager">{manager_options}</select></label>
-            <label>Geo<select name="geo">{geo_options}</select></label>
-            <label>Offer<select name="offer">{offer_options}</select></label>
-            <label>View<select name="period_view">{period_view_options}</select></label>
-            <label>Period<select name="period_label">{period_options}</select></label>
-            <label>Search<input type="text" name="search" value="{escape(search)}"></label>
-            <button type="submit" class="btn small-btn">Filter</button>
-            <a href="/hierarchy" class="ghost-btn small-btn">Reset</a>
-        </form>
+    <div class="panel compact-panel">
+        <div class="toolbar-actions">
+            <div class="panel compact-panel filters">
+                <form method="get" action="/dashboard">
+                    {'<label>Buyer<select name="buyer">' + buyer_options + '</select></label>' if is_admin_role(user) or user.get("role") == "operator" else ''}
+                    <label>Manager<select name="manager">{manager_options}</select></label>
+                    <label>Geo<select name="geo">{geo_options}</select></label>
+                    <label>Offer<select name="offer">{offer_options}</select></label>
+                    <label>View<select name="period_view">{period_view_options}</select></label>
+                    <label>Period<select name="period_label">{period_options}</select></label>
+                    <label>Search<input type="text" name="search" value="{escape(search)}"></label>
+                    <button type="submit" class="btn small-btn">Filter</button>
+                    <a href="/dashboard" class="ghost-btn small-btn">Reset</a>
+                </form>
+            </div>
+        </div>
     </div>
 
     {render_statistic_cards(totals)}
-
-    <div class="panel compact-panel">
-        <div class="panel-title">Statistic Center</div>
-        <div class="panel-subtitle">One shared view for FB costs, Chatterfy volume, 1xBet qualification and cap-based income.</div>
-    </div>
 
     {render_statistic_dashboard(rows)}
     '''
 
     top_actions = f'<a class="small-btn" href="{export_link}">⬇ CSV</a>' if is_admin_role(user) else ""
-    return page_shell("FB — Statistic", content, "hierarchy", top_actions=top_actions, current_user=user)
+    return page_shell("Dashboard", content, "dashboard", top_actions=top_actions, current_user=user)
+
+
+@app.get("/hierarchy", response_class=HTMLResponse)
+def show_hierarchy(
+    request: Request,
+    buyer: str = Query(default=""),
+    manager: str = Query(default=""),
+    geo: str = Query(default=""),
+    offer: str = Query(default=""),
+    search: str = Query(default=""),
+    period_view: str = Query(default="all"),
+    period_label: str = Query(default=""),
+):
+    return render_dashboard_page(request, buyer, manager, geo, offer, search, period_view, period_label)
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def show_dashboard(
+    request: Request,
+    buyer: str = Query(default=""),
+    manager: str = Query(default=""),
+    geo: str = Query(default=""),
+    offer: str = Query(default=""),
+    search: str = Query(default=""),
+    period_view: str = Query(default="all"),
+    period_label: str = Query(default=""),
+):
+    return render_dashboard_page(request, buyer, manager, geo, offer, search, period_view, period_label)
 
 
 # =========================================
@@ -7108,6 +7286,7 @@ def partner_report_page(
 @app.post("/partner-report/upload")
 async def upload_partner_report_file(
     request: Request,
+    partner_platform: str = Form(default="1xbet"),
     cabinet_name: str = Form(default=""),
     file: UploadFile = File(...),
 ):
@@ -7119,8 +7298,9 @@ async def upload_partner_report_file(
     ensure_cabinet_table()
 
     clean_cabinet_name = safe_text(cabinet_name)
+    clean_platform = normalize_partner_platform(partner_platform)
     if not clean_cabinet_name:
-        return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), error_text="Choose a cabinet before upload."), status_code=400)
+        return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=clean_platform, error_text="Choose a cabinet before upload."), status_code=400)
 
     original_name = file.filename or "partner_report.xlsx"
     ext = os.path.splitext(original_name)[1].lower() or ".xlsx"
@@ -7129,19 +7309,29 @@ async def upload_partner_report_file(
         with open(filename, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        df = read_partner_uploaded_dataframe(filename, ext)
-        detected_period = detect_partner_period_from_dataframe(df) or get_half_month_period()
+        if clean_platform == "cellxpert":
+            df = read_cellxpert_uploaded_dataframe(filename, ext)
+        else:
+            df = read_partner_uploaded_dataframe(filename, ext)
+        detected_period = (
+            detect_partner_period_from_dataframe(df)
+            or detect_period_from_dataframe_dates(df, "Registration Date")
+            or detect_period_from_dataframe_dates(df, "Дата регистрации")
+            or get_half_month_period()
+        )
         source_prefix = clean_cabinet_name.replace("|", "/")
+        if clean_platform == "cellxpert":
+            source_prefix = f"cellxpert/{source_prefix}"
         final_source_name = build_partner_source_name(
             detected_period["date_start"],
             detected_period["date_end"],
             prefix=source_prefix,
         )
-        rows = parse_partner_dataframe(df, source_name=final_source_name, cabinet_name=clean_cabinet_name)
+        rows = parse_partner_dataframe(df, source_name=final_source_name, cabinet_name=clean_cabinet_name, partner_platform=clean_platform)
         replace_partner_rows(final_source_name, rows)
         return RedirectResponse(url="/partner-report?message=Upload+saved", status_code=303)
     except Exception as exc:
-        return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), error_text=f"Could not process partner file: {exc}"), status_code=400)
+        return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=clean_platform, error_text=f"Could not process partner file: {exc}"), status_code=400)
     finally:
         if os.path.exists(filename):
             os.remove(filename)
