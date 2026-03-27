@@ -369,6 +369,24 @@ def enforce_page_access(user, page_key: str):
         raise HTTPException(status_code=403)
 
 
+def display_user_id(value) -> str:
+    try:
+        return str(1000 + int(value))
+    except Exception:
+        return "1000"
+
+
+def role_label(role: str) -> str:
+    mapping = {
+        "superadmin": "Founder",
+        "admin": "Admin",
+        "buyer": "Buyer",
+        "operator": "Operator",
+        "finance": "Finance",
+    }
+    return mapping.get((role or "").strip(), role or "User")
+
+
 def resolve_effective_buyer(user, buyer: str = "") -> str:
     if (user or {}).get("role") == "buyer":
         return ((user or {}).get("buyer_name") or "").strip()
@@ -1581,8 +1599,6 @@ def sidebar_html(active_page, current_user=None):
         ("onexbet_report", "/1xbet-report", "🎰", "1xBet Отчет", []),
         ("chatterfy", "/chatterfy", "💬", "Chatterfy", []),
         ("holdwager", "/hold-wager", "🎯", "Hold/Wager", []),
-        ("tasks", "/tasks", "✅", "Tasks", []),
-        ("users", "/users", "🧑", "Users", []),
     ]
 
     html = '''
@@ -1619,7 +1635,28 @@ def sidebar_html(active_page, current_user=None):
             active_class = "sidebar-standalone active-link" if active_page == key else "sidebar-standalone"
             html += f'<a href="{href}" class="{active_class}"><span class="side-emoji">{icon}</span><span>{title}</span></a>'
 
-    html += '</aside>'
+    bottom_links = ""
+    if can_access_page(current_user, "tasks"):
+        active_class = "sidebar-standalone subtle-link active-link" if active_page == "tasks" else "sidebar-standalone subtle-link"
+        bottom_links += f'<a href="/tasks" class="{active_class}"><span class="side-emoji">✅</span><span>Tasks</span></a>'
+    if can_access_page(current_user, "users"):
+        active_class = "sidebar-standalone subtle-link active-link" if active_page == "users" else "sidebar-standalone subtle-link"
+        bottom_links += f'<a href="/users" class="{active_class}"><span class="side-emoji">🧑</span><span>Users</span></a>'
+
+    html += f'''
+        <div class="sidebar-bottom">
+            <div class="sidebar-bottom-links">{bottom_links}</div>
+            <div class="sidebar-user">
+                <div class="user-chip sidebar-user-chip">👤 {escape((current_user or {}).get("display_name", "Гость"))} · {escape(role_label((current_user or {}).get("role", "guest")))}</div>
+                <div class="sidebar-mini-actions">
+                    <a class="ghost-btn small-btn minimal-btn" href="/logout">Logout</a>
+                    <button class="ghost-btn small-btn minimal-btn" onclick="toggleRowColors()">Rows</button>
+                    <button class="ghost-btn small-btn minimal-btn" onclick="toggleTheme()">Theme</button>
+                </div>
+            </div>
+        </div>
+    </aside>
+    '''
     return html
 
 
@@ -1695,6 +1732,8 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 top: 0;
                 height: 100vh;
                 overflow-y: auto;
+                display:flex;
+                flex-direction:column;
             }}
             body.light .sidebar {{ background: linear-gradient(180deg, #ffffff, #f3f8ff); }}
             .sidebar-brand {{
@@ -1736,6 +1775,13 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 gap: 10px;
             }}
             .sidebar-group summary::-webkit-details-marker {{ display: none; }}
+            .sidebar-group summary::after {{
+                content: "▾";
+                margin-left: auto;
+                opacity: .72;
+                font-size: 13px;
+            }}
+            .sidebar-group[open] summary::after {{ transform: rotate(180deg); }}
             .side-emoji {{ width: 22px; text-align: center; font-size: 18px; flex-shrink: 0; }}
             .sidebar-links {{ display: flex; flex-direction: column; gap: 8px; padding: 0 10px 10px; }}
             .sidebar-links a {{
@@ -1749,6 +1795,41 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .active-link {{
                 background: linear-gradient(90deg, rgba(56,189,248,0.25), rgba(37,99,235,0.25));
                 outline: 1px solid rgba(56,189,248,0.3);
+            }}
+            .subtle-link {{ opacity: 0.84; }}
+            .sidebar-bottom {{
+                margin-top:auto;
+                padding-top:14px;
+                display:grid;
+                gap:12px;
+            }}
+            .sidebar-bottom-links {{ display:grid; gap:10px; }}
+            .sidebar-user {{
+                border:1px solid var(--border);
+                background: var(--panel);
+                border-radius:16px;
+                padding:12px;
+                box-shadow: var(--shadow);
+                display:grid;
+                gap:10px;
+            }}
+            .sidebar-user-chip {{
+                justify-content:center;
+                font-size:11px;
+                padding:8px 10px;
+            }}
+            .sidebar-mini-actions {{
+                display:grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap:8px;
+            }}
+            .minimal-btn {{
+                background: transparent;
+                color: var(--text);
+                padding: 8px 10px;
+                border-radius: 10px;
+                font-size: 12px;
+                font-weight: 800;
             }}
             .main {{ flex: 1; padding: 22px; overflow-x: hidden; }}
             .topbar {{ display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 18px; }}
@@ -1782,6 +1863,7 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 padding: 16px;
                 margin-bottom: 16px;
             }}
+            .panel > summary::-webkit-details-marker {{ display:none; }}
             .compact-panel {{ padding: 14px 16px; }}
             .panel-title {{ font-size: 15px; font-weight: 900; margin-bottom: 12px; }}
             .panel-subtitle {{ color: var(--muted); font-size: 13px; }}
@@ -2105,10 +2187,6 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                     </div>
                     <div class="top-actions">
                         {top_actions}
-                        <div class="user-chip">👤 {escape((current_user or {}).get("display_name", "Гость"))} · {escape((current_user or {}).get("role", "guest"))}</div>
-                        <a class="ghost-btn small-btn" href="/logout">↩ Logout</a>
-                        <button class="ghost-btn small-btn" onclick="toggleRowColors()">🎨 Цвета строк</button>
-                        <button class="ghost-btn small-btn" onclick="toggleTheme()">🌙 / ☀️ Тема</button>
                     </div>
                 </div>
                 {content}
@@ -2247,11 +2325,11 @@ def users_page_html(current_user, error_text="", success_text="", form_data=None
     active_checked = "checked" if str(form_data.get("is_active", "1")) == "1" else ""
     current_edit_id = str(form_data.get("edit_user_id") or "")
     role_options = [
-        ("superadmin", "superadmin"),
-        ("admin", "admin"),
-        ("buyer", "buyer"),
-        ("operator", "operator"),
-        ("finance", "finance"),
+        ("superadmin", "Founder"),
+        ("admin", "Admin"),
+        ("buyer", "Buyer"),
+        ("operator", "Operator"),
+        ("finance", "Finance"),
     ]
     role_html = "".join([
         f'<option value="{value}" {"selected" if role_value == value else ""}>{label}</option>'
@@ -2270,10 +2348,10 @@ def users_page_html(current_user, error_text="", success_text="", form_data=None
             """
         rows_html += f"""
         <tr>
-            <td>{item.id}</td>
+            <td>{display_user_id(item.id)}</td>
             <td>{escape(item.display_name or item.username)}</td>
             <td>{escape(item.username)}</td>
-            <td>{escape(item.role or "buyer")}</td>
+            <td>{escape(role_label(item.role or "buyer"))}</td>
             <td>{escape(item.buyer_name or "—")}</td>
             <td><span class="status-dot {'off' if not item.is_active else ''}"></span> {'Active' if item.is_active else 'Disabled'}</td>
             <td>
@@ -2290,52 +2368,58 @@ def users_page_html(current_user, error_text="", success_text="", form_data=None
 
     mode_title = "Редактирование пользователя" if current_edit_id else "Новый пользователь"
     submit_label = "Сохранить изменения" if current_edit_id else "Создать пользователя"
-    password_hint = "Оставь пустым, если пароль менять не нужно." if current_edit_id else "Минимум 4 символа."
+    password_hint = "Оставь пустым, если пароль менять не нужно." if current_edit_id else "Пароль"
     message_html = ""
     if error_text:
         message_html += f'<div class="notice notice-danger">{escape(error_text)}</div>'
     if success_text:
         message_html += f'<div class="notice">{escape(success_text)}</div>'
 
+    create_panel = f"""
+    <details class="panel" {'open' if current_edit_id else ''}>
+        <summary class="panel-title" style="cursor:pointer; list-style:none; display:flex; align-items:center; justify-content:space-between;">
+            <span>{'Edit User' if current_edit_id else 'Add User'}</span>
+            <span class="btn" style="width:38px; height:38px; padding:0; border-radius:12px;">+</span>
+        </summary>
+        <form method="post" action="/users/save" class="users-form" style="margin-top:14px;">
+            <input type="hidden" name="edit_user_id" value="{escape(current_edit_id)}">
+            <label>Name
+                <input type="text" name="display_name" value="{escape(form_data.get('display_name', ''))}" required placeholder="Ivan">
+            </label>
+            <label>Login
+                <input type="text" name="username" value="{escape(form_data.get('username', ''))}" required placeholder="ivan">
+            </label>
+            <label>Password
+                <input type="text" name="password" value="" placeholder="{escape(password_hint)}">
+            </label>
+            <label>Buyer binding
+                <input type="text" name="buyer_name" value="{escape(form_data.get('buyer_name', ''))}" placeholder="TeamBead1">
+            </label>
+            <label>Role
+                <select name="role">{role_html}</select>
+            </label>
+            <label class="role-option">
+                <input type="checkbox" name="is_active" value="1" {active_checked}>
+                <span><strong>Active</strong><br><span class="muted">Пользователь может войти.</span></span>
+            </label>
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                <button type="submit" class="btn">{submit_label}</button>
+                <a href="/users" class="ghost-btn">Сбросить</a>
+            </div>
+        </form>
+    </details>
+    """
+
     content = f"""
     {message_html}
     <div class="users-layout">
-        <div class="panel">
-            <div class="panel-title">{mode_title}</div>
-            <div class="panel-subtitle">Роль, логин и buyer в одном месте.</div>
-            <form method="post" action="/users/save" class="users-form" style="margin-top:14px;">
-                <input type="hidden" name="edit_user_id" value="{escape(current_edit_id)}">
-                <label>Display name
-                    <input type="text" name="display_name" value="{escape(form_data.get('display_name', ''))}" required placeholder="Например: Alex Teamlead">
-                </label>
-                <label>Username
-                    <input type="text" name="username" value="{escape(form_data.get('username', ''))}" required placeholder="Например: alex">
-                </label>
-                <label>Password
-                    <input type="password" name="password" value="" placeholder="{escape(password_hint)}">
-                </label>
-                <label>Buyer binding
-                    <input type="text" name="buyer_name" value="{escape(form_data.get('buyer_name', ''))}" placeholder="Например: TeamBead1">
-                </label>
-                <label>Role
-                    <select name="role">{role_html}</select>
-                </label>
-                <label class="role-option">
-                    <input type="checkbox" name="is_active" value="1" {active_checked}>
-                    <span><strong>Активный</strong><br><span class="muted">Можно войти в систему.</span></span>
-                </label>
-                <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                    <button type="submit" class="btn">{submit_label}</button>
-                    <a href="/users" class="ghost-btn">Сбросить</a>
-                </div>
-            </form>
-        </div>
+        <div>{create_panel}</div>
 
         <div class="panel">
             <div class="controls-line">
                 <div>
                     <div class="panel-title" style="margin-bottom:4px;">Users</div>
-                    <div class="panel-subtitle">Список сотрудников и доступов.</div>
+                    <div class="panel-subtitle">Founder, сотрудники и доступы.</div>
                 </div>
             </div>
             <div class="table-wrap">
@@ -2894,9 +2978,11 @@ def tasks_page_html(current_user, rows, filter_values=None, form_data=None, succ
     if is_admin_role(current_user):
         due_selects = build_task_datetime_selects("due", form_data.get("due_at", ""))
         create_block = f"""
-        <div class="panel">
-            <div class="panel-title">Новая задача</div>
-            <div class="panel-subtitle">Поставь задачу и сразу выбери дедлайн.</div>
+        <details class="panel">
+            <summary class="panel-title" style="cursor:pointer; list-style:none; display:flex; align-items:center; justify-content:space-between;">
+                <span>Add Task</span>
+                <span class="btn" style="width:38px; height:38px; padding:0; border-radius:12px;">+</span>
+            </summary>
             <form method="post" action="/tasks/upload" enctype="multipart/form-data" class="tasks-form" style="margin-top:14px; margin-bottom:14px;">
                 <label>Импорт задач CSV
                     <input type="file" name="file" accept=".csv" required>
@@ -2925,7 +3011,7 @@ def tasks_page_html(current_user, rows, filter_values=None, form_data=None, succ
                 </label>
                 <button type="submit" class="btn">Добавить задачу</button>
             </form>
-        </div>
+        </details>
         """
 
     task_cards = ""
@@ -2990,11 +3076,11 @@ def tasks_page_html(current_user, rows, filter_values=None, form_data=None, succ
         </div>
         """
 
-    subtitle = "Ставь задачи, следи за ответами и сроками в одном месте." if is_admin_role(current_user) else "Здесь живут только твои задачи. Обновляй статус и оставляй ответ прямо в карточке."
+    subtitle = "Список задач и дедлайнов." if is_admin_role(current_user) else "Твои текущие задачи."
     content = f"""
     {message_html}
     <div class="panel compact-panel">
-        <div class="panel-title">Tasks center</div>
+        <div class="panel-title">Tasks</div>
         <div class="panel-subtitle">{subtitle}</div>
     </div>
 
