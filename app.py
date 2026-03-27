@@ -1914,9 +1914,14 @@ def sidebar_html(active_page, current_user=None):
             <div class="sidebar-user">
                 <div class="user-chip sidebar-user-chip">👤 {escape((current_user or {}).get("display_name", "Гость"))} · {escape(role_label((current_user or {}).get("role", "guest")))}</div>
                 <div class="sidebar-mini-actions">
-                    <a class="ghost-btn small-btn minimal-btn" href="/logout">Logout</a>
-                    <button class="ghost-btn small-btn minimal-btn" onclick="toggleRowColors()">Rows</button>
-                    <button class="ghost-btn small-btn minimal-btn" onclick="toggleTheme()">Theme</button>
+                    <a class="ghost-btn small-btn minimal-btn logout-btn" href="/logout">↩ Log Out</a>
+                    <details class="theme-menu">
+                        <summary class="ghost-btn small-btn minimal-btn">Theme</summary>
+                        <div class="theme-menu-list">
+                            <button type="button" class="ghost-btn small-btn minimal-btn" onclick="setTheme('dark')">Dark</button>
+                            <button type="button" class="ghost-btn small-btn minimal-btn" onclick="setTheme('light')">Light</button>
+                        </div>
+                    </details>
                 </div>
             </div>
         </div>
@@ -2095,8 +2100,9 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .sidebar-bottom-links .side-emoji {{ width: 18px; font-size: 15px; }}
             .sidebar-mini-actions {{
                 display:grid;
-                grid-template-columns: repeat(3, minmax(0, 1fr));
+                grid-template-columns: repeat(2, minmax(0, 1fr));
                 gap:8px;
+                align-items:start;
             }}
             .minimal-btn {{
                 background: transparent;
@@ -2105,6 +2111,52 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 border-radius: 10px;
                 font-size: 12px;
                 font-weight: 800;
+            }}
+            .logout-btn {{
+                color: #fca5a5;
+                border-color: rgba(239,68,68,0.28);
+            }}
+            .theme-menu {{ position: relative; }}
+            .theme-menu > summary {{
+                list-style: none;
+            }}
+            .theme-menu > summary::-webkit-details-marker {{ display:none; }}
+            .theme-menu-list {{
+                display:grid;
+                gap:8px;
+                margin-top:8px;
+                position:absolute;
+                bottom: calc(100% + 8px);
+                right: 0;
+                width: 140px;
+                padding: 10px;
+                border-radius: 14px;
+                border: 1px solid var(--border);
+                background: var(--panel);
+                box-shadow: var(--shadow);
+                z-index: 40;
+            }}
+            .toggle-indicator {{
+                width:38px;
+                height:38px;
+                padding:0;
+                border-radius:12px;
+                flex: 0 0 auto;
+                position: relative;
+            }}
+            .toggle-indicator::before {{
+                content:"+";
+                display:flex;
+                align-items:center;
+                justify-content:center;
+                width:100%;
+                height:100%;
+                font-size:20px;
+                font-weight:900;
+                line-height:1;
+            }}
+            details[open] > summary .toggle-indicator::before {{
+                content:"−";
             }}
             .main {{ flex: 1; padding: 22px; overflow-x: hidden; }}
             .topbar {{ display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 18px; }}
@@ -2126,9 +2178,14 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 justify-content: center;
                 gap: 8px;
                 transition: 0.18s ease;
+                min-height: 40px;
+                min-width: 104px;
+                font-size: 13px;
+                line-height: 1;
+                box-sizing: border-box;
             }}
             .ghost-btn {{ background: var(--panel-2); color: var(--text); }}
-            .small-btn {{ padding: 8px 12px; font-size: 13px; }}
+            .small-btn {{ padding: 10px 14px; font-size: 13px; }}
             .btn:hover, .small-btn:hover, .theme-toggle:hover, .filters button:hover, .filters a:hover, .upload-btn:hover, .ghost-btn:hover {{ transform: translateY(-1px); }}
             .panel {{
                 background: linear-gradient(180deg, var(--panel), var(--panel-2));
@@ -2469,27 +2526,23 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             </main>
         </div>
         <script>
-            function toggleTheme() {{
-                document.body.classList.toggle('light');
-                localStorage.setItem('teambead-theme', document.body.classList.contains('light') ? 'light' : 'dark');
+            function setTheme(mode) {{
+                if (mode === 'light') document.body.classList.add('light');
+                else document.body.classList.remove('light');
+                localStorage.setItem('teambead-theme', mode === 'light' ? 'light' : 'dark');
             }}
             (function initTheme() {{
                 const saved = localStorage.getItem('teambead-theme');
                 if (saved === 'light') document.body.classList.add('light');
-            }})();
-            function toggleRowColors() {{
-                document.body.classList.toggle('hide-row-colors');
-                localStorage.setItem('teambead-row-colors', document.body.classList.contains('hide-row-colors') ? 'off' : 'on');
-            }}
-            (function initRowColors() {{
-                const saved = localStorage.getItem('teambead-row-colors');
-                if (saved === 'off') document.body.classList.add('hide-row-colors');
             }})();
             document.addEventListener('click', function(e) {{
                 const wrap = document.querySelector('.column-menu-wrap');
                 const menu = document.getElementById('columnMenu');
                 if (!wrap || !menu) return;
                 if (!wrap.contains(e.target)) menu.classList.remove('open');
+                document.querySelectorAll('.theme-menu').forEach(function(item) {{
+                    if (!item.contains(e.target)) item.removeAttribute('open');
+                }});
             }});
         </script>
         {extra_scripts}
@@ -2641,7 +2694,7 @@ def users_page_html(current_user, error_text="", success_text="", form_data=None
         """
 
     mode_title = "Редактирование пользователя" if current_edit_id else "Новый пользователь"
-    submit_label = "Сохранить изменения" if current_edit_id else "Создать пользователя"
+    submit_label = "Save Changes" if current_edit_id else "Create User"
     password_hint = "Оставь пустым, если пароль менять не нужно." if current_edit_id else "Пароль"
     message_html = ""
     if error_text:
@@ -2653,7 +2706,7 @@ def users_page_html(current_user, error_text="", success_text="", form_data=None
     <details class="panel" {'open' if current_edit_id else ''}>
         <summary class="panel-title" style="cursor:pointer; list-style:none; display:flex; align-items:center; justify-content:space-between;">
             <span>{'Edit User' if current_edit_id else 'Add User'}</span>
-            <span class="btn" style="width:38px; height:38px; padding:0; border-radius:12px;">+</span>
+            <span class="btn toggle-indicator"></span>
         </summary>
         <form method="post" action="/users/save" class="users-form" style="margin-top:14px;">
             <input type="hidden" name="edit_user_id" value="{escape(current_edit_id)}">
@@ -2678,7 +2731,7 @@ def users_page_html(current_user, error_text="", success_text="", form_data=None
             </label>
             <div style="display:flex; gap:10px; flex-wrap:wrap;">
                 <button type="submit" class="btn">{submit_label}</button>
-                <a href="/users" class="ghost-btn">Сбросить</a>
+                <a href="/users" class="ghost-btn">Reset</a>
             </div>
         </form>
     </details>
@@ -2693,7 +2746,7 @@ def users_page_html(current_user, error_text="", success_text="", form_data=None
             <div class="controls-line">
                 <div>
                     <div class="panel-title" style="margin-bottom:4px;">Users</div>
-                    <div class="panel-subtitle">Founder, сотрудники и доступы.</div>
+                    <div class="panel-subtitle">Founder, team members and access control.</div>
                 </div>
             </div>
             <div class="table-wrap">
@@ -2784,20 +2837,20 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         message_html += f'<div class="notice notice-danger">{escape(error_text)}</div>'
 
     current_edit_id = str(form_data.get("edit_id") or "")
-    form_title = "Редактирование капы" if current_edit_id else "Добавить капу"
-    submit_label = "Сохранить" if current_edit_id else "Добавить капу"
+    form_title = "Edit Cap" if current_edit_id else "Add Cap"
+    submit_label = "Save" if current_edit_id else "Add Cap"
     create_panel = f"""
     <details class="panel" {'open' if current_edit_id else ''}>
         <summary class="panel-title" style="cursor:pointer; list-style:none; display:flex; align-items:center; justify-content:space-between;">
             <span>{form_title}</span>
-            <span class="btn" style="width:38px; height:38px; padding:0; border-radius:12px;">+</span>
+            <span class="btn toggle-indicator"></span>
         </summary>
-        <div class="panel-subtitle" style="margin-top:10px;">Капы рекламодателей и ручное добавление.</div>
+        <div class="panel-subtitle" style="margin-top:10px;">Advertiser caps and manual updates.</div>
         <form method="post" action="/caps/upload" enctype="multipart/form-data" class="caps-form" style="margin-top:14px; margin-bottom:14px;">
             <label>Upload caps CSV / XLSX
                 <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
             </label>
-            <button type="submit" class="ghost-btn">Загрузить капы</button>
+            <button type="submit" class="ghost-btn">Upload</button>
         </form>
         <form method="post" action="/caps/save" class="caps-form" style="margin-top:14px;">
             <input type="hidden" name="edit_id" value="{escape(current_edit_id)}">
@@ -2860,7 +2913,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             </label>
             <div style="display:flex; gap:10px; flex-wrap:wrap;">
                 <button type="submit" class="btn">{submit_label}</button>
-                <a href="/caps" class="ghost-btn">Сбросить</a>
+                <a href="/caps" class="ghost-btn">Reset</a>
             </div>
         </form>
     </details>
@@ -2873,14 +2926,14 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
 
         <div>
             <div class="panel compact-panel filters">
-                <div class="panel-title">Фильтры</div>
+                <div class="panel-title">Filters</div>
                 <form method="get" action="/caps">
                     <label>Buyer<select name="buyer">{buyer_options}</select></label>
                     <label>Geo<select name="geo">{geo_options}</select></label>
                     <label>Имя<select name="owner_name">{owner_options}</select></label>
-                    <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="Поиск по капам"></label>
-                    <button type="submit">Фильтровать</button>
-                    <a href="/caps" class="ghost-btn">Сбросить</a>
+                    <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="Search caps"></label>
+                    <button type="submit" class="btn small-btn">Filter</button>
+                    <a href="/caps" class="ghost-btn small-btn">Reset</a>
                 </form>
             </div>
 
@@ -2897,7 +2950,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 <div class="controls-line">
                     <div>
                         <div class="panel-title" style="margin-bottom:4px;">Caps Table</div>
-                        <div class="panel-subtitle">Капы рекламодателей, промокоды и текущая загрузка.</div>
+                        <div class="panel-subtitle">Advertiser caps, promo codes and current load.</div>
                     </div>
                 </div>
                 <div class="table-wrap">
@@ -3095,9 +3148,9 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
     manual_wallet_total = sum(safe_number(item.amount) for item in manual["wallets"])
     manual_expense_total = sum(safe_number(item.amount) for item in manual["expenses"])
     manual_income_total = sum(safe_number(item.amount) for item in manual["income"])
-    wallet_submit_label = "Сохранить изменения" if form_data.get("wallet_edit_id") else "Сохранить кошелек"
-    expense_submit_label = "Сохранить изменения" if form_data.get("expense_edit_id") else "Сохранить расход"
-    income_submit_label = "Сохранить изменения" if form_data.get("income_edit_id") else "Сохранить приход"
+    wallet_submit_label = "Save Changes" if form_data.get("wallet_edit_id") else "Save Wallet"
+    expense_submit_label = "Save Changes" if form_data.get("expense_edit_id") else "Save Expense"
+    income_submit_label = "Save Changes" if form_data.get("income_edit_id") else "Save Income"
     message_html = ""
     if success_text:
         message_html += f'<div class="notice">{escape(success_text)}</div>'
@@ -3106,10 +3159,10 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
     create_panel = f"""
     <details class="panel" {'open' if form_data else ''}>
         <summary class="panel-title" style="cursor:pointer; list-style:none; display:flex; align-items:center; justify-content:space-between;">
-            <span>Add Finance Entry</span>
-            <span class="btn" style="width:38px; height:38px; padding:0; border-radius:12px;">+</span>
+            <span>Manage Finance</span>
+            <span class="btn toggle-indicator"></span>
         </summary>
-        <div class="panel-subtitle" style="margin-top:10px;">Добавление кошельков, расходов и приходов вручную.</div>
+        <div class="panel-subtitle" style="margin-top:10px;">Manual wallets, expenses and income.</div>
         <div class="finance-grid" style="margin-top:14px;">
             <div class="panel">
                 <div class="panel-title">{'Edit Wallet' if form_data.get('wallet_edit_id') else 'Add Wallet'}</div>
@@ -3122,7 +3175,7 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
                     <label>Сумма<input type="number" step="0.01" name="amount" value="{escape(form_data.get('wallet_amount', ''))}" placeholder="0.00"></label>
                     <div style="display:flex; gap:10px; flex-wrap:wrap;">
                         <button type="submit" class="btn">{wallet_submit_label}</button>
-                        <a href="/finance" class="ghost-btn">Сбросить</a>
+                        <a href="/finance" class="ghost-btn">Reset</a>
                     </div>
                 </form>
             </div>
@@ -3137,7 +3190,7 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
                     <label>Комментарий<textarea name="comment">{escape(form_data.get('expense_comment', ''))}</textarea></label>
                     <div style="display:flex; gap:10px; flex-wrap:wrap;">
                         <button type="submit" class="btn">{expense_submit_label}</button>
-                        <a href="/finance" class="ghost-btn">Сбросить</a>
+                        <a href="/finance" class="ghost-btn">Reset</a>
                     </div>
                 </form>
             </div>
@@ -3160,7 +3213,7 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
                 </div>
                 <div style="display:flex; gap:10px; flex-wrap:wrap;">
                     <button type="submit" class="btn">{income_submit_label}</button>
-                    <a href="/finance" class="ghost-btn">Сбросить</a>
+                    <a href="/finance" class="ghost-btn">Reset</a>
                 </div>
             </form>
         </div>
@@ -3170,8 +3223,8 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
     content = f"""
     {message_html}
     <div class="panel compact-panel">
-        <div class="panel-title">Finance control</div>
-        <div class="panel-subtitle">Актуальные кошельки и ручные финансовые записи.</div>
+        <div class="panel-title">Finance</div>
+        <div class="panel-subtitle">Current wallets and manual finance records.</div>
     </div>
 
     <div class="panel compact-panel">
@@ -3186,9 +3239,9 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
 
     {create_panel}
 
-    {render_finance_table("Wallets", "Актуальные кошельки в одном списке", '<th>Категория</th><th>Описание</th><th>Метка</th><th>Кошелек</th><th>Сумма</th><th>Source</th><th>Action</th>', wallet_rows, "1320px")}
+    {render_finance_table("Wallets", "Current wallets in one list", '<th>Категория</th><th>Описание</th><th>Метка</th><th>Кошелек</th><th>Сумма</th><th>Source</th><th>Action</th>', wallet_rows, "1320px")}
 
-    {render_finance_table("Operations", "Ручные приходы и расходы в одном списке", '<th>ID</th><th>Type</th><th>Дата</th><th>Категория</th><th>Кошелек / Кто оплатил</th><th>Сумма</th><th>Комментарий</th><th>Action</th>', operation_rows, "1360px")}
+    {render_finance_table("Operations", "Manual income and expenses in one list", '<th>ID</th><th>Type</th><th>Дата</th><th>Категория</th><th>Кошелек / Кто оплатил</th><th>Сумма</th><th>Комментарий</th><th>Action</th>', operation_rows, "1360px")}
     """
     return page_shell("Finance", content, active_page="finance", current_user=current_user)
 
@@ -3234,35 +3287,35 @@ def tasks_page_html(current_user, rows, filter_values=None, form_data=None, succ
         <details class="panel">
             <summary class="panel-title" style="cursor:pointer; list-style:none; display:flex; align-items:center; justify-content:space-between;">
                 <span>Add Task</span>
-                <span class="btn" style="width:38px; height:38px; padding:0; border-radius:12px;">+</span>
+                <span class="btn toggle-indicator"></span>
             </summary>
             <form method="post" action="/tasks/upload" enctype="multipart/form-data" class="tasks-form" style="margin-top:14px; margin-bottom:14px;">
-                <label>Импорт задач CSV
+                <label>Task CSV Import
                     <input type="file" name="file" accept=".csv" required>
                 </label>
                 <label>Кому
                     <select name="assigned_to_username" required>{assign_options}</select>
                 </label>
-                <button type="submit" class="ghost-btn">Загрузить задачи</button>
+                <button type="submit" class="ghost-btn">Upload</button>
             </form>
             <form method="post" action="/tasks/save" class="tasks-form" style="margin-top:14px;">
                 <label>Кому
                     <select name="assigned_to_username" required>{assign_options}</select>
                 </label>
                 <label>Задача
-                    <input type="text" name="title" value="{escape(form_data.get('title', ''))}" required placeholder="Например: Проверить KPI по Peru">
+                    <input type="text" name="title" value="{escape(form_data.get('title', ''))}" required placeholder="Example: Check KPI for Peru">
                 </label>
                 <label>Описание
-                    <textarea name="description" placeholder="Что нужно сделать, какой результат ожидается">{escape(form_data.get('description', ''))}</textarea>
+                    <textarea name="description" placeholder="What needs to be done and what result is expected">{escape(form_data.get('description', ''))}</textarea>
                 </label>
                 <div>
-                    <div class="panel-subtitle" style="margin-bottom:8px;">Срок выполнения</div>
+                    <div class="panel-subtitle" style="margin-bottom:8px;">Due Date</div>
                     {due_selects}
                 </div>
                 <label>Примечания
-                    <textarea name="notes" placeholder="Дополнительный контекст, ссылки, договоренности">{escape(form_data.get('notes', ''))}</textarea>
+                    <textarea name="notes" placeholder="Extra context, links or agreements">{escape(form_data.get('notes', ''))}</textarea>
                 </label>
-                <button type="submit" class="btn">Добавить задачу</button>
+                <button type="submit" class="btn">Add Task</button>
             </form>
         </details>
         """
@@ -3282,7 +3335,7 @@ def tasks_page_html(current_user, rows, filter_values=None, form_data=None, succ
                 delete_block = f"""
                 <form method="post" action="/tasks/delete" style="margin-top:10px;" onsubmit="return confirm('Удалить задачу?');">
                     <input type="hidden" name="task_id" value="{row.id}">
-                    <button type="submit" class="ghost-btn small-btn">Delete task</button>
+                    <button type="submit" class="ghost-btn small-btn">Delete</button>
                 </form>
                 """
             respond_block = f"""
@@ -3293,10 +3346,10 @@ def tasks_page_html(current_user, rows, filter_values=None, form_data=None, succ
                         {''.join([f'<option value="{escape(option)}" {"selected" if row.status == option else ""}>{escape(option)}</option>' for option in status_options])}
                     </select>
                 </label>
-                <label>Ответ
-                    <textarea name="response_text" placeholder="Что сделано, какой апдейт, где блокер">{escape(row.response_text or '')}</textarea>
+                <label>Reply
+                    <textarea name="response_text" placeholder="What was done, current update or blocker">{escape(row.response_text or '')}</textarea>
                 </label>
-                <button type="submit" class="btn">Сохранить ответ</button>
+                <button type="submit" class="btn">Save Reply</button>
             </form>
             {delete_block}
             """
@@ -3316,11 +3369,11 @@ def tasks_page_html(current_user, rows, filter_values=None, form_data=None, succ
             </div>
             <div class="task-body">
                 <div>
-                    <div class="panel-subtitle" style="margin-bottom:8px;">Постановка</div>
-                    <div class="task-note">{escape(row.notes or "Без доп. примечаний")}</div>
+                    <div class="panel-subtitle" style="margin-bottom:8px;">Task Brief</div>
+                    <div class="task-note">{escape(row.notes or "No extra notes")}</div>
                 </div>
                 <div>
-                    <div class="panel-subtitle" style="margin-bottom:8px;">Ответ исполнителя</div>
+                    <div class="panel-subtitle" style="margin-bottom:8px;">Assignee Reply</div>
                     {response_html}
                 </div>
             </div>
@@ -3329,7 +3382,7 @@ def tasks_page_html(current_user, rows, filter_values=None, form_data=None, succ
         </div>
         """
 
-    subtitle = "Список задач и дедлайнов." if is_admin_role(current_user) else "Твои текущие задачи."
+    subtitle = "Tasks and deadlines." if is_admin_role(current_user) else "Your current tasks."
     content = f"""
     {message_html}
     <div class="panel compact-panel">
@@ -3350,13 +3403,13 @@ def tasks_page_html(current_user, rows, filter_values=None, form_data=None, succ
         {create_block}
         <div>
             <div class="panel compact-panel filters">
-                <div class="panel-title">Фильтры</div>
+                <div class="panel-title">Filters</div>
                 <form method="get" action="/tasks">
                     {assignee_filter_rendered}
                     <label>Статус<select name="status">{status_options_html}</select></label>
-                    <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="Поиск по задачам"></label>
-                    <button type="submit">Фильтровать</button>
-                    <a href="/tasks" class="ghost-btn">Сбросить</a>
+                    <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="Search tasks"></label>
+                    <button type="submit" class="btn small-btn">Filter</button>
+                    <a href="/tasks" class="ghost-btn small-btn">Reset</a>
                 </form>
             </div>
             <div class="task-stack">{task_cards if task_cards else '<div class="panel">Нет задач</div>'}</div>
@@ -3387,6 +3440,8 @@ def chatterfy_page_html(
     time_filter="",
     telegram_id="",
     pp_player_id="",
+    sort_by="started_date",
+    order="desc",
     page=1,
     total_count=0,
     per_page=100,
@@ -3404,20 +3459,20 @@ def chatterfy_page_html(
         chat_link_html = f'<a href="https://{escape(chat_link)}" target="_blank" rel="noreferrer" class="ghost-btn small-btn">Open</a>' if chat_link else "—"
         rows_html += f"""
         <tr>
-            <td>{escape(item.get("started_date") or "")}</td>
-            <td>{escape(item.get("started_time") or "")}</td>
-            <td>{escape(row.name or "")}</td>
-            <td>{escape(row.telegram_id or "")}</td>
-            <td>{escape(item.get("pp_player_id") or "")}</td>
-            <td>{chat_link_html}</td>
-            <td>{escape(row.username or "")}</td>
-            <td>{escape(row.tags or "")}</td>
-            <td>{escape(row.launch_date or "")}</td>
-            <td>{escape(row.platform or "")}</td>
-            <td>{escape(row.manager or "")}</td>
-            <td>{escape(row.geo or "")}</td>
-            <td>{escape(row.offer or "")}</td>
-            <td>{escape(row.status or "")}</td>
+            <td data-col="started_date">{escape(item.get("started_date") or "")}</td>
+            <td data-col="started_time">{escape(item.get("started_time") or "")}</td>
+            <td data-col="name">{escape(row.name or "")}</td>
+            <td data-col="telegram_id">{escape(row.telegram_id or "")}</td>
+            <td data-col="pp_player_id">{escape(item.get("pp_player_id") or "")}</td>
+            <td data-col="chat_link">{chat_link_html}</td>
+            <td data-col="username">{escape(row.username or "")}</td>
+            <td data-col="tags">{escape(row.tags or "")}</td>
+            <td data-col="launch_date">{escape(row.launch_date or "")}</td>
+            <td data-col="platform">{escape(row.platform or "")}</td>
+            <td data-col="manager">{escape(row.manager or "")}</td>
+            <td data-col="geo">{escape(row.geo or "")}</td>
+            <td data-col="offer">{escape(row.offer or "")}</td>
+            <td data-col="status">{escape(row.status or "")}</td>
         </tr>
         """
 
@@ -3434,9 +3489,90 @@ def chatterfy_page_html(
         time_filter=time_filter,
         telegram_id=telegram_id,
         pp_player_id=pp_player_id,
+        sort_by=sort_by,
+        order=order,
     )
     prev_link = f"/chatterfy?{base_qs}&page={page - 1}" if page > 1 else ""
     next_link = f"/chatterfy?{base_qs}&page={page + 1}" if page < total_pages else ""
+
+    def header_link(field, label):
+        next_order = "asc"
+        arrow = ""
+        if sort_by == field:
+            if order == "asc":
+                next_order = "desc"
+                arrow = " ↑"
+            else:
+                arrow = " ↓"
+        qs = build_query_string(
+            status=status,
+            search=search,
+            date_filter=date_filter,
+            time_filter=time_filter,
+            telegram_id=telegram_id,
+            pp_player_id=pp_player_id,
+            sort_by=field,
+            order=next_order,
+            page=1,
+        )
+        return f'<a href="/chatterfy?{qs}">{escape(label)}{arrow}</a>'
+
+    extra_scripts = """
+    <script>
+        (function() {
+            const table = document.getElementById('chatterfyTable');
+            if (!table) return;
+            const KEY = 'teambead_chatterfy_widths_v1';
+            function applyWidths() {
+                const widths = JSON.parse(localStorage.getItem(KEY) || '{}');
+                Object.entries(widths).forEach(([key, width]) => {
+                    document.querySelectorAll('[data-col=\"' + key + '\"]').forEach(el => {
+                        el.style.width = width + 'px';
+                        el.style.minWidth = width + 'px';
+                        el.style.maxWidth = width + 'px';
+                    });
+                });
+            }
+            function saveWidth(key, width) {
+                const widths = JSON.parse(localStorage.getItem(KEY) || '{}');
+                widths[key] = Math.max(90, Math.round(width));
+                localStorage.setItem(KEY, JSON.stringify(widths));
+            }
+            table.querySelectorAll('th[data-col]').forEach(th => {
+                const resizer = th.querySelector('.resizer');
+                if (!resizer) return;
+                let startX = 0;
+                let startWidth = 0;
+                let resizing = false;
+                const key = th.dataset.col;
+                resizer.addEventListener('mousedown', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    resizing = true;
+                    startX = e.clientX;
+                    startWidth = th.getBoundingClientRect().width;
+                    document.body.style.cursor = 'col-resize';
+                });
+                document.addEventListener('mousemove', function(e) {
+                    if (!resizing) return;
+                    const newWidth = Math.max(90, startWidth + (e.clientX - startX));
+                    document.querySelectorAll('[data-col=\"' + key + '\"]').forEach(el => {
+                        el.style.width = newWidth + 'px';
+                        el.style.minWidth = newWidth + 'px';
+                        el.style.maxWidth = newWidth + 'px';
+                    });
+                });
+                document.addEventListener('mouseup', function() {
+                    if (!resizing) return;
+                    resizing = false;
+                    document.body.style.cursor = '';
+                    saveWidth(key, th.getBoundingClientRect().width);
+                });
+            });
+            applyWidths();
+        })();
+    </script>
+    """
 
     content = f"""
     {message_html}
@@ -3447,23 +3583,23 @@ def chatterfy_page_html(
                 <div class="panel-title" style="margin-bottom:4px;">Chatterfy Report</div>
             </div>
             <div style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap; justify-content:flex-end;">
-                <details class="panel compact-panel" style="margin:0; min-width:260px;">
+                <details class="panel compact-panel" style="margin:0; min-width:320px;">
                     <summary class="panel-title" style="margin:0; cursor:pointer; list-style:none; display:flex; align-items:center; justify-content:space-between;">
                         <span>Upload</span>
-                        <span class="btn" style="width:34px; height:34px; padding:0; border-radius:10px;">+</span>
+                        <span class="btn toggle-indicator" style="width:34px; height:34px; border-radius:10px;"></span>
                     </summary>
-                    <div class="upload-inline" style="margin-top:12px;">
-                        <form method="post" action="/chatterfy/upload" enctype="multipart/form-data" class="upload-inline">
-                            <label>Chatterfy
+                    <div style="display:grid; gap:12px; margin-top:12px;">
+                        <form method="post" action="/chatterfy/upload" enctype="multipart/form-data" class="upload-inline" style="justify-content:space-between;">
+                            <label>Chatterfy File
                                 <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
                             </label>
-                            <button type="submit" class="upload-btn">Upload</button>
+                            <button type="submit" class="btn small-btn">Upload</button>
                         </form>
-                        <form method="post" action="/chatterfy/upload-ids" enctype="multipart/form-data" class="upload-inline">
+                        <form method="post" action="/chatterfy/upload-ids" enctype="multipart/form-data" class="upload-inline" style="justify-content:space-between;">
                             <label>ID File
                                 <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
                             </label>
-                            <button type="submit" class="upload-btn">Upload IDs</button>
+                            <button type="submit" class="btn small-btn">Upload</button>
                         </form>
                     </div>
                 </details>
@@ -3476,37 +3612,37 @@ def chatterfy_page_html(
                         <label>Status<select name="status">{status_options}</select></label>
                         <label>Search<input type="text" name="search" value="{escape(search)}" placeholder="tags, manager, geo, offer"></label>
                         <input type="hidden" name="page" value="1">
-                        <button type="submit">Filter</button>
-                        <a href="/chatterfy" class="ghost-btn">Reset</a>
+                        <button type="submit" class="btn small-btn">Filter</button>
+                        <a href="/chatterfy" class="btn small-btn">Reset</a>
                     </form>
                 </div>
             </div>
         </div>
         <div class="table-wrap">
-            <table style="min-width:1900px;">
+            <table id="chatterfyTable" style="min-width:1900px;">
                 <thead>
                     <tr>
-                        <th>Date</th>
-                        <th>Time</th>
-                        <th>Name</th>
-                        <th>Telegram ID</th>
-                        <th>ID in PP</th>
-                        <th>Chat</th>
-                        <th>Username</th>
-                        <th>Tags</th>
-                        <th>Tag Date</th>
-                        <th>Platform</th>
-                        <th>Manager</th>
-                        <th>Geo</th>
-                        <th>Offer</th>
-                        <th>Status</th>
+                        <th data-col="started_date"><div class="th-inner">{header_link("started_date", "Date")}<span class="resizer"></span></div></th>
+                        <th data-col="started_time"><div class="th-inner">{header_link("started_time", "Time")}<span class="resizer"></span></div></th>
+                        <th data-col="name"><div class="th-inner">{header_link("name", "Name")}<span class="resizer"></span></div></th>
+                        <th data-col="telegram_id"><div class="th-inner">{header_link("telegram_id", "Telegram ID")}<span class="resizer"></span></div></th>
+                        <th data-col="pp_player_id"><div class="th-inner">{header_link("pp_player_id", "ID in PP")}<span class="resizer"></span></div></th>
+                        <th data-col="chat_link"><div class="th-inner">{header_link("chat_link", "Chat")}<span class="resizer"></span></div></th>
+                        <th data-col="username"><div class="th-inner">{header_link("username", "Username")}<span class="resizer"></span></div></th>
+                        <th data-col="tags"><div class="th-inner">{header_link("tags", "Tags")}<span class="resizer"></span></div></th>
+                        <th data-col="launch_date"><div class="th-inner">{header_link("launch_date", "Tag Date")}<span class="resizer"></span></div></th>
+                        <th data-col="platform"><div class="th-inner">{header_link("platform", "Platform")}<span class="resizer"></span></div></th>
+                        <th data-col="manager"><div class="th-inner">{header_link("manager", "Manager")}<span class="resizer"></span></div></th>
+                        <th data-col="geo"><div class="th-inner">{header_link("geo", "Geo")}<span class="resizer"></span></div></th>
+                        <th data-col="offer"><div class="th-inner">{header_link("offer", "Offer")}<span class="resizer"></span></div></th>
+                        <th data-col="status"><div class="th-inner">{header_link("status", "Status")}<span class="resizer"></span></div></th>
                     </tr>
                 </thead>
                 <tbody>{rows_html if rows_html else '<tr><td colspan="14">Нет данных</td></tr>'}</tbody>
             </table>
         </div>
         <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:14px; flex-wrap:wrap;">
-            <div class="panel-subtitle">Показано {len(rows)} из {total_count}</div>
+            <div class="panel-subtitle">Showing {len(rows)} of {total_count}</div>
             <div style="display:flex; gap:8px; align-items:center;">
                 {f'<a href="{prev_link}" class="ghost-btn small-btn">Prev</a>' if prev_link else '<span class="ghost-btn small-btn" style="opacity:0.45; pointer-events:none;">Prev</span>'}
                 <span class="user-chip">Page {page} / {total_pages}</span>
@@ -3515,7 +3651,7 @@ def chatterfy_page_html(
         </div>
     </div>
     """
-    return page_shell("Chatterfy", content, active_page="chatterfy", current_user=current_user)
+    return page_shell("Chatterfy", content, active_page="chatterfy", current_user=current_user, extra_scripts=extra_scripts)
 
 
 # =========================================
@@ -4039,41 +4175,41 @@ def show_grouped_table(
     if is_admin_role(user):
         upload_block = '''
         <div class="panel compact-panel">
-            <div class="panel-title">Загрузка данных</div>
+            <div class="panel-title">Upload Data</div>
             <form method="post" action="/upload" enctype="multipart/form-data" class="upload-form">
                 <label>Buyer
-                    <input type="text" name="buyer" required placeholder="Например: TeamBead1">
+                    <input type="text" name="buyer" required placeholder="Example: TeamBead1">
                 </label>
                 <label>CSV / XLSX
                     <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
                 </label>
-                <button type="submit" class="upload-btn">Загрузить</button>
+                <button type="submit" class="upload-btn">Upload</button>
             </form>
-            <div class="hint">Если грузишь того же buyer повторно — старые строки заменяются новыми.</div>
+            <div class="hint">If you upload the same buyer again, old rows are replaced with new ones.</div>
         </div>
         '''
     elif user.get("role") == "buyer":
-        upload_block = '<div class="panel compact-panel"><div class="panel-title">Ваш доступ</div><div class="hint">Для buyer доступен только просмотр данных своего Buyer. Загрузка и CSV скрыты.</div></div>'
+        upload_block = '<div class="panel compact-panel"><div class="panel-title">Access</div><div class="hint">Buyer can only view data for their own buyer. Upload and CSV are hidden.</div></div>'
     else:
-        upload_block = '<div class="panel compact-panel"><div class="panel-title">Ваш доступ</div><div class="hint">Для operator открыт только просмотр FB страниц без загрузки и CSV.</div></div>'
+        upload_block = '<div class="panel compact-panel"><div class="panel-title">Access</div><div class="hint">Operator can only view FB pages without upload and CSV access.</div></div>'
 
     content = f'''
     <div class="toolbar-grid">
         {upload_block}
 
         <div class="panel compact-panel">
-            <div class="panel-title">Фильтры</div>
+            <div class="panel-title">Filters</div>
             <div class="filters">
                 <form method="get" action="/grouped">
                     {'<label>Buyer<select name="buyer">' + buyer_options + '</select></label>' if is_admin_role(user) or user.get("role") == "operator" else ''}
                     <label>Manager<select name="manager">{manager_options}</select></label>
                     <label>Geo<select name="geo">{geo_options}</select></label>
                     <label>Offer<select name="offer">{offer_options}</select></label>
-                    <label>Search<input type="text" name="search" value="{escape(search)}" placeholder="Поиск по строкам"></label>
+                    <label>Search<input type="text" name="search" value="{escape(search)}" placeholder="Search rows"></label>
                     <input type="hidden" name="sort_by" value="{escape(sort_by)}">
                     <input type="hidden" name="order" value="{escape(order)}">
-                    <button type="submit">Фильтровать</button>
-                    <a href="/grouped" class="ghost-btn">Сбросить</a>
+                    <button type="submit" class="btn small-btn">Filter</button>
+                    <a href="/grouped" class="ghost-btn small-btn">Reset</a>
                 </form>
             </div>
         </div>
@@ -4084,15 +4220,15 @@ def show_grouped_table(
     <div class="panel compact-panel">
         <div class="controls-line">
             <div>
-                <div class="panel-title" style="margin-bottom:4px;">Таблица Export</div>
-                <div class="panel-subtitle">Колонки можно двигать мышкой за заголовок и менять ширину за правый край.</div>
+                <div class="panel-title" style="margin-bottom:4px;">Export Table</div>
+                <div class="panel-subtitle">Columns can be dragged by the header and resized from the right edge.</div>
             </div>
             <div class="column-menu-wrap">
                 <button type="button" class="ghost-btn small-btn" onclick="toggleColumnMenu()">⚙️ Колонки</button>
                 <div class="column-menu" id="columnMenu">
                     <div class="column-actions">
-                        <button type="button" class="ghost-btn small-btn" onclick="showAllColumns()">Показать все</button>
-                        <button type="button" class="ghost-btn small-btn" onclick="resetColumnsAll()">Сбросить всё</button>
+                        <button type="button" class="ghost-btn small-btn" onclick="showAllColumns()">Show All</button>
+                        <button type="button" class="ghost-btn small-btn" onclick="resetColumnsAll()">Reset All</button>
                     </div>
                     <div class="column-grid">{column_chips}</div>
                 </div>
@@ -4305,15 +4441,15 @@ def show_hierarchy(
 
     content = f'''
     <div class="panel compact-panel filters">
-        <div class="panel-title">Фильтры</div>
+        <div class="panel-title">Filters</div>
         <form method="get" action="/hierarchy">
             {'<label>Buyer<select name="buyer">' + buyer_options + '</select></label>' if is_admin_role(user) or user.get("role") == "operator" else ''}
             <label>Manager<select name="manager">{manager_options}</select></label>
             <label>Geo<select name="geo">{geo_options}</select></label>
             <label>Offer<select name="offer">{offer_options}</select></label>
             <label>Search<input type="text" name="search" value="{escape(search)}"></label>
-            <button type="submit">Фильтровать</button>
-            <a href="/hierarchy" class="ghost-btn">Сбросить</a>
+            <button type="submit" class="btn small-btn">Filter</button>
+            <a href="/hierarchy" class="ghost-btn small-btn">Reset</a>
         </form>
     </div>
 
@@ -4321,7 +4457,7 @@ def show_hierarchy(
 
     <div class="panel compact-panel">
         <div class="panel-title">Statistic</div>
-        <div class="panel-subtitle">FB + Chatterfy + Partner + Caps в одной структуре для контроля трафика, FTD, квалов, дохода и прибыли.</div>
+        <div class="panel-subtitle">FB + Chatterfy + Partner + Caps in one structure for tracking traffic, FTD, quals, income and profit.</div>
     </div>
 
     <div class="tree-root">{tree_html}</div>
@@ -4795,31 +4931,48 @@ def run_onexbet_parser(request: Request):
     user = require_login(request)
     enforce_page_access(user, "onexbet_report")
 
-    try:
-        from parser_1xbet_halfmonth import run_parser
+    parser_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "parser_1xbet_halfmonth.py")
 
-        result = run_parser()
-        print("1XBET PARSER RESULT:", result)
-
-        inserted = result.get("inserted", 0) if isinstance(result, dict) else 0
-        period_label = result.get("period_label", "") if isinstance(result, dict) else ""
-
-        success_text = f"Парсер завершен. Загружено строк: {inserted}"
-        if period_label:
-            success_text += f" | Период: {period_label}"
-
+    if not os.path.exists(parser_path):
         return RedirectResponse(
-            url="/1xbet-report?run_ok=" + urlencode({"v": success_text})[2:],
+            url="/1xbet-report?run_error=Файл parser_1xbet_halfmonth.py не найден рядом с app.py",
             status_code=303,
         )
 
-    except Exception as e:
-        error_text = str(e).replace("\n", " | ")[:700]
-        print("1XBET PARSER ERROR:", error_text)
+    try:
+        result = subprocess.run(
+            [sys.executable, parser_path],
+            capture_output=True,
+            text=True,
+            timeout=600,
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+        )
+
+        if result.returncode == 0:
+            return RedirectResponse(
+                url="/1xbet-report?run_ok=Парсер успешно запущен и завершен",
+                status_code=303,
+            )
+
+        error_text = (result.stderr or result.stdout or "Неизвестная ошибка").strip()
+        error_text = error_text.replace("\n", " | ")[:700]
+
         return RedirectResponse(
             url="/1xbet-report?run_error=" + urlencode({"v": error_text})[2:],
             status_code=303,
         )
+
+    except subprocess.TimeoutExpired:
+        return RedirectResponse(
+            url="/1xbet-report?run_error=Парсер превысил лимит времени ожидания",
+            status_code=303,
+        )
+    except Exception as e:
+        return RedirectResponse(
+            url="/1xbet-report?run_error=" + urlencode({"v": str(e)})[2:],
+            status_code=303,
+        )
+@app.get("/1xbet-report", response_class=HTMLResponse)
 @app.get("/1xbet-report", response_class=HTMLResponse)
 def onexbet_report_page(
     request: Request,
@@ -4922,10 +5075,10 @@ def onexbet_report_page(
         <div class="controls-line">
             <div>
                 <div class="panel-title">1xBet Report</div>
-                <div class="panel-subtitle">Выгрузка, которую загружает парсер по игрокам</div>
+                <div class="panel-subtitle">Player report loaded by the parser.</div>
             </div>
             <form method="post" action="/1xbet-report/run-parser" style="margin:0;">
-                <button type="submit" class="btn">Запустить выгрузку</button>
+                <button type="submit" class="btn">Run Parser</button>
             </form>
         </div>
     </div>
@@ -4954,8 +5107,8 @@ def onexbet_report_page(
                 <input type="text" name="search" value="{escape(search)}" placeholder="player id / sub id">
             </label>
 
-            <button type="submit">Показать</button>
-            <a href="/1xbet-report" class="ghost-btn">Сбросить</a>
+            <button type="submit" class="btn small-btn">Show</button>
+            <a href="/1xbet-report" class="ghost-btn small-btn">Reset</a>
         </form>
     </div>
 
@@ -5027,6 +5180,8 @@ def chatterfy_page(
     time_filter: str = Query(default=""),
     telegram_id: str = Query(default=""),
     pp_player_id: str = Query(default=""),
+    sort_by: str = Query(default="started_date"),
+    order: str = Query(default="desc"),
     page: int = Query(default=1),
     message: str = Query(default=""),
 ):
@@ -5044,6 +5199,51 @@ def chatterfy_page(
         telegram_id=telegram_id,
         pp_player_id=pp_player_id,
     )
+    allowed_sort_fields = {
+        "started_date",
+        "started_time",
+        "name",
+        "telegram_id",
+        "pp_player_id",
+        "chat_link",
+        "username",
+        "tags",
+        "launch_date",
+        "platform",
+        "manager",
+        "geo",
+        "offer",
+        "status",
+    }
+    if sort_by not in allowed_sort_fields:
+        sort_by = "started_date"
+    reverse = order.lower() != "asc"
+
+    def sort_value(item):
+        row = item["row"]
+        values = {
+            "started_date": item.get("started_date") or "",
+            "started_time": item.get("started_time") or "",
+            "name": row.name or "",
+            "telegram_id": row.telegram_id or "",
+            "pp_player_id": item.get("pp_player_id") or "",
+            "chat_link": "1" if item.get("chat_link") else "0",
+            "username": row.username or "",
+            "tags": row.tags or "",
+            "launch_date": row.launch_date or "",
+            "platform": row.platform or "",
+            "manager": row.manager or "",
+            "geo": row.geo or "",
+            "offer": row.offer or "",
+            "status": row.status or "",
+        }
+        value = values.get(sort_by, "")
+        if sort_by in {"telegram_id", "pp_player_id"}:
+            digits = re.sub(r"\\D", "", safe_text(value))
+            return int(digits) if digits else 0
+        return safe_text(value).lower()
+
+    rows.sort(key=sort_value, reverse=reverse)
     total_count = len(rows)
     per_page = 100
     page = max(1, int(page or 1))
@@ -5058,6 +5258,8 @@ def chatterfy_page(
         time_filter=time_filter,
         telegram_id=telegram_id,
         pp_player_id=pp_player_id,
+        sort_by=sort_by,
+        order=order,
         page=page,
         total_count=total_count,
         per_page=per_page,
