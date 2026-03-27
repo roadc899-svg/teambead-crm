@@ -3926,6 +3926,251 @@ def render_statistic_cards(totals):
     return html
 
 
+def split_geo_tokens(value):
+    tokens = re.split(r"[,/;|]+", safe_text(value))
+    return [normalize_geo_value(token) for token in tokens if normalize_geo_value(token)]
+
+
+def cabinet_matches_filters(row, manager="", geo="", search=""):
+    if manager and safe_text(getattr(row, "manager_name", "")).strip() != safe_text(manager).strip():
+        return False
+    if geo:
+        target_geo = normalize_geo_value(geo)
+        cabinet_geos = split_geo_tokens(getattr(row, "geo_list", ""))
+        if target_geo and target_geo not in cabinet_geos:
+            return False
+    if search:
+        search_lower = safe_text(search).strip().lower()
+        haystack = " | ".join([
+            getattr(row, "advertiser", "") or "",
+            getattr(row, "platform", "") or "",
+            getattr(row, "name", "") or "",
+            getattr(row, "geo_list", "") or "",
+            getattr(row, "brands", "") or "",
+            getattr(row, "team_name", "") or "",
+            getattr(row, "manager_name", "") or "",
+            getattr(row, "comments", "") or "",
+        ]).lower()
+        if search_lower not in haystack:
+            return False
+    return True
+
+
+def partner_matches_filters(row, geo="", search=""):
+    if geo and normalize_geo_value(getattr(row, "country", "")) != normalize_geo_value(geo):
+        return False
+    if search:
+        search_lower = safe_text(search).strip().lower()
+        haystack = " | ".join([
+            getattr(row, "source_name", "") or "",
+            getattr(row, "cabinet_name", "") or "",
+            getattr(row, "sub_id", "") or "",
+            getattr(row, "player_id", "") or "",
+            getattr(row, "country", "") or "",
+            getattr(row, "registration_date", "") or "",
+        ]).lower()
+        if search_lower not in haystack:
+            return False
+    return True
+
+
+def chatterfy_matches_filters(row, manager="", geo="", offer="", search=""):
+    if manager and safe_text(getattr(row, "manager", "")).strip() != safe_text(manager).strip():
+        return False
+    if geo and normalize_geo_value(getattr(row, "geo", "")) != normalize_geo_value(geo):
+        return False
+    if offer and safe_text(getattr(row, "offer", "")).strip() != safe_text(offer).strip():
+        return False
+    if search:
+        search_lower = safe_text(search).strip().lower()
+        haystack = " | ".join([
+            getattr(row, "source_name", "") or "",
+            getattr(row, "name", "") or "",
+            getattr(row, "telegram_id", "") or "",
+            getattr(row, "username", "") or "",
+            getattr(row, "tags", "") or "",
+            getattr(row, "status", "") or "",
+            getattr(row, "platform", "") or "",
+            getattr(row, "manager", "") or "",
+            getattr(row, "geo", "") or "",
+            getattr(row, "offer", "") or "",
+        ]).lower()
+        if search_lower not in haystack:
+            return False
+    return True
+
+
+def build_dashboard_overview(user, rows, buyer="", manager="", geo="", offer="", search="", period_label=""):
+    ensure_partner_table()
+    ensure_cabinet_table()
+    ensure_chatterfy_table()
+    ensure_caps_table()
+    ensure_task_table()
+
+    db = SessionLocal()
+    try:
+        partner_query = db.query(PartnerRow)
+        chatterfy_query = db.query(ChatterfyRow)
+        caps_query = db.query(CapRow)
+        cabinets_query = db.query(CabinetRow)
+
+        if period_label:
+            partner_query = partner_query.filter(PartnerRow.period_label == period_label)
+            chatterfy_query = chatterfy_query.filter(ChatterfyRow.period_label == period_label)
+        if buyer:
+            caps_query = caps_query.filter(CapRow.buyer == buyer)
+        if manager:
+            caps_query = caps_query.filter(CapRow.owner_name == manager)
+        if geo:
+            caps_query = caps_query.filter(CapRow.geo == geo)
+
+        partner_rows = [row for row in partner_query.all() if partner_matches_filters(row, geo=geo, search=search)]
+        chatterfy_rows = [row for row in chatterfy_query.all() if chatterfy_matches_filters(row, manager=manager, geo=geo, offer=offer, search=search)]
+        caps_rows = caps_query.order_by(CapRow.id.desc()).all()
+        cabinets_rows = [row for row in cabinets_query.all() if cabinet_matches_filters(row, manager=manager, geo=geo, search=search)]
+    finally:
+        db.close()
+
+    caps_rows = [row for row in caps_rows if not search or safe_text(search).strip().lower() in " | ".join([
+        row.advertiser or "",
+        row.owner_name or "",
+        row.buyer or "",
+        row.flow or "",
+        row.code or "",
+        row.geo or "",
+        row.promo_code or "",
+        row.comments or "",
+    ]).lower()]
+
+    partner_totals = aggregate_partner_totals(partner_rows)
+    flow_rows = aggregate_stat_rows_by_keys(rows, ["platform", "manager", "geo"])
+    total_flows = len(flow_rows)
+    flows_with_caps = sum(1 for item in flow_rows if safe_number(item.get("stat_has_cap", 0)) > 0 or safe_number(item.get("stat_cap_limit", 0)) > 0)
+    flows_with_players = sum(1 for item in flow_rows if safe_number(item.get("stat_total_ftd", 0)) > 0 or safe_number(item.get("stat_income", 0)) > 0)
+    flows_with_chatterfy = sum(1 for item in flow_rows if safe_number(item.get("stat_chatterfy", 0)) > 0)
+    fully_linked_flows = sum(
+        1 for item in flow_rows
+        if (safe_number(item.get("stat_has_cap", 0)) > 0 or safe_number(item.get("stat_cap_limit", 0)) > 0)
+        and safe_number(item.get("stat_total_ftd", 0)) > 0
+        and safe_number(item.get("stat_chatterfy", 0)) > 0
+    )
+    linked_campaigns = sum(
+        1 for item in rows
+        if safe_number(item.get("stat_total_ftd", 0)) > 0
+        or safe_number(item.get("stat_chatterfy", 0)) > 0
+        or safe_number(item.get("stat_has_cap", 0)) > 0
+    )
+
+    tasks_rows = get_tasks_for_user(user)
+    now = datetime.utcnow()
+    open_tasks = [row for row in tasks_rows if safe_text(row.status) != "Выполнено"]
+    blocked_tasks = [row for row in open_tasks if safe_text(row.status) == "Заблокировано"]
+    overdue_tasks = [row for row in open_tasks if getattr(row, "due_at", None) and row.due_at < now]
+
+    overview = {
+        "cards": [
+            ("FB Campaigns", format_int_or_float(len(rows))),
+            ("Linked Campaigns", format_int_or_float(linked_campaigns)),
+            ("Linked Flows", f"{fully_linked_flows}/{total_flows}" if total_flows else "0/0"),
+            ("Players", format_int_or_float(partner_totals["players"])),
+            ("Chatterfy", format_int_or_float(len(chatterfy_rows))),
+            ("Active Cabinets", format_int_or_float(sum(1 for row in cabinets_rows if safe_text(row.status).lower() == "active"))),
+            ("Active Caps", format_int_or_float(sum(1 for row in caps_rows if safe_number(row.cap_value) > 0))),
+            ("Open Tasks", format_int_or_float(len(open_tasks))),
+        ],
+        "rows": [
+            {
+                "source": "FB",
+                "tracked": len(rows),
+                "coverage": f"{linked_campaigns}/{len(rows)}" if rows else "0/0",
+                "primary_value": format_money(sum(safe_number(item.get('spend', 0)) for item in rows)),
+                "secondary_value": format_int_or_float(sum(safe_number(item.get('ftd', 0)) for item in rows)),
+                "notes": "Campaign rows inside current dashboard filters.",
+            },
+            {
+                "source": "Players",
+                "tracked": partner_totals["players"],
+                "coverage": f"{flows_with_players}/{total_flows}" if total_flows else "0/0",
+                "primary_value": format_money(partner_totals["income"]),
+                "secondary_value": format_int_or_float(partner_totals["ftd_count"]),
+                "notes": "Players and FTD from the selected partner period.",
+            },
+            {
+                "source": "Chatterfy",
+                "tracked": len(chatterfy_rows),
+                "coverage": f"{flows_with_chatterfy}/{total_flows}" if total_flows else "0/0",
+                "primary_value": format_int_or_float(len([row for row in chatterfy_rows if safe_text(getattr(row, 'status', ''))])),
+                "secondary_value": format_int_or_float(len([row for row in chatterfy_rows if safe_text(getattr(row, 'external_id', '')) or safe_text(getattr(row, 'telegram_id', ''))])),
+                "notes": "Dialog rows mapped by manager, geo, offer and period.",
+            },
+            {
+                "source": "Caps",
+                "tracked": len(caps_rows),
+                "coverage": f"{flows_with_caps}/{total_flows}" if total_flows else "0/0",
+                "primary_value": format_int_or_float(sum(safe_number(getattr(row, 'cap_value', 0)) for row in caps_rows)),
+                "secondary_value": format_int_or_float(sum(safe_number(getattr(row, 'current_ftd', 0)) for row in caps_rows)),
+                "notes": "Cap volume and current FTD for the scoped buyer / manager / geo.",
+            },
+            {
+                "source": "Cabinets",
+                "tracked": len(cabinets_rows),
+                "coverage": format_int_or_float(sum(1 for row in cabinets_rows if safe_text(row.status).lower() == "active")),
+                "primary_value": format_int_or_float(len({safe_text(row.manager_name) for row in cabinets_rows if safe_text(row.manager_name)})),
+                "secondary_value": format_int_or_float(len({geo_code for row in cabinets_rows for geo_code in split_geo_tokens(getattr(row, 'geo_list', ''))})),
+                "notes": "Active partner cabinets matching the selected manager and geo.",
+            },
+            {
+                "source": "Tasks",
+                "tracked": len(tasks_rows),
+                "coverage": format_int_or_float(len(open_tasks)),
+                "primary_value": format_int_or_float(len(blocked_tasks)),
+                "secondary_value": format_int_or_float(len(overdue_tasks)),
+                "notes": "Open, blocked and overdue tasks visible to the current user.",
+            },
+        ],
+    }
+
+    if (user or {}).get("role") == "superadmin":
+        ensure_finance_tables()
+        snapshot = load_finance_snapshot()
+        manual = load_manual_finance()
+        balances = compute_finance_balances(snapshot, manual)
+        overview["cards"].append(("Balance", format_money(balances["total"])))
+        overview["rows"].append({
+            "source": "Finance",
+            "tracked": len(balances["rows"]),
+            "coverage": format_money(snapshot.get("totals", {}).get("pending", 0)),
+            "primary_value": format_money(balances["total"]),
+            "secondary_value": format_money(snapshot.get("totals", {}).get("income", 0) + sum(safe_number(item.amount) for item in manual.get("income", []))),
+            "notes": "Current wallet balance, pending amount and total income snapshot.",
+        })
+
+    return overview
+
+
+def render_dashboard_overview(overview):
+    cards_html = '<div class="panel compact-panel"><div class="stats-grid">'
+    for title, value in overview.get("cards", []):
+        cards_html += f'<div class="stat-card"><div class="name">{escape(title)}</div><div class="value">{escape(str(value))}</div></div>'
+    cards_html += '</div></div>'
+
+    table_columns = [
+        {"key": "source", "label": "Source"},
+        {"key": "tracked", "label": "Tracked", "align": "right", "formatter": format_int_or_float},
+        {"key": "coverage", "label": "Coverage", "align": "right"},
+        {"key": "primary_value", "label": "Primary Metric", "align": "right"},
+        {"key": "secondary_value", "label": "Secondary Metric", "align": "right"},
+        {"key": "notes", "label": "What It Means", "wrap": True},
+    ]
+    return cards_html + render_stat_table(
+        "CRM Overview",
+        "Single place to see whether all CRM layers are actually feeding the dashboard.",
+        overview.get("rows", []),
+        table_columns,
+        empty_text="No CRM overview data yet",
+    )
+
+
 def aggregate_stat_rows_by_keys(rows, keys):
     buckets = {}
     for row in rows:
@@ -5680,7 +5925,7 @@ def partner_report_page_html(
                         <a href="/partner-report" class="ghost-btn small-btn">Reset</a>
                     </form>
                 </div>
-                <details class="upload-menu upload-menu-left" style="z-index:90;">
+                <details class="upload-menu upload-menu-right" style="z-index:90;">
                     <summary class="btn toggle-indicator"></summary>
                     <div class="upload-menu-list" style="width:380px; max-width:min(380px, calc(100vw - 48px));">
                         <form method="post" action="/partner-report/upload" enctype="multipart/form-data">
@@ -6521,6 +6766,16 @@ def render_dashboard_page(
     geo_options = make_options(all_geos, geo)
     offer_options = make_options(all_offers, offer)
     totals = aggregate_totals(rows)
+    overview = build_dashboard_overview(
+        user,
+        rows,
+        buyer=buyer,
+        manager=manager,
+        geo=geo,
+        offer=offer,
+        search=search,
+        period_label=effective_period_label,
+    )
 
     export_qs = build_query_string(buyer=buyer, manager=manager, geo=geo, offer=offer, search=search, period_view=period_view, period_label=effective_period_label)
     export_link = f"/export/hierarchy?{export_qs}" if export_qs else "/export/hierarchy"
@@ -6543,6 +6798,8 @@ def render_dashboard_page(
             </div>
         </div>
     </div>
+
+    {render_dashboard_overview(overview)}
 
     {render_statistic_cards(totals)}
 
