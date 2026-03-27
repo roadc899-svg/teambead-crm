@@ -855,6 +855,10 @@ def safe_text(value):
     return str(value).strip()
 
 
+def normalize_id_value(value):
+    return re.sub(r"\D", "", safe_text(value))
+
+
 def safe_cap_number(value):
     text = safe_text(value).replace(",", ".")
     try:
@@ -1804,6 +1808,8 @@ def import_chatterfy_ids_dataframe(df):
 def get_chatterfy_rows(status="", search="", date_filter="", time_filter="", telegram_id="", pp_player_id="", period_label=""):
     ensure_chatterfy_table()
     ensure_chatterfy_id_table()
+    telegram_digits = normalize_id_value(telegram_id)
+    pp_digits = normalize_id_value(pp_player_id)
     db = SessionLocal()
     try:
         query = db.query(ChatterfyRow)
@@ -1811,8 +1817,6 @@ def get_chatterfy_rows(status="", search="", date_filter="", time_filter="", tel
             query = query.filter(ChatterfyRow.status == status)
         if period_label:
             query = query.filter(ChatterfyRow.period_label == period_label)
-        if telegram_id:
-            query = query.filter(ChatterfyRow.telegram_id.ilike(f"%{safe_text(telegram_id)}%"))
         if search:
             search_pattern = f"%{safe_text(search)}%"
             query = query.filter(or_(
@@ -1850,7 +1854,9 @@ def get_chatterfy_rows(status="", search="", date_filter="", time_filter="", tel
             continue
         if time_filter and not started_time.startswith(time_filter):
             continue
-        if pp_player_id and pp_player_id not in linked_pp:
+        if telegram_digits and normalize_id_value(row.telegram_id) != telegram_digits:
+            continue
+        if pp_digits and normalize_id_value(linked_pp) != pp_digits:
             continue
         if search_lower:
             haystack = " | ".join([
@@ -2666,6 +2672,8 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 display: flex;
                 align-items: center;
                 gap: 10px;
+                user-select: none;
+                -webkit-user-select: none;
             }}
             .sidebar-group summary::-webkit-details-marker {{ display: none; }}
             .sidebar-group summary::after {{
@@ -2752,6 +2760,8 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .upload-menu {{ position: relative; }}
             .upload-menu > summary {{
                 list-style:none;
+                user-select: none;
+                -webkit-user-select: none;
             }}
             .upload-menu > summary::-webkit-details-marker {{ display:none; }}
             .upload-menu[open] > summary {{
@@ -2866,6 +2876,8 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 border-radius:12px;
                 flex: 0 0 auto;
                 position: relative;
+                user-select: none;
+                -webkit-user-select: none;
             }}
             .toggle-indicator::before {{
                 content:"+";
@@ -2915,6 +2927,8 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 appearance: none;
                 -webkit-appearance: none;
                 text-rendering: geometricPrecision;
+                user-select: none;
+                -webkit-user-select: none;
             }}
             .ghost-btn {{ background: var(--panel-2); color: var(--text); }}
             .small-btn {{ padding: 10px 14px; font-size: 13px; }}
@@ -2934,15 +2948,51 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 margin-bottom: 16px;
             }}
             .panel > summary::-webkit-details-marker {{ display:none; }}
+            .panel > summary {{
+                user-select: none;
+                -webkit-user-select: none;
+            }}
             .compact-panel {{ padding: 14px 16px; }}
             .panel.compact-panel.filters {{
-                padding: 10px 12px;
-                border-radius: 16px;
+                padding: 0 0 8px;
+                border-radius: 0;
                 margin-bottom: 12px;
+                background: transparent;
+                border: 0;
+                box-shadow: none;
             }}
             .panel.compact-panel.filters .panel-title {{
                 font-size: 13px;
                 margin-bottom: 6px;
+                color: var(--muted);
+                text-transform: uppercase;
+                letter-spacing: 0.3px;
+            }}
+            .panel.compact-panel.filters .controls-line {{
+                margin-bottom: 6px;
+            }}
+            .panel.compact-panel.filters form {{
+                display: flex;
+                gap: 8px;
+                flex-wrap: wrap;
+                align-items: end;
+                padding: 10px 12px;
+                border: 1px solid var(--border);
+                border-radius: 16px;
+                background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+                box-shadow: var(--shadow);
+            }}
+            .panel.compact-panel.filters label {{
+                min-width: 120px;
+            }}
+            .panel.compact-panel.filters input,
+            .panel.compact-panel.filters select {{
+                min-width: 132px;
+                height: 40px;
+            }}
+            .panel.compact-panel.filters .btn,
+            .panel.compact-panel.filters .ghost-btn {{
+                height: 40px;
             }}
             .panel-title {{ font-size: 15px; font-weight: 900; margin-bottom: 12px; }}
             .panel-subtitle {{ color: var(--muted); font-size: 13px; }}
@@ -6443,8 +6493,10 @@ def save_cap(
         item.flow = safe_text(flow)
         item.code = normalize_geo_value(code)
         item.geo = normalize_geo_value(geo)
-        item.rate = safe_text(rate)
-        item.baseline = safe_text(baseline)
+        if safe_text(rate) or not edit_id:
+            item.rate = safe_text(rate)
+        if safe_text(baseline) or not edit_id:
+            item.baseline = safe_text(baseline)
         item.cap_value = clean_cap_value
         item.current_ftd = safe_cap_number(current_ftd)
         item.promo_code = safe_text(promo_code)
