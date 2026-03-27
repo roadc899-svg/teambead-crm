@@ -337,9 +337,19 @@ def stop_onexbet_parser_job():
     status["status"] = "stopped"
     status["message"] = "Парсер остановлен вручную"
     status["finished_at"] = datetime.now().isoformat(timespec="seconds")
+    status["pid"] = None
+    status["current_account"] = ""
+    status["current_account_label"] = ""
     write_onexbet_status(status)
     upsert_onexbet_history_from_status(status)
     return get_onexbet_parser_state()
+
+
+def restart_onexbet_parser_job(mode, account_ids=None, launched_by=None):
+    current = get_onexbet_parser_state()
+    if current.get("running"):
+        stop_onexbet_parser_job()
+    return start_onexbet_parser_job(mode, account_ids=account_ids, launched_by=launched_by)
 
 
 # =========================================
@@ -5461,6 +5471,15 @@ def onexbet_stop_parser(request: Request):
     return JSONResponse({"ok": True, "state": stop_onexbet_parser_job()})
 
 
+@app.post("/1xbet-report/parser/restart-run")
+async def onexbet_restart_run(request: Request):
+    user = require_login(request)
+    enforce_page_access(user, "onexbet_report")
+    payload = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    account_ids = payload.get("account_ids") if isinstance(payload, dict) else []
+    return JSONResponse({"ok": True, "state": restart_onexbet_parser_job("run", account_ids=account_ids, launched_by=user)})
+
+
 @app.post("/1xbet-report/run-parser")
 def run_onexbet_parser(request: Request):
     user = require_login(request)
@@ -5514,6 +5533,7 @@ def onexbet_report_page(
             <span style="display:flex;gap:8px;flex-wrap:wrap;">
                 <button type="button" class="ghost-btn small-btn" onclick="startSingleOnexbetJob('auth', '{escape(account["id"])}')">Auth</button>
                 <button type="button" class="ghost-btn small-btn" onclick="startSingleOnexbetJob('run', '{escape(account["id"])}')">Run</button>
+                <button type="button" class="ghost-btn small-btn" onclick="restartSingleOnexbetRun('{escape(account["id"])}')">Restart</button>
                 <button type="button" class="ghost-btn small-btn" onclick="resetSingleOnexbetSession('{escape(account["id"])}')">Reset Session</button>
             </span>
         </label>
@@ -5639,6 +5659,32 @@ def onexbet_report_page(
             return String(value || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
         }
 
+        function renderOnexbetLog(logText) {
+            const text = String(logText || '');
+            const lines = text.split('\n');
+            return lines.map(line => {
+                const safe = escapeHtml(line);
+                let style = 'padding:2px 6px;border-radius:8px;';
+                const lower = line.toLowerCase();
+                if (lower.includes('[1xbet_parser_error]') || lower.includes('error')) {
+                    style += 'background:rgba(239,68,68,0.10);color:#7f1d1d;';
+                } else if (
+                    lower.includes('успешно')
+                    || lower.includes('сессия сохранена')
+                    || lower.includes('логин выполнен')
+                    || lower.includes('повторяю запуск браузера')
+                    || lower.includes('chromium установлен')
+                    || lower.includes('скачан')
+                    || lower.includes('completed')
+                ) {
+                    style += 'background:rgba(34,197,94,0.14);color:#14532d;';
+                } else if (lower.includes('captcha') || lower.includes('warning')) {
+                    style += 'background:rgba(245,158,11,0.12);color:#78350f;';
+                }
+                return '<div style="' + style + '">' + (safe || '&nbsp;') + '</div>';
+            }).join('');
+        }
+
         async function refreshOnexbetState() {
             try {
                 const res = await fetch('/1xbet-report/parser-status', { credentials: 'same-origin' });
@@ -5652,6 +5698,7 @@ def onexbet_report_page(
                 const actionEl = document.getElementById('onexbetActionHint');
                 const authBtn = document.getElementById('onexbetAuthBtn');
                 const runBtn = document.getElementById('onexbetRunBtn');
+                const restartBtn = document.getElementById('onexbetRestartBtn');
                 const stopBtn = document.getElementById('onexbetStopBtn');
                 const currentAccountEl = document.getElementById('onexbetCurrentAccount');
                 const launchedByEl = document.getElementById('onexbetLaunchedBy');
@@ -5673,11 +5720,12 @@ def onexbet_report_page(
                 if (launchedByEl) launchedByEl.textContent = data.launched_by || data.launched_by_username || 'Unknown';
                 if (messageEl) messageEl.textContent = data.message || 'No updates yet';
                 if (logEl) {
-                    logEl.textContent = data.log_tail || 'Live log will appear here after you start authorization or parser run.';
+                    logEl.innerHTML = renderOnexbetLog(data.log_tail || 'Live log will appear here after you start authorization or parser run.');
                     logEl.scrollTop = logEl.scrollHeight;
                 }
                 if (authBtn) authBtn.disabled = !!data.running;
                 if (runBtn) runBtn.disabled = !!data.running;
+                if (restartBtn) restartBtn.disabled = !!data.running;
                 if (stopBtn) stopBtn.disabled = !data.running;
                 if (actionEl) actionEl.style.display = 'none';
                 (data.accounts || []).forEach(account => {
@@ -5782,10 +5830,39 @@ def onexbet_report_page(
             refreshOnexbetState();
         }
 
+        async function restartOnexbetRun() {
+            const accountIds = getSelectedOnexbetAccounts();
+            if (!accountIds.length) {
+                alert('Выбери хотя бы один кабинет 1xBet');
+                return;
+            }
+            try {
+                const res = await fetch('/1xbet-report/parser/restart-run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ account_ids: accountIds })
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    throw new Error(data.detail || 'Не удалось перезапустить процесс');
+                }
+            } catch (e) {
+                alert(e.message || 'Не удалось перезапустить процесс');
+            }
+            refreshOnexbetState();
+        }
+
         async function startSingleOnexbetJob(mode, accountId) {
             const currentBoxes = document.querySelectorAll('.onexbet-account-checkbox');
             currentBoxes.forEach(el => { el.checked = el.value === accountId; });
             await startOnexbetJob(mode);
+        }
+
+        async function restartSingleOnexbetRun(accountId) {
+            const currentBoxes = document.querySelectorAll('.onexbet-account-checkbox');
+            currentBoxes.forEach(el => { el.checked = el.value === accountId; });
+            await restartOnexbetRun();
         }
 
         async function stopOnexbetJob() {
@@ -5805,7 +5882,9 @@ def onexbet_report_page(
         }
 
         window.startOnexbetJob = startOnexbetJob;
+        window.restartOnexbetRun = restartOnexbetRun;
         window.startSingleOnexbetJob = startSingleOnexbetJob;
+        window.restartSingleOnexbetRun = restartSingleOnexbetRun;
         window.setAllOnexbetAccounts = setAllOnexbetAccounts;
         window.resetOnexbetSessions = resetOnexbetSessions;
         window.resetSingleOnexbetSession = resetSingleOnexbetSession;
@@ -5827,6 +5906,7 @@ def onexbet_report_page(
             <div style="display:flex;gap:10px;flex-wrap:wrap;">
                 <button type="button" class="ghost-btn" id="onexbetAuthBtn" onclick="startOnexbetJob('auth')">Check Session</button>
                 <button type="button" class="btn" id="onexbetRunBtn" onclick="startOnexbetJob('run')">Run Parser</button>
+                <button type="button" class="ghost-btn" id="onexbetRestartBtn" onclick="restartOnexbetRun()">Restart Selected</button>
                 <button type="button" class="ghost-btn" id="onexbetStopBtn" onclick="stopOnexbetJob()" disabled>Stop</button>
             </div>
         </div>
@@ -5863,7 +5943,7 @@ def onexbet_report_page(
             </div>
             <div style="flex:1.4;min-width:320px;">
                 <div class="panel-subtitle" style="margin-bottom:8px;font-size:12px;">Live Log</div>
-                <pre id="onexbetLog" style="margin:0;min-height:220px;max-height:320px;overflow:auto;padding:12px;border-radius:16px;background:var(--table-head);border:1px solid var(--border);white-space:pre-wrap;line-height:1.35;font-size:12px;">{log_html}</pre>
+                <div id="onexbetLog" style="margin:0;min-height:220px;max-height:320px;overflow:auto;padding:12px;border-radius:16px;background:var(--table-head);border:1px solid var(--border);white-space:pre-wrap;line-height:1.35;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">{''.join(f'<div style="padding:2px 6px;border-radius:8px;">{escape(line) or "&nbsp;"}</div>' for line in (parser_state.get("log_tail") or "Live log will appear here after you start authorization or parser run.").splitlines())}</div>
             </div>
         </div>
         <div style="margin-top:16px;display:grid;gap:10px;">
