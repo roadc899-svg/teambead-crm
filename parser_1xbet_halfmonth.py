@@ -41,6 +41,7 @@ STATUS_FILE_PATH = Path(os.getenv("PARSER_STATUS_FILE", "parser_1xbet_status.jso
 PARSER_MODE = os.getenv("PARSER_MODE", "run").strip().lower() or "run"
 ACCOUNT_IDS_ENV = os.getenv("ONEXBET_ACCOUNT_IDS", "").strip()
 ACCOUNTS_FILE_PATH = Path(os.getenv("ONEXBET_ACCOUNTS_FILE", "uploaded_data/onexbet_runtime/accounts.json")).resolve()
+ACCOUNTS_JSON_ENV = os.getenv("ONEXBET_ACCOUNTS_JSON", "").strip()
 
 LOGIN_URL = "https://1xpartners.com/ru/sign-in"
 PLAYERS_REPORT_URL = "https://1xpartners.com/ru/partner/reports/players"
@@ -66,28 +67,41 @@ def default_accounts():
     return items
 
 
-def load_accounts():
+def normalize_accounts(raw):
     accounts = []
+    if isinstance(raw, dict):
+        raw = raw.get("accounts", [])
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            login = str(item.get("login") or item.get("username") or "").strip()
+            password = str(item.get("password") or "").strip()
+            if not login or not password:
+                continue
+            account_id = str(item.get("id") or slugify_account_id(login)).strip()
+            accounts.append({
+                "id": account_id,
+                "label": str(item.get("label") or login).strip(),
+                "login": login,
+                "password": password,
+            })
+    return accounts
+
+
+def load_accounts():
+    if ACCOUNTS_JSON_ENV:
+        try:
+            accounts = normalize_accounts(json.loads(ACCOUNTS_JSON_ENV))
+            if accounts:
+                return accounts
+        except Exception as exc:
+            raise RuntimeError(f"Не удалось прочитать ONEXBET_ACCOUNTS_JSON: {exc}")
+
     if ACCOUNTS_FILE_PATH.exists():
         try:
             raw = json.loads(ACCOUNTS_FILE_PATH.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                raw = raw.get("accounts", [])
-            if isinstance(raw, list):
-                for item in raw:
-                    if not isinstance(item, dict):
-                        continue
-                    login = str(item.get("login") or item.get("username") or "").strip()
-                    password = str(item.get("password") or "").strip()
-                    if not login or not password:
-                        continue
-                    account_id = str(item.get("id") or slugify_account_id(login)).strip()
-                    accounts.append({
-                        "id": account_id,
-                        "label": str(item.get("label") or login).strip(),
-                        "login": login,
-                        "password": password,
-                    })
+            accounts = normalize_accounts(raw)
         except Exception as exc:
             raise RuntimeError(f"Не удалось прочитать accounts.json: {exc}")
 
