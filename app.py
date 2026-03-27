@@ -18,6 +18,7 @@ import hashlib
 import calendar
 import re
 import sys
+from functools import lru_cache
 from datetime import datetime, timedelta, date
 
 # =========================================
@@ -66,6 +67,7 @@ Base = declarative_base()
 ENSURED_TABLES = set()
 RUNTIME_INDEXES_READY = False
 AUTO_IMPORT_CHECKS = set()
+RUNTIME_CACHE = {}
 
 
 # =========================================
@@ -336,6 +338,18 @@ def ensure_runtime_indexes():
 
 
 ensure_runtime_indexes()
+
+
+def clear_runtime_cache(*prefixes):
+    if not prefixes:
+        RUNTIME_CACHE.clear()
+        return
+    keys = list(RUNTIME_CACHE.keys())
+    for key in keys:
+        for prefix in prefixes:
+            if str(key).startswith(prefix):
+                RUNTIME_CACHE.pop(key, None)
+                break
 
 
 # =========================================
@@ -943,6 +957,7 @@ def get_half_month_period_from_date(value):
     }
 
 
+@lru_cache(maxsize=8)
 def build_period_options(start_year=2026, end_year=2027):
     options = []
     for year in range(start_year, end_year + 1):
@@ -1266,6 +1281,14 @@ def load_finance_snapshot():
     if not os.path.exists(source_path):
         return result
 
+    try:
+        cache_key = f"finance_snapshot::{source_path}::{os.path.getmtime(source_path)}"
+        cached = RUNTIME_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+    except Exception:
+        cache_key = ""
+
     with open(source_path, "r", encoding="utf-8-sig", newline="") as f:
         rows = list(csv.reader(f))
     if len(rows) < 2:
@@ -1329,6 +1352,9 @@ def load_finance_snapshot():
                 "comment": safe_text(row[30]),
             })
 
+    if cache_key:
+        clear_runtime_cache("finance_snapshot::")
+        RUNTIME_CACHE[cache_key] = result
     return result
 
 
@@ -1657,6 +1683,21 @@ def get_partner_cabinet_options():
     return sorted(set(result))
 
 
+def get_partner_country_options():
+    ensure_partner_table()
+    db = SessionLocal()
+    try:
+        values = db.query(PartnerRow.country).distinct().all()
+    finally:
+        db.close()
+    result = []
+    for item in values:
+        value = safe_text(item[0])
+        if value:
+            result.append(value)
+    return sorted(set(result))
+
+
 def replace_partner_rows(source_name, rows_to_insert):
     ensure_partner_table()
     db = SessionLocal()
@@ -1683,6 +1724,7 @@ def replace_partner_rows(source_name, rows_to_insert):
         db.commit()
     finally:
         db.close()
+    clear_runtime_cache("stat_support::")
     refresh_cap_current_ftd_from_partner()
 
 
@@ -1727,6 +1769,7 @@ def import_chatterfy_dataframe(df, source_name=""):
         db.commit()
     finally:
         db.close()
+    clear_runtime_cache("stat_support::")
     return len(records)
 
 
@@ -1966,6 +2009,10 @@ def is_partner_row_qualified_for_cap(row, cap):
 
 
 def get_statistic_support_maps(period_label=""):
+    cache_key = f"stat_support::{period_label or 'all'}"
+    cached = RUNTIME_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
     import_chatterfy_from_csv_if_needed()
     ensure_partner_table()
     ensure_chatterfy_table()
@@ -2038,7 +2085,9 @@ def get_statistic_support_maps(period_label=""):
 
     chatterfy_by_ad = {key: float(len(values)) for key, values in chatterfy_by_ad.items()}
     chatterfy_by_flow = {key: float(len(values)) for key, values in chatterfy_by_flow.items()}
-    return partner_by_flow, chatterfy_by_ad, chatterfy_by_flow
+    result = (partner_by_flow, chatterfy_by_ad, chatterfy_by_flow)
+    RUNTIME_CACHE[cache_key] = result
+    return result
 
 
 def enrich_statistic_rows(rows, period_label=""):
@@ -2168,6 +2217,7 @@ def import_caps_dataframe(df):
         db.commit()
     finally:
         db.close()
+    clear_runtime_cache("stat_support::")
 
 
 def import_tasks_dataframe(df, assigned_user, created_by_user):
@@ -2919,14 +2969,18 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             th, td {{
                 border-right: 1px solid var(--border);
                 border-bottom: 1px solid var(--border);
-                padding: 10px 12px;
+                padding: 11px 12px;
                 text-align: left;
                 font-size: 14px;
                 white-space: nowrap;
                 overflow: hidden;
                 text-overflow: ellipsis;
                 position: relative;
+                line-height: 1.25;
+                vertical-align: middle;
             }}
+            tbody tr {{ height: 52px; }}
+            .table-wrap form {{ margin: 0; }}
             th {{
                 background: var(--table-head);
                 color: var(--table-head-text);
@@ -2965,16 +3019,20 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 font-weight: 800;
             }}
             .flag-form {{
-                display: grid;
+                display: flex;
+                align-items: center;
                 gap: 8px;
-                min-width: 120px;
+                min-width: 0;
+                flex-wrap: nowrap;
             }}
+            .flag-form .panel-subtitle {{ display: none; }}
             .flag-check {{
                 display: inline-flex;
                 align-items: center;
                 gap: 8px;
                 font-weight: 800;
                 font-size: 13px;
+                white-space: nowrap;
             }}
             .flag-check input {{
                 width: 16px;
@@ -2985,11 +3043,20 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 display: flex;
                 gap: 8px;
                 align-items: center;
-                justify-content: center;
-                flex-wrap: wrap;
+                justify-content: flex-start;
+                flex-wrap: nowrap;
+                min-width: 0;
             }}
-            .caps-actions .ghost-btn {{
-                min-width: 92px;
+            .caps-actions form {{
+                margin: 0;
+                width: auto;
+                flex: 0 0 auto;
+            }}
+            .caps-actions .ghost-btn,
+            .caps-actions .btn,
+            .caps-actions button {{
+                width: auto;
+                min-width: 84px;
                 text-align: center;
             }}
             .drag-target-left::before, .drag-target-right::after {{
@@ -3108,30 +3175,85 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             }}
             .caps-form textarea {{ min-height: 110px; resize: vertical; }}
             .caps-grid-2 {{ display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:10px; }}
-            .caps-table {{ min-width: 1180px; table-layout: fixed; width: 100%; }}
+            .caps-table {{ min-width: 1560px; table-layout: auto; width: 100%; }}
             .caps-table th, .caps-table td {{
-                white-space: normal;
-                overflow: visible;
-                text-overflow: initial;
-                vertical-align: top;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                vertical-align: middle;
+                line-height: 1.35;
             }}
-            .caps-table .comment-col {{ min-width: 180px; max-width: 220px; }}
-            .caps-table .agent-col {{ min-width: 110px; }}
-            .caps-actions {{ display:flex; gap:8px; flex-wrap:wrap; min-width:110px; }}
+            .caps-table .id-col {{ width: 72px; min-width: 72px; }}
+            .caps-table .advertiser-col {{ width: 120px; min-width: 120px; }}
+            .caps-table .owner-col {{ width: 110px; min-width: 110px; }}
+            .caps-table .buyer-col {{ width: 130px; min-width: 130px; }}
+            .caps-table .flow-col {{ width: 210px; min-width: 210px; }}
+            .caps-table .code-col {{ width: 90px; min-width: 90px; }}
+            .caps-table .geo-col {{ width: 96px; min-width: 96px; }}
+            .caps-table .rate-col {{ width: 88px; min-width: 88px; }}
+            .caps-table .baseline-col {{ width: 96px; min-width: 96px; }}
+            .caps-table .cap-col {{ width: 86px; min-width: 86px; }}
+            .caps-table .current-col {{ width: 112px; min-width: 112px; }}
+            .caps-table .fill-col {{ width: 132px; min-width: 132px; }}
+            .caps-table .promo-col {{ width: 118px; min-width: 118px; }}
+            .caps-table .agent-col {{ width: 110px; min-width: 110px; }}
+            .caps-table .comment-col {{ width: 220px; min-width: 220px; }}
+            .caps-table .action-col {{ width: 190px; min-width: 190px; }}
             .progress-shell {{
                 min-width: 130px;
                 display:grid;
                 gap:6px;
             }}
+            .confirm-overlay {{
+                position: fixed;
+                inset: 0;
+                background: rgba(7, 16, 31, 0.64);
+                display: none;
+                align-items: center;
+                justify-content: center;
+                z-index: 120;
+                padding: 20px;
+            }}
+            .confirm-overlay.open {{ display: flex; }}
+            .confirm-card {{
+                width: min(100%, 460px);
+                border-radius: 22px;
+                border: 1px solid var(--border);
+                background: linear-gradient(180deg, var(--panel), var(--panel-2));
+                box-shadow: var(--shadow);
+                padding: 22px;
+                display: grid;
+                gap: 16px;
+            }}
+            .confirm-title {{ font-size: 22px; font-weight: 900; }}
+            .confirm-text {{ color: var(--muted); font-size: 14px; line-height: 1.5; }}
+            .confirm-actions {{ display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }}
+            .danger-btn {{
+                border: 1px solid rgba(239,68,68,0.62) !important;
+                background: linear-gradient(90deg, rgba(185,28,28,0.96), rgba(239,68,68,0.92)) !important;
+                color: #ffffff !important;
+            }}
+            .danger-btn:hover {{
+                background: linear-gradient(90deg, rgba(153,27,27,1), rgba(220,38,38,0.96)) !important;
+            }}
             .finance-grid {{ display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:16px; }}
             .finance-table {{ min-width: 980px; }}
             .finance-table th, .finance-table td {{
-                white-space: normal;
-                overflow: visible;
-                text-overflow: initial;
-                vertical-align: top;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                vertical-align: middle;
             }}
-            .wallet-code {{ font-family: "Menlo", "Monaco", monospace; font-size: 12px; line-height: 1.45; }}
+            .wallet-code {{
+                display: block;
+                max-width: 240px;
+                font-family: "Menlo", "Monaco", monospace;
+                font-size: 12px;
+                line-height: 1.35;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }}
             .progress-bar {{
                 width:100%;
                 height:10px;
@@ -3662,35 +3784,35 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             state = "HOT"
         rows_html += f"""
         <tr>
-            <td>{row.id}</td>
-            <td>{escape(row.advertiser or "")}</td>
-            <td>{escape(row.owner_name or "")}</td>
-            <td>{escape(row.buyer or "")}</td>
-            <td>{escape(row.flow or "")}</td>
-            <td>{escape(row.code or "")}</td>
-            <td>{escape(row.geo or "")}</td>
-            <td>{escape(row.rate or "")}</td>
-            <td>{escape(row.baseline or "")}</td>
-            <td>{format_int_or_float(row.cap_value)}</td>
-            <td>{format_int_or_float(row.current_ftd)}</td>
-            <td>
+            <td class="id-col">{row.id}</td>
+            <td class="advertiser-col" title="{escape(row.advertiser or '')}">{escape(row.advertiser or "")}</td>
+            <td class="owner-col" title="{escape(row.owner_name or '')}">{escape(row.owner_name or "")}</td>
+            <td class="buyer-col" title="{escape(row.buyer or '')}">{escape(row.buyer or "")}</td>
+            <td class="flow-col" title="{escape(row.flow or '')}">{escape(row.flow or "")}</td>
+            <td class="code-col" title="{escape(row.code or '')}">{escape(row.code or "")}</td>
+            <td class="geo-col" title="{escape(row.geo or '')}">{escape(row.geo or "")}</td>
+            <td class="rate-col" title="{escape(row.rate or '')}">{escape(row.rate or "")}</td>
+            <td class="baseline-col" title="{escape(row.baseline or '')}">{escape(row.baseline or "")}</td>
+            <td class="cap-col">{format_int_or_float(row.cap_value)}</td>
+            <td class="current-col">{format_int_or_float(row.current_ftd)}</td>
+            <td class="fill-col">
                 <div class="progress-shell">
                     <div><strong>{fill_percent:.0f}%</strong> · {state}</div>
                     <div class="progress-bar"><span style="width:{bar_width}%;"></span></div>
                 </div>
             </td>
-            <td>{escape(row.promo_code or "")}</td>
-            <td class="agent-col">{escape(row.agent or "")}</td>
-            <td class="comment-col">{escape(row.comments or "")}</td>
-            <td>
+            <td class="promo-col" title="{escape(row.promo_code or '')}">{escape(row.promo_code or "")}</td>
+            <td class="agent-col" title="{escape(row.agent or '')}">{escape(row.agent or "")}</td>
+            <td class="comment-col" title="{escape(row.comments or '')}">{escape(row.comments or "")}</td>
+            <td class="action-col">
                 <div class="caps-actions">
                     <form method="get" action="/caps">
                         <input type="hidden" name="edit" value="{row.id}">
                         <button type="submit" class="ghost-btn small-btn">Edit</button>
                     </form>
-                    <form method="post" action="/caps/delete" onsubmit="return confirm('Удалить эту капу?');">
+                    <form method="post" action="/caps/delete" class="cap-delete-form">
                         <input type="hidden" name="cap_id" value="{row.id}">
-                        <button type="submit" class="ghost-btn small-btn">Delete</button>
+                        <button type="button" class="ghost-btn small-btn cap-delete-trigger" data-cap-id="{row.id}">Delete</button>
                     </form>
                 </div>
             </td>
@@ -3824,22 +3946,22 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     <table class="caps-table">
                         <thead>
                             <tr>
-                                <th>ID</th>
-                                <th>Advertiser</th>
-                                <th>Owner</th>
-                                <th>Cabinet</th>
-                                <th>Flow</th>
-                                <th>CODE</th>
-                                <th>GEO</th>
-                                <th>Rate</th>
-                                <th>Baseline</th>
-                                <th>Cap</th>
-                                <th>Current FTD</th>
-                                <th>Fill</th>
-                                <th>Promo Code</th>
-                                <th>Agent</th>
-                                <th>Comments</th>
-                                <th>Action</th>
+                                <th class="id-col">ID</th>
+                                <th class="advertiser-col">Advertiser</th>
+                                <th class="owner-col">Owner</th>
+                                <th class="buyer-col">Cabinet</th>
+                                <th class="flow-col">Flow</th>
+                                <th class="code-col">CODE</th>
+                                <th class="geo-col">GEO</th>
+                                <th class="rate-col">Rate</th>
+                                <th class="baseline-col">Baseline</th>
+                                <th class="cap-col">Cap</th>
+                                <th class="current-col">Current FTD</th>
+                                <th class="fill-col">Fill</th>
+                                <th class="promo-col">Promo Code</th>
+                                <th class="agent-col">Agent</th>
+                                <th class="comment-col">Comments</th>
+                                <th class="action-col">Action</th>
                             </tr>
                         </thead>
                         <tbody>{rows_html if rows_html else '<tr><td colspan="16">No caps yet</td></tr>'}</tbody>
@@ -3848,8 +3970,54 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             </div>
         </div>
     </div>
+    <div class="confirm-overlay" id="capDeleteOverlay" aria-hidden="true">
+        <div class="confirm-card">
+            <div class="confirm-title">Delete cap?</div>
+            <div class="confirm-text">This action will remove the selected cap from the list. You can cancel if you opened it by mistake.</div>
+            <div class="confirm-actions">
+                <button type="button" class="ghost-btn" id="capDeleteCancel">Cancel</button>
+                <button type="button" class="btn danger-btn" id="capDeleteConfirm">Delete</button>
+            </div>
+        </div>
+    </div>
     """
-    return page_shell("Caps", content, active_page="caps", current_user=current_user)
+    extra_scripts = """
+    <script>
+        (function initCapsDeleteModal() {
+            const overlay = document.getElementById('capDeleteOverlay');
+            if (!overlay) return;
+            const cancelBtn = document.getElementById('capDeleteCancel');
+            const confirmBtn = document.getElementById('capDeleteConfirm');
+            let activeForm = null;
+
+            function closeModal() {
+                overlay.classList.remove('open');
+                overlay.setAttribute('aria-hidden', 'true');
+                activeForm = null;
+            }
+
+            document.querySelectorAll('.cap-delete-trigger').forEach(function(button) {
+                button.addEventListener('click', function() {
+                    activeForm = button.closest('form');
+                    overlay.classList.add('open');
+                    overlay.setAttribute('aria-hidden', 'false');
+                });
+            });
+
+            cancelBtn?.addEventListener('click', closeModal);
+            confirmBtn?.addEventListener('click', function() {
+                if (activeForm) activeForm.submit();
+            });
+            overlay.addEventListener('click', function(event) {
+                if (event.target === overlay) closeModal();
+            });
+            document.addEventListener('keydown', function(event) {
+                if (event.key === 'Escape' && overlay.classList.contains('open')) closeModal();
+            });
+        })();
+    </script>
+    """
+    return page_shell("Caps", content, active_page="caps", extra_scripts=extra_scripts, current_user=current_user)
 
 
 def render_finance_table(title, subtitle, headers, rows_html, min_width="980px"):
@@ -4839,7 +5007,7 @@ def partner_report_page_html(
     all_sources = get_partner_period_options()
     all_cabinets = sorted(set(get_cabinet_names() + get_partner_cabinet_options()))
     upload_cabinets = get_cabinet_names(active_only=True) or all_cabinets
-    all_countries = sorted({safe_text(row.country) for row in get_partner_rows_by_period("") if safe_text(row.country)})
+    all_countries = get_partner_country_options()
     period_view_options = "".join([
         f'<option value="{value}" {"selected" if period_view == value else ""}>{label}</option>'
         for value, label in [("all", "All Time"), ("current", "Current Period"), ("period", "Choose Period")]
@@ -5900,6 +6068,7 @@ def save_finance_wallet(
         db.commit()
     finally:
         db.close()
+    clear_runtime_cache("finance_snapshot::")
     return RedirectResponse(url="/finance?message=Кошелек сохранен", status_code=303)
 
 
@@ -5912,6 +6081,7 @@ async def upload_finance_file(request: Request, file: UploadFile = File(...)):
     ensure_upload_dir()
     with open(FINANCE_UPLOAD_PATH, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
+    clear_runtime_cache("finance_snapshot::")
     return RedirectResponse(url="/finance?message=Финансы загружены", status_code=303)
 
 
@@ -5958,6 +6128,7 @@ def save_finance_expense(
         db.commit()
     finally:
         db.close()
+    clear_runtime_cache("finance_snapshot::")
     return RedirectResponse(url="/finance?message=Расход сохранен", status_code=303)
 
 
@@ -6005,6 +6176,7 @@ def save_finance_income(
         db.commit()
     finally:
         db.close()
+    clear_runtime_cache("finance_snapshot::")
     return RedirectResponse(url="/finance?message=Приход сохранен", status_code=303)
 
 
@@ -6049,6 +6221,7 @@ def save_finance_transfer(
         db.commit()
     finally:
         db.close()
+    clear_runtime_cache("finance_snapshot::")
     return RedirectResponse(url="/finance?message=Перемещение сохранено", status_code=303)
 
 
@@ -6065,6 +6238,7 @@ def delete_finance_wallet(request: Request, wallet_id: str = Form(...)):
         db.commit()
     finally:
         db.close()
+    clear_runtime_cache("finance_snapshot::")
     return RedirectResponse(url="/finance?message=Кошелек удален", status_code=303)
 
 
@@ -6081,6 +6255,7 @@ def delete_finance_expense(request: Request, expense_id: str = Form(...)):
         db.commit()
     finally:
         db.close()
+    clear_runtime_cache("finance_snapshot::")
     return RedirectResponse(url="/finance?message=Расход удален", status_code=303)
 
 
@@ -6097,6 +6272,7 @@ def delete_finance_income(request: Request, income_id: str = Form(...)):
         db.commit()
     finally:
         db.close()
+    clear_runtime_cache("finance_snapshot::")
     return RedirectResponse(url="/finance?message=Приход удален", status_code=303)
 
 
@@ -6113,6 +6289,7 @@ def delete_finance_transfer(request: Request, transfer_id: str = Form(...)):
         db.commit()
     finally:
         db.close()
+    clear_runtime_cache("finance_snapshot::")
     return RedirectResponse(url="/finance?message=Перемещение удалено", status_code=303)
 
 
@@ -6243,7 +6420,7 @@ def save_cap(
         db.commit()
     finally:
         db.close()
-
+    clear_runtime_cache("stat_support::")
     return RedirectResponse(url="/caps?message=Cap+saved", status_code=303)
 
 
@@ -6283,6 +6460,7 @@ def delete_cap(request: Request, cap_id: str = Form(...)):
         db.commit()
     finally:
         db.close()
+    clear_runtime_cache("stat_support::")
     return RedirectResponse(url="/caps?message=Cap+deleted", status_code=303)
 
 @app.get("/api/partner/current-period")
