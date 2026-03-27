@@ -1184,48 +1184,6 @@ def get_caps_filter_options():
         db.close()
 
 
-def import_caps_from_csv_if_needed():
-    if "cap_rows" in AUTO_IMPORT_CHECKS:
-        return
-    ensure_caps_table()
-    db = SessionLocal()
-    try:
-        if db.query(CapRow).count() > 0:
-            AUTO_IMPORT_CHECKS.add("cap_rows")
-            return
-        source_path = "/Users/ivansviderko/Downloads/Капы.csv"
-        if not os.path.exists(source_path):
-            AUTO_IMPORT_CHECKS.add("cap_rows")
-            return
-        df = pd.read_csv(source_path)
-        records = []
-        for _, row in df.iterrows():
-            records.append(CapRow(
-                advertiser=safe_text(row.get("Рекл:")),
-                owner_name=safe_text(row.get("Имя:")),
-                buyer=safe_text(row.get("Кабинет:")),
-                flow=safe_text(row.get("Поток:")),
-                code=normalize_geo_value(row.get("CODE:")),
-                geo=normalize_geo_value(row.get("GEO:")),
-                rate=safe_text(row.get("Ставка:")),
-                baseline=safe_text(row.get("БЛ:")),
-                cap_value=safe_cap_number(row.get("Капа:")),
-                promo_code=safe_text(row.get("Промокод:")),
-                kpi=safe_text(row.get("КПИ:")),
-                link=safe_text(row.get("Ссылка:")),
-                comments=safe_text(row.get("Коментарии:")),
-                agent=safe_text(row.get("Агент:")),
-                current_ftd=0,
-            ))
-        if records:
-            for item in records:
-                db.add(item)
-            db.commit()
-    finally:
-        db.close()
-    AUTO_IMPORT_CHECKS.add("cap_rows")
-
-
 def parse_datetime_local(value: str):
     text = (value or "").strip()
     if not text:
@@ -1724,6 +1682,10 @@ def get_cabinet_names(active_only=False):
     return names
 
 
+def get_active_cabinet_name_set():
+    return set(get_cabinet_names(active_only=True))
+
+
 def get_partner_cabinet_options():
     ensure_partner_table()
     db = SessionLocal()
@@ -1807,6 +1769,7 @@ def get_hold_wager_rows(period_label="", cabinet_name="", search=""):
     ensure_partner_table()
     ensure_caps_table()
     ensure_chatterfy_id_table()
+    active_cabinets = get_active_cabinet_name_set()
     db = SessionLocal()
     try:
         partner_query = db.query(PartnerRow)
@@ -1830,6 +1793,8 @@ def get_hold_wager_rows(period_label="", cabinet_name="", search=""):
     search_lower = safe_text(search).lower()
     result = []
     for row in partner_rows:
+        if active_cabinets and safe_text(row.cabinet_name) not in active_cabinets:
+            continue
         if safe_number(row.deposit_amount) <= 0:
             continue
         promo_key = safe_text(row.sub_id).upper()
@@ -2141,6 +2106,7 @@ def get_partner_period_options():
 
 def get_partner_rows_by_period(period_value="", period_label="", cabinet_name="", country="", search=""):
     ensure_partner_table()
+    active_cabinets = get_active_cabinet_name_set()
     db = SessionLocal()
     try:
         query = db.query(PartnerRow)
@@ -2165,6 +2131,9 @@ def get_partner_rows_by_period(period_value="", period_label="", cabinet_name=""
         rows = query.order_by(PartnerRow.id.desc()).all()
     finally:
         db.close()
+
+    if active_cabinets:
+        rows = [row for row in rows if safe_text(getattr(row, "cabinet_name", "")) in active_cabinets]
 
     id_by_player, chatter_by_telegram = get_chatterfy_linkage_maps(period_label=period_label)
     for row in rows:
@@ -2387,54 +2356,6 @@ def load_manual_finance():
         }
     finally:
         db.close()
-
-
-def import_caps_dataframe(df):
-    ensure_caps_table()
-    db = SessionLocal()
-    try:
-        existing_rows = db.query(CapRow).all()
-        existing_map = {
-            (
-                (item.buyer or "").strip().upper(),
-                (item.flow or "").strip().upper(),
-                (item.code or "").strip().upper(),
-                (item.geo or "").strip().upper(),
-                (item.promo_code or "").strip().upper(),
-            ): item
-            for item in existing_rows
-        }
-        for _, row in df.iterrows():
-            key = (
-                safe_text(row.get("Кабинет:")).upper(),
-                safe_text(row.get("Поток:")).upper(),
-                normalize_geo_value(row.get("CODE:")),
-                normalize_geo_value(row.get("GEO:")),
-                safe_text(row.get("Промокод:")).upper(),
-            )
-            item = existing_map.get(key)
-            if not item:
-                item = CapRow()
-                db.add(item)
-            item.advertiser = safe_text(row.get("Рекл:"))
-            item.owner_name = safe_text(row.get("Имя:"))
-            item.buyer = safe_text(row.get("Кабинет:"))
-            item.flow = safe_text(row.get("Поток:"))
-            item.code = normalize_geo_value(row.get("CODE:"))
-            item.geo = normalize_geo_value(row.get("GEO:"))
-            item.rate = safe_text(row.get("Ставка:"))
-            item.baseline = safe_text(row.get("БЛ:"))
-            item.cap_value = safe_cap_number(row.get("Капа:"))
-            item.promo_code = safe_text(row.get("Промокод:"))
-            item.kpi = safe_text(row.get("КПИ:"))
-            item.link = safe_text(row.get("Ссылка:"))
-            item.comments = safe_text(row.get("Коментарии:"))
-            item.agent = safe_text(row.get("Агент:"))
-        db.commit()
-    finally:
-        db.close()
-    clear_runtime_cache("stat_support::")
-
 
 def import_tasks_dataframe(df, assigned_user, created_by_user):
     ensure_task_table()
@@ -3335,6 +3256,40 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 color: #15803d;
                 border-color: rgba(34, 197, 94, 0.24);
             }}
+            .status-icon {{
+                display:inline-flex;
+                align-items:center;
+                justify-content:center;
+                width:30px;
+                height:30px;
+                border-radius:999px;
+                border:1px solid var(--border);
+                font-size:14px;
+                font-weight:900;
+                line-height:1;
+                user-select:none;
+                -webkit-user-select:none;
+            }}
+            .status-icon-blocked {{
+                background: rgba(239, 68, 68, 0.18);
+                color: #dc2626;
+                border-color: rgba(239, 68, 68, 0.3);
+            }}
+            .status-icon-waiting {{
+                background: rgba(245, 158, 11, 0.18);
+                color: #b45309;
+                border-color: rgba(245, 158, 11, 0.3);
+            }}
+            .status-icon-manual {{
+                background: rgba(250, 204, 21, 0.22);
+                color: #7c5c00;
+                border-color: rgba(250, 204, 21, 0.38);
+            }}
+            .status-icon-active {{
+                background: rgba(34, 197, 94, 0.16);
+                color: #15803d;
+                border-color: rgba(34, 197, 94, 0.28);
+            }}
             .flag-form {{
                 display: flex;
                 align-items: center;
@@ -3852,6 +3807,20 @@ def render_chatterfy_status_badge(status):
     if "manual" in status_lower:
         return f'<span class="status-chip status-chip-manual">! {escape(status_text)}</span>'
     return f'<span class="status-chip status-chip-active">• {escape(status_text)}</span>'
+
+
+def render_chatterfy_status_icon(status):
+    status_text = safe_text(status)
+    status_lower = status_text.lower()
+    if not status_text:
+        return '<span class="status-icon" title="No status">—</span>'
+    if "block" in status_lower:
+        return f'<span class="status-icon status-icon-blocked" title="{escape(status_text)}">⛔</span>'
+    if "wait" in status_lower:
+        return f'<span class="status-icon status-icon-waiting" title="{escape(status_text)}">⏳</span>'
+    if "manual" in status_lower:
+        return f'<span class="status-icon status-icon-manual" title="{escape(status_text)}">👤</span>'
+    return f'<span class="status-icon status-icon-active" title="{escape(status_text)}">•</span>'
 
 
 def render_statistic_dashboard(rows):
@@ -5189,7 +5158,7 @@ def chatterfy_page_html(
 
 
 def hold_wager_page_html(current_user, rows, cabinet_name="", period_view="all", period_label="", search="", success_text="", error_text=""):
-    all_cabinets = sorted(set(get_cabinet_names() + get_partner_cabinet_options()))
+    all_cabinets = sorted(set(get_cabinet_names(active_only=True)))
     cabinet_options = make_options(all_cabinets, cabinet_name)
     period_view_options = "".join([
         f'<option value="{value}" {"selected" if period_view == value else ""}>{label}</option>'
@@ -5205,7 +5174,7 @@ def hold_wager_page_html(current_user, rows, cabinet_name="", period_view="all",
     for item in rows:
         chat_link = item.get("chat_link") or ""
         chat_html = f'<a href="https://{escape(chat_link)}" target="_blank" rel="noreferrer" class="ghost-btn small-btn">Open</a>' if chat_link else "—"
-        chatter_status_html = render_chatterfy_status_badge(item.get("chatter_status"))
+        chatter_status_html = render_chatterfy_status_icon(item.get("chatter_status"))
         rows_html += f"""
         <tr>
             <td>{escape(item['report_date'])}</td>
@@ -5262,23 +5231,23 @@ def hold_wager_page_html(current_user, rows, cabinet_name="", period_view="all",
         <div class="controls-line">
             <div>
                 <div class="panel-title" style="margin-bottom:4px;">Hold/Wager Review</div>
-                <div class="panel-subtitle">Players from 1xBet who do not pass cap baseline rules, with linked Chatterfy status and chat access.</div>
+        <div class="panel-subtitle">Players from 1xBet who do not pass cap baseline rules, with linked status and quick chat access.</div>
             </div>
         </div>
         <div class="table-wrap">
-            <table style="min-width:1860px;">
+            <table style="min-width:1600px;">
                 <thead>
                     <tr>
                         <th>Report Date</th>
                         <th>Period</th>
                         <th>Reg Date</th>
                         <th>Cabinet</th>
-                        <th>SubID</th>
+                        <th>Promo/Link</th>
                         <th>Player ID</th>
-                        <th>Telegram ID</th>
+                        <th>ID Chatterfy</th>
                         <th>ID in PP</th>
                         <th>Chat</th>
-                        <th>Chatterfy</th>
+                        <th>Status</th>
                         <th>Country</th>
                         <th>Flow</th>
                         <th>Baseline</th>
@@ -5287,7 +5256,7 @@ def hold_wager_page_html(current_user, rows, cabinet_name="", period_view="all",
                         <th>Bet</th>
                         <th>Reason</th>
                         <th>Missing BL</th>
-                        <th>Missing Wager</th>
+                        <th>Missing WG</th>
                     </tr>
                 </thead>
                 <tbody>{rows_html if rows_html else '<tr><td colspan="19">No hold/wager issues for the selected filters.</td></tr>'}</tbody>
@@ -5450,7 +5419,7 @@ def partner_report_page_html(
     error_text="",
 ):
     all_sources = get_partner_period_options()
-    all_cabinets = sorted(set(get_cabinet_names() + get_partner_cabinet_options()))
+    all_cabinets = sorted(set(get_cabinet_names(active_only=True)))
     upload_cabinets = get_cabinet_names(active_only=True) or all_cabinets
     all_countries = get_partner_country_options()
     period_view_options = "".join([
@@ -5471,7 +5440,7 @@ def partner_report_page_html(
     for row in rows:
         chat_link = safe_text(getattr(row, "chat_link", ""))
         chat_html = f'<a href="https://{escape(chat_link)}" target="_blank" rel="noreferrer" class="ghost-btn small-btn">Open</a>' if chat_link else "—"
-        chatter_status_html = render_chatterfy_status_badge(getattr(row, "chatter_status", ""))
+        chatter_status_html = render_chatterfy_status_icon(getattr(row, "chatter_status", ""))
         rows_html += f"""
         <tr>
             <td>{escape(safe_text(getattr(row, "report_date", "")) or get_half_month_period_from_date(row.registration_date).get("report_date", ""))}</td>
@@ -5570,19 +5539,19 @@ def partner_report_page_html(
 
     <div class="panel compact-panel">
         <div class="table-wrap">
-            <table style="min-width:1760px;">
+            <table style="min-width:1500px;">
                 <thead>
                     <tr>
                         <th>{header_link('report_date', 'Report Date')}</th>
                         <th>{header_link('period_label', 'Period')}</th>
                         <th>{header_link('registration_date', 'Registration')}</th>
                         <th>{header_link('cabinet_name', 'Cabinet')}</th>
-                        <th>{header_link('sub_id', 'SubId')}</th>
+                        <th>{header_link('sub_id', 'Promo/Link')}</th>
                         <th>{header_link('player_id', 'Player ID')}</th>
-                        <th>{header_link('telegram_id', 'Telegram ID')}</th>
+                        <th>{header_link('telegram_id', 'ID Chatterfy')}</th>
                         <th>{header_link('pp_player_id', 'ID in PP')}</th>
                         <th>{header_link('chat_link', 'Chat')}</th>
-                        <th>{header_link('chatter_status', 'Chatterfy')}</th>
+                        <th>{header_link('chatter_status', 'Status')}</th>
                         <th>{header_link('country', 'Country')}</th>
                         <th>{header_link('deposit_amount', 'Deposit')}</th>
                         <th>{header_link('bet_amount', 'Bet')}</th>
@@ -6737,7 +6706,6 @@ def caps_page(
     if not user:
         return auth_redirect_response()
     enforce_page_access(user, "caps")
-    import_caps_from_csv_if_needed()
 
     rows = get_caps_rows(search=search, buyer=buyer, geo=geo, owner_name=owner_name)
     form_data = {}
@@ -6854,31 +6822,6 @@ def save_cap(
         db.close()
     clear_runtime_cache("stat_support::")
     return RedirectResponse(url="/caps?message=Cap+saved", status_code=303)
-
-
-@app.post("/caps/upload")
-async def upload_caps_file(request: Request, file: UploadFile = File(...)):
-    user = get_current_user(request)
-    if not user:
-        return auth_redirect_response()
-    enforce_page_access(user, "caps")
-    original_name = file.filename or "caps.csv"
-    ext = os.path.splitext(original_name)[1].lower() or ".csv"
-    filename = f"temp_caps_{uuid.uuid4()}{ext}"
-    try:
-        with open(filename, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        if ext in [".xlsx", ".xls"]:
-            df = pd.read_excel(filename)
-        else:
-            df = pd.read_csv(filename)
-        import_caps_dataframe(df)
-        refresh_cap_current_ftd_from_partner()
-        return RedirectResponse(url="/caps?message=Caps+uploaded", status_code=303)
-    finally:
-        if os.path.exists(filename):
-            os.remove(filename)
-
 
 @app.post("/caps/delete")
 def delete_cap(request: Request, cap_id: str = Form(...)):
