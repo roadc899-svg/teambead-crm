@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Query, Form, Request, HTTPException
+from fastapi import FastAPI, UploadFile, File, Query, Form, Request, HTTPException, Header
 from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse, Response
 from fastapi.exception_handlers import http_exception_handler
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
@@ -13,7 +13,9 @@ import io
 import csv
 import secrets
 import hashlib
-from datetime import datetime, timedelta
+import calendar
+import re
+from datetime import datetime, timedelta, date
 
 # =========================================
 # BLOCK 1 — DATABASE
@@ -23,6 +25,8 @@ SESSION_COOKIE_NAME = "teambead_session"
 SESSION_DURATION_DAYS = 14
 DATA_UPLOAD_DIR = "./uploaded_data"
 FINANCE_UPLOAD_PATH = os.path.join(DATA_UPLOAD_DIR, "finance_latest.csv")
+PARTNER_UPLOAD_DIR = os.path.join(DATA_UPLOAD_DIR, "partner_reports")
+PARTNER_IMPORT_API_KEY = "8hF9sK2LmQpX91zA"
 DEFAULT_USERS = [
     {
         "username": os.getenv("TEAMBEAD_ADMIN1_LOGIN", "Ivan"),
@@ -660,6 +664,7 @@ def cap_fill_percent(current_ftd, cap_value):
 
 def ensure_upload_dir():
     os.makedirs(DATA_UPLOAD_DIR, exist_ok=True)
+    os.makedirs(PARTNER_UPLOAD_DIR, exist_ok=True)
 
 
 # =========================================
@@ -1031,7 +1036,80 @@ def get_tasks_for_user(current_user, status_filter="", assignee_filter="", searc
 
 def ensure_partner_table():
     Base.metadata.create_all(bind=engine, tables=[PartnerRow.__table__])
+def get_half_month_period(today: date | None = None):
+    if today is None:
+        today = datetime.utcnow().date()
 
+    year = today.year
+    month = today.month
+    last_day = calendar.monthrange(year, month)[1]
+
+    if today.day <= 15:
+        start_day = 1
+        end_day = 15
+    else:
+        start_day = 16
+        end_day = last_day
+
+    date_start = date(year, month, start_day)
+    date_end = date(year, month, end_day)
+
+    return {
+        "date_start": date_start.strftime("%Y-%m-%d"),
+        "date_end": date_end.strftime("%Y-%m-%d"),
+        "period_label": f"{start_day:02d}-{end_day:02d}.{month:02d}.{year}",
+    }
+
+
+def build_partner_source_name(date_start: str, date_end: str, prefix: str = "1xbet_players"):
+    try:
+        start_dt = datetime.strptime((date_start or "").strip(), "%Y-%m-%d")
+        end_dt = datetime.strptime((date_end or "").strip(), "%Y-%m-%d")
+        return f"{prefix}|{start_dt.strftime('%d')}-{end_dt.strftime('%d.%m.%Y')}"
+    except Exception:
+        if date_start and date_end:
+            return f"{prefix}|{date_start}_{date_end}"
+        return prefix
+
+
+def detect_partner_period_from_dataframe(df):
+    pattern = re.compile(r"(\\d{2}\\.\\d{2}\\.\\d{4})\\s*-\\s*(\\d{2}\\.\\d{2}\\.\\d{4})")
+    try:
+        for row in df.itertuples(index=False):
+            for value in row:
+                text_value = safe_text(value)
+                if not text_value:
+                    continue
+                match = pattern.search(text_value)
+                if not match:
+                    continue
+                start_dt = datetime.strptime(match.group(1), "%d.%m.%Y")
+                end_dt = datetime.strptime(match.group(2), "%d.%m.%Y")
+                return {
+                    "date_start": start_dt.strftime("%Y-%m-%d"),
+                    "date_end": end_dt.strftime("%Y-%m-%d"),
+                    "period_label": f"{start_dt.strftime('%d')}-{end_dt.strftime('%d.%m.%Y')}",
+                }
+    except Exception:
+        pass
+    return None
+
+
+def normalize_partner_period(date_start: str = "", date_end: str = ""):
+    clean_start = safe_text(date_start)
+    clean_end = safe_text(date_end)
+    if clean_start and clean_end:
+        try:
+            start_dt = datetime.strptime(clean_start, "%Y-%m-%d")
+            end_dt = datetime.strptime(clean_end, "%Y-%m-%d")
+            return {
+                "date_start": start_dt.strftime("%Y-%m-%d"),
+                "date_end": end_dt.strftime("%Y-%m-%d"),
+                "period_label": f"{start_dt.strftime('%d')}-{end_dt.strftime('%d.%m.%Y')}",
+            }
+        except Exception:
+            pass
+    return get_half_month_period()
 
 def parse_partner_dataframe(df, source_name=""):
     records = []
@@ -4119,7 +4197,83 @@ def delete_cap(request: Request, cap_id: str = Form(...)):
         db.close()
     return RedirectResponse(url="/caps?message=Капа удалена", status_code=303)
 
+@app.get("/api/partner/current-period")
+def api_partner_current_period(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    if not is_admin_role(user):
+        raise HTTPException(status_code=403)
+    return get_half_month_period()
 
+
+@app.post("/api/partner/import")
+async def api_partner_import(
+    request: Request,
+    file: UploadFile = File(...),
+    source_name: str = Form(default="1xbet_players"),
+    date_start: str = Form(default=""),
+    date_end: str = Form(default=""),
+    period_mode: str = Form(default="half_month"),
+    api_key: str = Header(default="", alias="X-API-Key"),
+):
+    user = get_current_user(request)
+    authorized = bool(user and is_admin_role(user))
+    if not authorized and PARTNER_IMPORT_API_KEY:
+        authorized = api_key == PARTNER_IMPORT_API_KEY
+
+    if not authorized:
+        if user:
+            raise HTTPException(status_code=403)
+        raise HTTPException(status_code=401)
+
+    ensure_partner_table()
+    ensure_upload_dir()
+
+    original_name = file.filename or "partner_report.xlsx"
+    ext = os.path.splitext(original_name)[1].lower() or ".xlsx"
+    temp_name = f"partner_{uuid.uuid4()}{ext}"
+    temp_path = os.path.join(PARTNER_UPLOAD_DIR, temp_name)
+
+    try:
+        with open(temp_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        if ext in [".xlsx", ".xls"]:
+            df = pd.read_excel(temp_path)
+        else:
+            try:
+                df = pd.read_csv(temp_path)
+            except Exception:
+                df = pd.read_csv(temp_path, sep=";")
+
+        detected_period = detect_partner_period_from_dataframe(df)
+        if period_mode == "half_month":
+            period = normalize_partner_period(date_start, date_end)
+        else:
+            period = detected_period or normalize_partner_period(date_start, date_end)
+
+        final_source_name = build_partner_source_name(
+            period["date_start"],
+            period["date_end"],
+            prefix=safe_text(source_name) or "1xbet_players",
+        )
+
+        rows = parse_partner_dataframe(df, source_name=final_source_name)
+        replace_partner_rows(final_source_name, rows)
+
+        return {
+            "status": "ok",
+            "inserted": len(rows),
+            "source_name": final_source_name,
+            "date_start": period["date_start"],
+            "date_end": period["date_end"],
+            "period_label": period["period_label"],
+            "stored_file": temp_path,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Не удалось обработать файл партнера: {exc}")
+        
 @app.get("/chatterfy", response_class=HTMLResponse)
 def chatterfy_page(request: Request):
     user = get_current_user(request)
