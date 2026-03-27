@@ -4319,7 +4319,7 @@ async def api_partner_import(
         }
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Не удалось обработать файл партнера: {exc}")
-        @app.get("/1xbet-report", response_class=HTMLResponse)
+@app.get("/1xbet-report", response_class=HTMLResponse)
 def onexbet_report_page(
     request: Request,
     period: str = Query(default=""),
