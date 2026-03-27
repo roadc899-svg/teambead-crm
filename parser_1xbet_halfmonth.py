@@ -307,7 +307,11 @@ def ensure_default_users():
     finally:
         db.close()
 
-
+def run_parser():
+    exported_file, current_period = export_players_report()
+    result = upload_to_crm(exported_file, current_period)
+    return result
+    
 def create_user_session(username: str) -> str:
     token = secrets.token_urlsafe(32)
     expires_at = datetime.utcnow() + timedelta(days=SESSION_DURATION_DAYS)
