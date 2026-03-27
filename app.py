@@ -37,6 +37,7 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 ONEXBET_PARSER_PATH = os.path.join(PROJECT_ROOT, "parser_1xbet_halfmonth.py")
 ONEXBET_RUNTIME_DIR = os.path.join(DATA_UPLOAD_DIR, "onexbet_runtime")
 ONEXBET_ACCOUNTS_PATH = os.path.join(ONEXBET_RUNTIME_DIR, "accounts.json")
+ONEXBET_ACCOUNTS_JSON = os.getenv("ONEXBET_ACCOUNTS_JSON", "").strip()
 ONEXBET_STATUS_PATH = os.path.join(ONEXBET_RUNTIME_DIR, "status.json")
 ONEXBET_LOG_PATH = os.path.join(ONEXBET_RUNTIME_DIR, "parser.log")
 ONEXBET_HISTORY_PATH = os.path.join(ONEXBET_RUNTIME_DIR, "history.json")
@@ -74,32 +75,43 @@ def onexbet_slugify(value):
     return re.sub(r"[^a-zA-Z0-9]+", "_", (value or "").strip().lower()).strip("_") or "account"
 
 
+def normalize_onexbet_accounts(raw):
+    accounts = []
+    if isinstance(raw, dict):
+        raw = raw.get("accounts", [])
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            login = safe_text(item.get("login") or item.get("username"))
+            password = safe_text(item.get("password"))
+            if not login or not password:
+                continue
+            account_id = safe_text(item.get("id")) or onexbet_slugify(login)
+            accounts.append({
+                "id": account_id,
+                "label": safe_text(item.get("label")) or login,
+                "login": login,
+            })
+    return accounts
+
+
 def load_onexbet_accounts():
     ensure_onexbet_runtime_dir()
-    accounts = []
+    if ONEXBET_ACCOUNTS_JSON:
+        try:
+            return normalize_onexbet_accounts(json.loads(ONEXBET_ACCOUNTS_JSON))
+        except Exception:
+            return []
+
     if os.path.exists(ONEXBET_ACCOUNTS_PATH):
         try:
             with open(ONEXBET_ACCOUNTS_PATH, "r", encoding="utf-8") as f:
                 raw = json.load(f)
-            if isinstance(raw, dict):
-                raw = raw.get("accounts", [])
-            if isinstance(raw, list):
-                for item in raw:
-                    if not isinstance(item, dict):
-                        continue
-                    login = safe_text(item.get("login") or item.get("username"))
-                    password = safe_text(item.get("password"))
-                    if not login or not password:
-                        continue
-                    account_id = safe_text(item.get("id")) or onexbet_slugify(login)
-                    accounts.append({
-                        "id": account_id,
-                        "label": safe_text(item.get("label")) or login,
-                        "login": login,
-                    })
+            return normalize_onexbet_accounts(raw)
         except Exception:
             return []
-    return accounts
+    return []
 
 
 def session_path_for_onexbet_account(account_id):
