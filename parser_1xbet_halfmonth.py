@@ -50,7 +50,16 @@ def export_players_report():
     period = get_half_month_period()
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=HEADLESS)
+        browser = p.chromium.launch(
+    headless=True,
+    args=[
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--single-process",
+    ],
+)
         context = browser.new_context(accept_downloads=True, locale="ru-RU")
         page = context.new_page()
 
