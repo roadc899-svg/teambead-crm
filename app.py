@@ -5622,7 +5622,6 @@ def onexbet_report_page(
         "idle": "Idle",
         "starting": "Starting",
         "running": "Running",
-        "waiting_for_user": "Waiting For You",
         "success": "Completed",
         "error": "Error",
         "stopped": "Stopped",
@@ -5633,8 +5632,6 @@ def onexbet_report_page(
     session_label = "Saved" if parser_state.get("session_saved") else "Missing"
     log_html = escape(parser_state.get("log_tail") or "Live log will appear here after you start authorization or parser run.")
     action_hint = ""
-    if parser_state.get("needs_user_action"):
-        action_hint = '<div class="notice" id="onexbetActionHint">Нужно действие: откроется браузер. Пройди captcha и вход, потом парсер продолжит сам.</div>'
 
     extra_scripts = """
     <script>
@@ -5664,7 +5661,6 @@ def onexbet_report_page(
                     idle: 'Idle',
                     starting: 'Starting',
                     running: 'Running',
-                    waiting_for_user: 'Waiting For You',
                     success: 'Completed',
                     error: 'Error',
                     stopped: 'Stopped'
@@ -5683,9 +5679,7 @@ def onexbet_report_page(
                 if (authBtn) authBtn.disabled = !!data.running;
                 if (runBtn) runBtn.disabled = !!data.running;
                 if (stopBtn) stopBtn.disabled = !data.running;
-                if (actionEl) {
-                    actionEl.style.display = data.needs_user_action ? 'block' : 'none';
-                }
+                if (actionEl) actionEl.style.display = 'none';
                 (data.accounts || []).forEach(account => {
                     const chip = document.getElementById('session-chip-' + account.id);
                     if (chip) chip.textContent = account.session_saved ? 'Session Saved' : 'No Session';
@@ -5828,10 +5822,10 @@ def onexbet_report_page(
         <div class="controls-line">
             <div>
                 <div class="panel-title">1xBet Report</div>
-                <div class="panel-subtitle">Authorize once, watch the live parser log, then run imports from here.</div>
+                <div class="panel-subtitle">Run headless checks and imports from here. Accounts with captcha will fail in server mode.</div>
             </div>
             <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                <button type="button" class="ghost-btn" id="onexbetAuthBtn" onclick="startOnexbetJob('auth')">Open 1xBet Login</button>
+                <button type="button" class="ghost-btn" id="onexbetAuthBtn" onclick="startOnexbetJob('auth')">Check Session</button>
                 <button type="button" class="btn" id="onexbetRunBtn" onclick="startOnexbetJob('run')">Run Parser</button>
                 <button type="button" class="ghost-btn" id="onexbetStopBtn" onclick="stopOnexbetJob()" disabled>Stop</button>
             </div>
@@ -5841,35 +5835,35 @@ def onexbet_report_page(
     <div class="panel">
         <div class="controls-line" style="align-items:flex-start;gap:16px;flex-wrap:wrap;">
             <div style="flex:1;min-width:260px;">
-                <div class="panel-title" style="font-size:18px;">Parser Monitor</div>
-                <div class="panel-subtitle" id="onexbetMessage">{escape(parser_state.get("message") or "Парсер не запущен")}</div>
+                <div class="panel-title" style="font-size:16px;">Parser Monitor</div>
+                <div class="panel-subtitle" id="onexbetMessage" style="font-size:12px;line-height:1.45;">{escape(parser_state.get("message") or "Парсер не запущен")}</div>
                 {action_hint}
                 <div class="stats-grid" style="margin-top:14px;">
                     <div class="stat-card">
                         <div class="name">Status</div>
-                        <div class="value" id="onexbetStatusValue">{escape(status_label)}</div>
+                        <div class="value" id="onexbetStatusValue" style="font-size:13px;">{escape(status_label)}</div>
                     </div>
                     <div class="stat-card">
                         <div class="name">Mode</div>
-                        <div class="value" id="onexbetModeValue">{escape(mode_label)}</div>
+                        <div class="value" id="onexbetModeValue" style="font-size:13px;">{escape(mode_label)}</div>
                     </div>
                     <div class="stat-card">
                         <div class="name">Session</div>
-                        <div class="value" id="onexbetSessionValue">{escape(session_label)}</div>
+                        <div class="value" id="onexbetSessionValue" style="font-size:13px;">{escape(session_label)}</div>
                     </div>
                     <div class="stat-card">
                         <div class="name">Current Account</div>
-                        <div class="value" id="onexbetCurrentAccount">{escape(parser_state.get("current_account_label") or "No active account")}</div>
+                        <div class="value" id="onexbetCurrentAccount" style="font-size:13px;">{escape(parser_state.get("current_account_label") or "No active account")}</div>
                     </div>
                     <div class="stat-card">
                         <div class="name">Launched By</div>
-                        <div class="value" id="onexbetLaunchedBy">{escape(parser_state.get("launched_by") or parser_state.get("launched_by_username") or "Unknown")}</div>
+                        <div class="value" id="onexbetLaunchedBy" style="font-size:13px;">{escape(parser_state.get("launched_by") or parser_state.get("launched_by_username") or "Unknown")}</div>
                     </div>
                 </div>
             </div>
             <div style="flex:1.4;min-width:320px;">
-                <div class="panel-subtitle" style="margin-bottom:8px;">Live Log</div>
-                <pre id="onexbetLog" style="margin:0;min-height:240px;max-height:340px;overflow:auto;padding:14px;border-radius:16px;background:var(--table-head);border:1px solid var(--border);white-space:pre-wrap;line-height:1.45;">{log_html}</pre>
+                <div class="panel-subtitle" style="margin-bottom:8px;font-size:12px;">Live Log</div>
+                <pre id="onexbetLog" style="margin:0;min-height:220px;max-height:320px;overflow:auto;padding:12px;border-radius:16px;background:var(--table-head);border:1px solid var(--border);white-space:pre-wrap;line-height:1.35;font-size:12px;">{log_html}</pre>
             </div>
         </div>
         <div style="margin-top:16px;display:grid;gap:10px;">
