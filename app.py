@@ -1037,6 +1037,8 @@ def get_tasks_for_user(current_user, status_filter="", assignee_filter="", searc
 
 def ensure_partner_table():
     Base.metadata.create_all(bind=engine, tables=[PartnerRow.__table__])
+
+
 def get_half_month_period(today: date | None = None):
     if today is None:
         today = datetime.utcnow().date()
@@ -1567,16 +1569,19 @@ def aggregate_for_hierarchy(rows, keys):
 # BLOCK 7 — UI HELPERS
 # =========================================
 def sidebar_html(active_page, current_user=None):
-   items = [
-    ("grouped", "/grouped", "📘", "FB", [("/grouped", "Export", active_page == "grouped"), ("/hierarchy", "Statistic", active_page == "hierarchy")]),
-    ("finance", "/finance", "💸", "Finance", []),
-    ("caps", "/caps", "🧢", "Caps", []),
-    ("onexbet_report", "/1xbet-report", "🎰", "1xBet Отчет", []),
-    ("chatterfy", "/chatterfy", "💬", "Chatterfy", []),
-    ("holdwager", "/hold-wager", "🎯", "Hold/Wager", []),
-    ("tasks", "/tasks", "✅", "Tasks", []),
-    ("users", "/users", "🧑", "Users", []),
-]
+    items = [
+        ("grouped", "/grouped", "📘", "FB", [
+            ("/grouped", "Export", active_page == "grouped"),
+            ("/hierarchy", "Statistic", active_page == "hierarchy"),
+        ]),
+        ("finance", "/finance", "💸", "Finance", []),
+        ("caps", "/caps", "🧢", "Caps", []),
+        ("onexbet_report", "/1xbet-report", "🎰", "1xBet Отчет", []),
+        ("chatterfy", "/chatterfy", "💬", "Chatterfy", []),
+        ("holdwager", "/hold-wager", "🎯", "Hold/Wager", []),
+        ("tasks", "/tasks", "✅", "Tasks", []),
+        ("users", "/users", "🧑", "Users", []),
+    ]
 
     html = '''
     <aside class="sidebar">
@@ -1590,9 +1595,13 @@ def sidebar_html(active_page, current_user=None):
         if key == "grouped":
             if not can_access_page(current_user, "grouped"):
                 continue
-            children = [child for child in children if can_access_page(current_user, "hierarchy" if child[0] == "/hierarchy" else "grouped")]
+            children = [
+                child for child in children
+                if can_access_page(current_user, "hierarchy" if child[0] == "/hierarchy" else "grouped")
+            ]
         elif not can_access_page(current_user, key):
             continue
+
         if children:
             open_attr = "open" if active_page in ["grouped", "hierarchy"] else ""
             html += f'''
