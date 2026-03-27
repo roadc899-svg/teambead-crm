@@ -357,6 +357,7 @@ def can_access_page(user, page_key: str) -> bool:
         "caps": {"superadmin", "admin"},
         "chatterfy": {"superadmin", "admin"},
         "holdwager": {"superadmin", "admin"},
+        "onexbet_report": {"superadmin", "admin"},
     }
     return role in page_rules.get(page_key, set())
 
@@ -1158,7 +1159,42 @@ def replace_partner_rows(source_name, rows_to_insert):
         db.close()
     refresh_cap_current_ftd_from_partner()
 
+def get_partner_period_options():
+    ensure_partner_table()
+    db = SessionLocal()
+    try:
+        values = db.query(PartnerRow.source_name).distinct().all()
+        result = []
+        for item in values:
+            value = safe_text(item[0])
+            if value:
+                result.append(value)
+        return sorted(result, reverse=True)
+    finally:
+        db.close()
 
+
+def get_partner_rows_by_period(period_value=""):
+    ensure_partner_table()
+    db = SessionLocal()
+    try:
+        query = db.query(PartnerRow)
+        if period_value:
+            query = query.filter(PartnerRow.source_name == period_value)
+        return query.order_by(PartnerRow.id.desc()).all()
+    finally:
+        db.close()
+
+
+def aggregate_partner_totals(rows):
+    return {
+        "players": len(rows),
+        "deposits": sum(safe_number(r.deposit_amount) for r in rows),
+        "bets": sum(safe_number(r.bet_amount) for r in rows),
+        "income": sum(safe_number(r.company_income) for r in rows),
+        "cpa": sum(safe_number(r.cpa_amount) for r in rows),
+        "ftd_count": sum(1 for r in rows if safe_number(r.deposit_amount) > 0),
+    }
 def refresh_cap_current_ftd_from_partner():
     ensure_partner_table()
     Base.metadata.create_all(bind=engine, tables=[CapRow.__table__])
@@ -1531,15 +1567,16 @@ def aggregate_for_hierarchy(rows, keys):
 # BLOCK 7 — UI HELPERS
 # =========================================
 def sidebar_html(active_page, current_user=None):
-    items = [
-        ("grouped", "/grouped", "📘", "FB", [("/grouped", "Export", active_page == "grouped"), ("/hierarchy", "Statistic", active_page == "hierarchy")]),
-        ("finance", "/finance", "💸", "Finance", []),
-        ("caps", "/caps", "🧢", "Caps", []),
-        ("chatterfy", "/chatterfy", "💬", "Chatterfy", []),
-        ("holdwager", "/hold-wager", "🎯", "Hold/Wager", []),
-        ("tasks", "/tasks", "✅", "Tasks", []),
-        ("users", "/users", "🧑", "Users", []),
-    ]
+   items = [
+    ("grouped", "/grouped", "📘", "FB", [("/grouped", "Export", active_page == "grouped"), ("/hierarchy", "Statistic", active_page == "hierarchy")]),
+    ("finance", "/finance", "💸", "Finance", []),
+    ("caps", "/caps", "🧢", "Caps", []),
+    ("onexbet_report", "/1xbet-report", "🎰", "1xBet Отчет", []),
+    ("chatterfy", "/chatterfy", "💬", "Chatterfy", []),
+    ("holdwager", "/hold-wager", "🎯", "Hold/Wager", []),
+    ("tasks", "/tasks", "✅", "Tasks", []),
+    ("users", "/users", "🧑", "Users", []),
+]
 
     html = '''
     <aside class="sidebar">
@@ -4273,7 +4310,187 @@ async def api_partner_import(
         }
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Не удалось обработать файл партнера: {exc}")
-        
+        @app.get("/1xbet-report", response_class=HTMLResponse)
+def onexbet_report_page(
+    request: Request,
+    period: str = Query(default=""),
+    country: str = Query(default=""),
+    sub_id: str = Query(default=""),
+    search: str = Query(default=""),
+):
+    user = require_login(request)
+    enforce_page_access(user, "onexbet_report")
+
+    all_periods = get_partner_period_options()
+    selected_period = period or (all_periods[0] if all_periods else "")
+
+    rows = get_partner_rows_by_period(selected_period)
+
+    if country:
+        rows = [r for r in rows if (r.country or "") == country]
+
+    if sub_id:
+        rows = [r for r in rows if (r.sub_id or "") == sub_id]
+
+    search_lower = (search or "").strip().lower()
+    if search_lower:
+        filtered = []
+        for r in rows:
+            haystack = " | ".join([
+                r.source_name or "",
+                r.sub_id or "",
+                r.player_id or "",
+                r.registration_date or "",
+                r.country or "",
+                r.hold_time or "",
+                r.blocked or "",
+            ]).lower()
+            if search_lower in haystack:
+                filtered.append(r)
+        rows = filtered
+
+    totals = aggregate_partner_totals(rows)
+
+    source_rows = get_partner_rows_by_period(selected_period)
+    country_options = sorted({r.country for r in source_rows if r.country})
+    subid_options = sorted({r.sub_id for r in source_rows if r.sub_id})
+
+    period_options_html = "".join([
+        f'<option value="{escape(p)}" {"selected" if p == selected_period else ""}>{escape(p)}</option>'
+        for p in all_periods
+    ])
+
+    country_options_html = '<option value="">Все</option>' + "".join([
+        f'<option value="{escape(v)}" {"selected" if v == country else ""}>{escape(v)}</option>'
+        for v in country_options
+    ])
+
+    subid_options_html = '<option value="">Все</option>' + "".join([
+        f'<option value="{escape(v)}" {"selected" if v == sub_id else ""}>{escape(v)}</option>'
+        for v in subid_options
+    ])
+
+    table_rows = ""
+    for r in rows:
+        has_ftd = safe_number(r.deposit_amount) > 0
+        row_class = "good-row" if has_ftd else ""
+        table_rows += f"""
+        <tr class="{row_class}">
+            <td>{escape(r.source_name or "")}</td>
+            <td>{escape(r.sub_id or "")}</td>
+            <td>{escape(r.player_id or "")}</td>
+            <td>{escape(r.registration_date or "")}</td>
+            <td>{escape(r.country or "")}</td>
+            <td>{format_money(r.deposit_amount)}</td>
+            <td>{format_money(r.bet_amount)}</td>
+            <td>{format_money(r.company_income)}</td>
+            <td>{format_money(r.cpa_amount)}</td>
+            <td>{escape(r.hold_time or "")}</td>
+            <td>{escape(r.blocked or "")}</td>
+        </tr>
+        """
+
+    if not table_rows:
+        table_rows = """
+        <tr>
+            <td colspan="11" style="text-align:center;padding:24px;">Нет данных по выбранному периоду</td>
+        </tr>
+        """
+
+    content = f"""
+    <div class="panel">
+        <div class="panel-title">1xBet Отчет</div>
+        <div class="panel-subtitle">Выгрузка, которую загружает парсер по игрокам</div>
+    </div>
+
+    <div class="panel compact-panel filters">
+        <form method="get">
+            <label>Период
+                <select name="period" required>
+                    {period_options_html}
+                </select>
+            </label>
+
+            <label>Страна
+                <select name="country">
+                    {country_options_html}
+                </select>
+            </label>
+
+            <label>Sub ID
+                <select name="sub_id">
+                    {subid_options_html}
+                </select>
+            </label>
+
+            <label>Поиск
+                <input type="text" name="search" value="{escape(search)}" placeholder="player id / sub id">
+            </label>
+
+            <button type="submit">Показать</button>
+            <a href="/1xbet-report" class="ghost-btn">Сбросить</a>
+        </form>
+    </div>
+
+    <div class="stats-grid" style="margin-bottom:16px;">
+        <div class="stat-card">
+            <div class="name">Players</div>
+            <div class="value">{totals["players"]}</div>
+        </div>
+        <div class="stat-card">
+            <div class="name">FTD Count</div>
+            <div class="value">{int(totals["ftd_count"])}</div>
+        </div>
+        <div class="stat-card">
+            <div class="name">Deposits</div>
+            <div class="value">{format_money(totals["deposits"])}</div>
+        </div>
+        <div class="stat-card">
+            <div class="name">Bets</div>
+            <div class="value">{format_money(totals["bets"])}</div>
+        </div>
+        <div class="stat-card">
+            <div class="name">Income</div>
+            <div class="value">{format_money(totals["income"])}</div>
+        </div>
+        <div class="stat-card">
+            <div class="name">CPA</div>
+            <div class="value">{format_money(totals["cpa"])}</div>
+        </div>
+    </div>
+
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Period</th>
+                    <th>Sub ID</th>
+                    <th>Player ID</th>
+                    <th>Registration</th>
+                    <th>Country</th>
+                    <th>Deposits</th>
+                    <th>Bets</th>
+                    <th>Income</th>
+                    <th>CPA</th>
+                    <th>Hold</th>
+                    <th>Blocked</th>
+                </tr>
+            </thead>
+            <tbody>
+                {table_rows}
+            </tbody>
+        </table>
+    </div>
+    """
+
+    return HTMLResponse(
+        page_shell(
+            "1xBet Отчет",
+            content,
+            active_page="onexbet_report",
+            current_user=user,
+        )
+    )
 @app.get("/chatterfy", response_class=HTMLResponse)
 def chatterfy_page(request: Request):
     user = get_current_user(request)
