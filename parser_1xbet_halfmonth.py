@@ -55,17 +55,19 @@ def export_players_report():
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
-            headless=HEADLESS,
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--single-process",
-            ],
-        )
-
+    headless=True,
+    args=[
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--no-zygote",
+        "--single-process",
+    ],
+)
         context = browser.new_context(
+            context.set_default_timeout(60000)
+            context.set_default_navigation_timeout(90000)
             accept_downloads=True,
             locale="ru-RU",
             ignore_https_errors=True,
