@@ -2746,9 +2746,21 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 font-size: 13px;
                 line-height: 1;
                 box-sizing: border-box;
+                font-family: inherit;
+                letter-spacing: 0;
+                white-space: nowrap;
+                appearance: none;
+                -webkit-appearance: none;
+                text-rendering: geometricPrecision;
             }}
             .ghost-btn {{ background: var(--panel-2); color: var(--text); }}
             .small-btn {{ padding: 10px 14px; font-size: 13px; }}
+            .filters button, .filters a {{
+                font-family: inherit !important;
+                font-size: 13px !important;
+                font-weight: 900 !important;
+                line-height: 1 !important;
+            }}
             .btn:hover, .small-btn:hover, .theme-toggle:hover, .filters button:hover, .filters a:hover, .upload-btn:hover, .ghost-btn:hover {{ transform: translateY(-1px); }}
             .panel {{
                 background: linear-gradient(180deg, var(--panel), var(--panel-2));
