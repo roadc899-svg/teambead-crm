@@ -338,7 +338,6 @@ def ensure_runtime_indexes():
 
 
 ensure_runtime_indexes()
-sync_all_postgres_sequences()
 
 
 def clear_runtime_cache(*prefixes):
@@ -390,6 +389,9 @@ def sync_all_postgres_sequences():
         "chatterfy_id_rows",
     ]:
         sync_postgres_sequence(table_name)
+
+
+sync_all_postgres_sequences()
 
 
 # =========================================
