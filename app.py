@@ -338,6 +338,7 @@ def ensure_runtime_indexes():
 
 
 ensure_runtime_indexes()
+sync_all_postgres_sequences()
 
 
 def clear_runtime_cache(*prefixes):
@@ -350,6 +351,45 @@ def clear_runtime_cache(*prefixes):
             if str(key).startswith(prefix):
                 RUNTIME_CACHE.pop(key, None)
                 break
+
+
+def sync_postgres_sequence(table_name: str, pk_column: str = "id"):
+    if DATABASE_URL.startswith("sqlite"):
+        return
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                SELECT setval(
+                    pg_get_serial_sequence(:table_name, :pk_column),
+                    COALESCE((SELECT MAX(id) FROM """ + table_name + """), 0) + 1,
+                    false
+                )
+                """
+            ),
+            {"table_name": table_name, "pk_column": pk_column},
+        )
+
+
+def sync_all_postgres_sequences():
+    if DATABASE_URL.startswith("sqlite"):
+        return
+    for table_name in [
+        "fb_rows",
+        "users",
+        "user_sessions",
+        "cap_rows",
+        "task_rows",
+        "finance_wallet_rows",
+        "finance_expense_rows",
+        "finance_income_rows",
+        "finance_transfer_rows",
+        "partner_rows",
+        "cabinet_rows",
+        "chatterfy_rows",
+        "chatterfy_id_rows",
+    ]:
+        sync_postgres_sequence(table_name)
 
 
 # =========================================
@@ -1712,6 +1752,55 @@ def get_partner_country_options():
     return sorted(set(result))
 
 
+def get_chatterfy_linkage_maps(period_label=""):
+    ensure_chatterfy_table()
+    ensure_chatterfy_id_table()
+    db = SessionLocal()
+    try:
+        id_rows = db.query(ChatterfyIdRow).all()
+        chatter_query = db.query(ChatterfyRow)
+        if period_label:
+            chatter_query = chatter_query.filter(ChatterfyRow.period_label == period_label)
+        chatter_rows = chatter_query.order_by(ChatterfyRow.id.desc()).all()
+    finally:
+        db.close()
+
+    id_by_player = {}
+    for item in id_rows:
+        player_key = normalize_id_value(item.pp_player_id)
+        if player_key and player_key not in id_by_player:
+            id_by_player[player_key] = {
+                "telegram_id": safe_text(item.telegram_id),
+                "pp_player_id": safe_text(item.pp_player_id),
+                "chat_link": safe_text(item.chat_link),
+            }
+
+    chatter_by_telegram = {}
+    for item in chatter_rows:
+        telegram_key = safe_text(item.telegram_id)
+        if telegram_key and telegram_key not in chatter_by_telegram:
+            chatter_by_telegram[telegram_key] = {
+                "status": safe_text(item.status),
+                "step": safe_text(item.step),
+                "started": safe_text(item.started),
+            }
+    return id_by_player, chatter_by_telegram
+
+
+def build_chatterfy_player_context(player_id="", period_label=""):
+    id_by_player, chatter_by_telegram = get_chatterfy_linkage_maps(period_label=period_label)
+    link = id_by_player.get(normalize_id_value(player_id), {})
+    telegram_id = safe_text(link.get("telegram_id"))
+    chatter_info = chatter_by_telegram.get(telegram_id, {})
+    return {
+        "telegram_id": telegram_id,
+        "pp_player_id": safe_text(link.get("pp_player_id")) or safe_text(player_id),
+        "chat_link": safe_text(link.get("chat_link")),
+        "chatter_status": safe_text(chatter_info.get("status")),
+        "chatter_step": safe_text(chatter_info.get("step")),
+    }
+
+
 def get_hold_wager_rows(period_label="", cabinet_name="", search=""):
     ensure_partner_table()
     ensure_caps_table()
@@ -1725,7 +1814,6 @@ def get_hold_wager_rows(period_label="", cabinet_name="", search=""):
             partner_query = partner_query.filter(PartnerRow.cabinet_name == cabinet_name)
         partner_rows = partner_query.order_by(PartnerRow.registration_date.desc(), PartnerRow.id.desc()).all()
         caps = db.query(CapRow).all()
-        id_rows = db.query(ChatterfyIdRow).all()
     finally:
         db.close()
 
@@ -1735,11 +1823,7 @@ def get_hold_wager_rows(period_label="", cabinet_name="", search=""):
         if promo_key:
             caps_by_promo.setdefault(promo_key, []).append(cap)
 
-    chat_by_player = {}
-    for item in id_rows:
-        player_key = normalize_id_value(item.pp_player_id)
-        if player_key and player_key not in chat_by_player:
-            chat_by_player[player_key] = safe_text(item.chat_link)
+    id_by_player, chatter_by_telegram = get_chatterfy_linkage_maps(period_label=period_label)
 
     search_lower = safe_text(search).lower()
     result = []
@@ -1754,8 +1838,8 @@ def get_hold_wager_rows(period_label="", cabinet_name="", search=""):
         deposit_amount = safe_number(row.deposit_amount)
         bet_amount = safe_number(row.bet_amount)
         baseline = safe_cap_number(cap.baseline)
-        fail_baseline = baseline > 0 and (deposit_amount < baseline or bet_amount < baseline)
-        fail_wager = bet_amount < deposit_amount
+        fail_baseline = baseline > 0 and deposit_amount < baseline
+        fail_wager = baseline > 0 and bet_amount < baseline
         if not fail_baseline and not fail_wager:
             continue
 
@@ -1765,7 +1849,11 @@ def get_hold_wager_rows(period_label="", cabinet_name="", search=""):
         if fail_wager:
             reason_parts.append("Wager")
         player_key = normalize_id_value(row.player_id)
-        chat_link = chat_by_player.get(player_key, "")
+        linked = id_by_player.get(player_key, {})
+        telegram_id = safe_text(linked.get("telegram_id"))
+        chat_link = safe_text(linked.get("chat_link"))
+        pp_player_id = safe_text(linked.get("pp_player_id")) or safe_text(row.player_id)
+        chatter_info = chatter_by_telegram.get(telegram_id, {})
         item = {
             "row_id": row.id,
             "report_date": safe_text(getattr(row, "report_date", "")) or get_half_month_period_from_date(row.registration_date).get("report_date", ""),
@@ -1781,20 +1869,27 @@ def get_hold_wager_rows(period_label="", cabinet_name="", search=""):
             "rate": safe_text(cap.rate),
             "flow": safe_text(cap.flow),
             "promo_code": safe_text(cap.promo_code),
+            "telegram_id": telegram_id,
+            "pp_player_id": pp_player_id,
             "chat_link": chat_link,
+            "chatter_status": safe_text(chatter_info.get("status")),
+            "chatter_step": safe_text(chatter_info.get("step")),
             "reason": " + ".join(reason_parts),
-            "missing_baseline": max(0.0, baseline - min(deposit_amount, bet_amount)) if fail_baseline else 0.0,
-            "missing_wager": max(0.0, deposit_amount - bet_amount) if fail_wager else 0.0,
+            "missing_baseline": max(0.0, baseline - deposit_amount) if fail_baseline else 0.0,
+            "missing_wager": max(0.0, baseline - bet_amount) if fail_wager else 0.0,
         }
         if search_lower:
             haystack = " | ".join([
                 item["cabinet_name"],
                 item["sub_id"],
                 item["player_id"],
+                item["telegram_id"],
+                item["pp_player_id"],
                 item["country"],
                 item["reason"],
                 item["flow"],
                 item["promo_code"],
+                item["chatter_status"],
             ]).lower()
             if search_lower not in haystack:
                 continue
@@ -1823,6 +1918,7 @@ def replace_partner_rows(source_name, rows_to_insert):
         else:
             db.query(PartnerRow).delete()
         db.commit()
+        sync_postgres_sequence("partner_rows")
         for item in rows_to_insert:
             db.add(item)
         db.commit()
@@ -2064,9 +2160,21 @@ def get_partner_rows_by_period(period_value="", period_label="", cabinet_name=""
                 PartnerRow.cabinet_name.ilike(search_pattern),
                 PartnerRow.registration_date.ilike(search_pattern),
             ))
-        return query.order_by(PartnerRow.id.desc()).all()
+        rows = query.order_by(PartnerRow.id.desc()).all()
     finally:
         db.close()
+
+    id_by_player, chatter_by_telegram = get_chatterfy_linkage_maps(period_label=period_label)
+    for row in rows:
+        linked = id_by_player.get(normalize_id_value(getattr(row, "player_id", "")), {})
+        telegram_id = safe_text(linked.get("telegram_id"))
+        chatter_info = chatter_by_telegram.get(telegram_id, {})
+        row.telegram_id = telegram_id
+        row.pp_player_id = safe_text(linked.get("pp_player_id")) or safe_text(getattr(row, "player_id", ""))
+        row.chat_link = safe_text(linked.get("chat_link"))
+        row.chatter_status = safe_text(chatter_info.get("status"))
+        row.chatter_step = safe_text(chatter_info.get("step"))
+    return rows
 
 
 def aggregate_partner_totals(rows):
@@ -3193,6 +3301,38 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 font-size: 12px;
                 font-weight: 800;
             }}
+            .status-chip {{
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                padding: 6px 10px;
+                border-radius: 999px;
+                border: 1px solid var(--border);
+                background: var(--chip);
+                font-size: 12px;
+                font-weight: 800;
+                white-space: nowrap;
+            }}
+            .status-chip-blocked {{
+                background: rgba(239, 68, 68, 0.16);
+                color: #dc2626;
+                border-color: rgba(239, 68, 68, 0.28);
+            }}
+            .status-chip-waiting {{
+                background: rgba(245, 158, 11, 0.16);
+                color: #b45309;
+                border-color: rgba(245, 158, 11, 0.28);
+            }}
+            .status-chip-manual {{
+                background: rgba(249, 115, 22, 0.16);
+                color: #c2410c;
+                border-color: rgba(249, 115, 22, 0.28);
+            }}
+            .status-chip-active {{
+                background: rgba(34, 197, 94, 0.14);
+                color: #15803d;
+                border-color: rgba(34, 197, 94, 0.24);
+            }}
             .flag-form {{
                 display: flex;
                 align-items: center;
@@ -3696,6 +3836,20 @@ def render_stat_table(title, subtitle, rows, columns, empty_text="No data"):
 
 def render_flow_badge(platform, manager, geo):
     return f'<div class="flow-badge"><span>{escape(platform or "—")}</span><span>{escape(manager or "—")}</span><span>{escape(geo or "—")}</span></div>'
+
+
+def render_chatterfy_status_badge(status):
+    status_text = safe_text(status)
+    status_lower = status_text.lower()
+    if not status_text:
+        return '<span class="status-chip">—</span>'
+    if "block" in status_lower:
+        return f'<span class="status-chip status-chip-blocked">⛔ {escape(status_text)}</span>'
+    if "wait" in status_lower:
+        return f'<span class="status-chip status-chip-waiting">⏳ {escape(status_text)}</span>'
+    if "manual" in status_lower:
+        return f'<span class="status-chip status-chip-manual">! {escape(status_text)}</span>'
+    return f'<span class="status-chip status-chip-active">• {escape(status_text)}</span>'
 
 
 def render_statistic_dashboard(rows):
@@ -5049,6 +5203,7 @@ def hold_wager_page_html(current_user, rows, cabinet_name="", period_view="all",
     for item in rows:
         chat_link = item.get("chat_link") or ""
         chat_html = f'<a href="https://{escape(chat_link)}" target="_blank" rel="noreferrer" class="ghost-btn small-btn">Open</a>' if chat_link else "—"
+        chatter_status_html = render_chatterfy_status_badge(item.get("chatter_status"))
         rows_html += f"""
         <tr>
             <td>{escape(item['report_date'])}</td>
@@ -5057,6 +5212,10 @@ def hold_wager_page_html(current_user, rows, cabinet_name="", period_view="all",
             <td>{escape(item['cabinet_name'])}</td>
             <td>{escape(item['sub_id'])}</td>
             <td>{escape(item['player_id'])}</td>
+            <td>{escape(item.get('telegram_id') or '')}</td>
+            <td>{escape(item.get('pp_player_id') or '')}</td>
+            <td>{chat_html}</td>
+            <td>{chatter_status_html}</td>
             <td>{escape(item['country'])}</td>
             <td>{escape(item['flow'])}</td>
             <td>{format_plain_number_text(item['baseline'])}</td>
@@ -5066,7 +5225,6 @@ def hold_wager_page_html(current_user, rows, cabinet_name="", period_view="all",
             <td>{escape(item['reason'])}</td>
             <td>{format_money(item['missing_baseline'])}</td>
             <td>{format_money(item['missing_wager'])}</td>
-            <td>{chat_html}</td>
         </tr>
         """
 
@@ -5102,11 +5260,11 @@ def hold_wager_page_html(current_user, rows, cabinet_name="", period_view="all",
         <div class="controls-line">
             <div>
                 <div class="panel-title" style="margin-bottom:4px;">Hold/Wager Review</div>
-                <div class="panel-subtitle">Players from 1xBet who do not pass cap baseline or deposit-to-bet wager rules.</div>
+                <div class="panel-subtitle">Players from 1xBet who do not pass cap baseline rules, with linked Chatterfy status and chat access.</div>
             </div>
         </div>
         <div class="table-wrap">
-            <table style="min-width:1680px;">
+            <table style="min-width:1860px;">
                 <thead>
                     <tr>
                         <th>Report Date</th>
@@ -5115,6 +5273,10 @@ def hold_wager_page_html(current_user, rows, cabinet_name="", period_view="all",
                         <th>Cabinet</th>
                         <th>SubID</th>
                         <th>Player ID</th>
+                        <th>Telegram ID</th>
+                        <th>ID in PP</th>
+                        <th>Chat</th>
+                        <th>Chatterfy</th>
                         <th>Country</th>
                         <th>Flow</th>
                         <th>Baseline</th>
@@ -5124,10 +5286,9 @@ def hold_wager_page_html(current_user, rows, cabinet_name="", period_view="all",
                         <th>Reason</th>
                         <th>Missing BL</th>
                         <th>Missing Wager</th>
-                        <th>Chat</th>
                     </tr>
                 </thead>
-                <tbody>{rows_html if rows_html else '<tr><td colspan="16">No hold/wager issues for the selected filters.</td></tr>'}</tbody>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="19">No hold/wager issues for the selected filters.</td></tr>'}</tbody>
             </table>
         </div>
     </div>
@@ -5306,10 +5467,9 @@ def partner_report_page_html(
 
     rows_html = ""
     for row in rows:
-        hold_checked = "checked" if safe_number(getattr(row, "manual_hold", 0)) > 0 else ""
-        blocked_checked = "checked" if safe_number(getattr(row, "manual_blocked", 0)) > 0 else ""
-        hold_hint = f'<div class="panel-subtitle" style="margin-top:4px;">Raw: {escape(row.hold_time or "—")}</div>'
-        blocked_hint = f'<div class="panel-subtitle" style="margin-top:4px;">Raw: {escape(row.blocked or "—")}</div>'
+        chat_link = safe_text(getattr(row, "chat_link", ""))
+        chat_html = f'<a href="https://{escape(chat_link)}" target="_blank" rel="noreferrer" class="ghost-btn small-btn">Open</a>' if chat_link else "—"
+        chatter_status_html = render_chatterfy_status_badge(getattr(row, "chatter_status", ""))
         rows_html += f"""
         <tr>
             <td>{escape(safe_text(getattr(row, "report_date", "")) or get_half_month_period_from_date(row.registration_date).get("report_date", ""))}</td>
@@ -5318,31 +5478,15 @@ def partner_report_page_html(
             <td>{escape(row.cabinet_name or "")}</td>
             <td>{escape(row.sub_id or "")}</td>
             <td>{escape(row.player_id or "")}</td>
+            <td>{escape(getattr(row, "telegram_id", "") or "")}</td>
+            <td>{escape(getattr(row, "pp_player_id", "") or "")}</td>
+            <td>{chat_html}</td>
+            <td>{chatter_status_html}</td>
             <td>{escape(row.country or "")}</td>
             <td>${safe_number(row.deposit_amount):,.2f}</td>
             <td>${safe_number(row.bet_amount):,.2f}</td>
             <td>${safe_number(row.company_income):,.2f}</td>
             <td>${safe_number(row.cpa_amount):,.2f}</td>
-            <td>
-                <form method="post" action="/partner-report/flags/save" class="flag-form">
-                    <input type="hidden" name="partner_row_id" value="{row.id}">
-                    <input type="hidden" name="return_to" value="/partner-report?{escape(build_query_string(source_name=source_name, period_view=period_view, period_label=period_label, cabinet_name=cabinet_name, country=country, search=search, sort_by=sort_by, order=order))}">
-                    <input type="hidden" name="manual_blocked" value="{1 if safe_number(getattr(row, 'manual_blocked', 0)) > 0 else 0}">
-                    <label class="flag-check"><input type="checkbox" name="manual_hold" value="1" {hold_checked}> Hold</label>
-                    {hold_hint}
-                    <button type="submit" class="ghost-btn small-btn">Save</button>
-                </form>
-            </td>
-            <td>
-                <form method="post" action="/partner-report/flags/save" class="flag-form">
-                    <input type="hidden" name="partner_row_id" value="{row.id}">
-                    <input type="hidden" name="return_to" value="/partner-report?{escape(build_query_string(source_name=source_name, period_view=period_view, period_label=period_label, cabinet_name=cabinet_name, country=country, search=search, sort_by=sort_by, order=order))}">
-                    <input type="hidden" name="manual_hold" value="{1 if safe_number(getattr(row, 'manual_hold', 0)) > 0 else 0}">
-                    <label class="flag-check"><input type="checkbox" name="manual_blocked" value="1" {blocked_checked}> Blocked</label>
-                    {blocked_hint}
-                    <button type="submit" class="ghost-btn small-btn">Save</button>
-                </form>
-            </td>
             <td>{escape(row.source_name or "")}</td>
         </tr>
         """
@@ -5424,7 +5568,7 @@ def partner_report_page_html(
 
     <div class="panel compact-panel">
         <div class="table-wrap">
-            <table style="min-width:1500px;">
+            <table style="min-width:1760px;">
                 <thead>
                     <tr>
                         <th>{header_link('report_date', 'Report Date')}</th>
@@ -5433,17 +5577,19 @@ def partner_report_page_html(
                         <th>{header_link('cabinet_name', 'Cabinet')}</th>
                         <th>{header_link('sub_id', 'SubId')}</th>
                         <th>{header_link('player_id', 'Player ID')}</th>
+                        <th>{header_link('telegram_id', 'Telegram ID')}</th>
+                        <th>{header_link('pp_player_id', 'ID in PP')}</th>
+                        <th>{header_link('chat_link', 'Chat')}</th>
+                        <th>{header_link('chatter_status', 'Chatterfy')}</th>
                         <th>{header_link('country', 'Country')}</th>
                         <th>{header_link('deposit_amount', 'Deposit')}</th>
                         <th>{header_link('bet_amount', 'Bet')}</th>
                         <th>{header_link('company_income', 'Income')}</th>
                         <th>{header_link('cpa_amount', 'CPA')}</th>
-                        <th>{header_link('hold_time', 'Hold')}</th>
-                        <th>{header_link('blocked', 'Blocked')}</th>
                         <th>{header_link('source_name', 'Upload')}</th>
                     </tr>
                 </thead>
-                <tbody>{rows_html if rows_html else '<tr><td colspan="14">No partner rows yet</td></tr>'}</tbody>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="16">No partner rows yet</td></tr>'}</tbody>
             </table>
         </div>
     </div>
