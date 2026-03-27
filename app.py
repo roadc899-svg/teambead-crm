@@ -1735,6 +1735,58 @@ def build_partner_row_identity(row):
     )
 
 
+def build_partner_row_merge_identity(row):
+    player_key = normalize_id_value(getattr(row, "player_id", "")) or safe_text(getattr(row, "player_id", "")).strip().upper()
+    sub_key = safe_text(getattr(row, "sub_id", "")).strip().upper()
+    registration_key = safe_text(getattr(row, "registration_date", "")).strip()
+    period_key = safe_text(getattr(row, "period_label", "")).strip()
+    return (period_key, player_key, sub_key, registration_key)
+
+
+def cleanup_partner_duplicates(period_label="", preferred_source_name="", preferred_cabinet=""):
+    ensure_partner_table()
+    clean_period = safe_text(period_label)
+    if not clean_period:
+        return
+    db = SessionLocal()
+    try:
+        rows = db.query(PartnerRow).filter(PartnerRow.period_label == clean_period).order_by(PartnerRow.id.desc()).all()
+        buckets = {}
+        for row in rows:
+            merge_key = build_partner_row_merge_identity(row)
+            if not any(merge_key[1:]):
+                continue
+            buckets.setdefault(merge_key, []).append(row)
+
+        for duplicate_rows in buckets.values():
+            if len(duplicate_rows) <= 1:
+                continue
+
+            keeper = None
+            for row in duplicate_rows:
+                if preferred_source_name and safe_text(row.source_name) == safe_text(preferred_source_name):
+                    keeper = row
+                    break
+            if keeper is None:
+                for row in duplicate_rows:
+                    if preferred_cabinet and safe_text(row.cabinet_name) == safe_text(preferred_cabinet):
+                        keeper = row
+                        break
+            if keeper is None:
+                keeper = duplicate_rows[0]
+
+            keeper.manual_hold = 1 if any(safe_number(getattr(row, "manual_hold", 0)) > 0 for row in duplicate_rows) else 0
+            keeper.manual_blocked = 1 if any(safe_number(getattr(row, "manual_blocked", 0)) > 0 for row in duplicate_rows) else 0
+            db.add(keeper)
+
+            for row in duplicate_rows:
+                if row.id != keeper.id:
+                    db.delete(row)
+        db.commit()
+    finally:
+        db.close()
+
+
 def detect_partner_header_index(df) -> int:
     preview_limit = min(len(df.index), 15)
     for idx in range(preview_limit):
@@ -2056,14 +2108,14 @@ def get_hold_wager_rows(period_label="", cabinet_name="", search=""):
 
 def replace_partner_rows(source_name, rows_to_insert):
     ensure_partner_table()
+    target_cabinet = ""
+    target_period_label = ""
+    if rows_to_insert:
+        target_cabinet = safe_text(getattr(rows_to_insert[0], "cabinet_name", ""))
+        target_period_label = safe_text(getattr(rows_to_insert[0], "period_label", ""))
     db = SessionLocal()
     try:
         scope_query = db.query(PartnerRow)
-        target_cabinet = ""
-        target_period_label = ""
-        if rows_to_insert:
-            target_cabinet = safe_text(getattr(rows_to_insert[0], "cabinet_name", ""))
-            target_period_label = safe_text(getattr(rows_to_insert[0], "period_label", ""))
         if target_cabinet and target_period_label:
             scope_query = scope_query.filter(
                 PartnerRow.cabinet_name == target_cabinet,
@@ -2099,6 +2151,11 @@ def replace_partner_rows(source_name, rows_to_insert):
         db.commit()
     finally:
         db.close()
+    cleanup_partner_duplicates(
+        period_label=target_period_label,
+        preferred_source_name=source_name,
+        preferred_cabinet=target_cabinet,
+    )
     clear_runtime_cache("stat_support::")
     refresh_cap_current_ftd_from_partner()
 
