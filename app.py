@@ -4450,7 +4450,7 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .players-toolbar .players-side-tools {{
                 display: flex;
                 gap: 10px;
-                align-items: stretch;
+                align-items: flex-start;
                 justify-content: flex-end;
                 flex: 0 0 auto;
             }}
@@ -4481,13 +4481,26 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 align-items: center;
                 justify-content: flex-end;
                 flex: 0 0 auto;
+                min-height: 74px;
             }}
             .players-toolbar .players-export-form {{
                 margin: 0;
                 display: flex;
             }}
+            .players-toolbar .players-icon-stack .upload-menu,
+            .players-toolbar .players-icon-stack .players-export-form {{
+                display: flex;
+                align-items: center;
+                align-self: center;
+            }}
+            .players-toolbar .players-icon-stack .upload-menu > summary,
             .players-toolbar .players-export-button {{
+                width: 54px;
                 min-width: 54px;
+                height: 54px;
+                align-self: center;
+            }}
+            .players-toolbar .players-export-button {{
                 min-height: 54px;
                 padding: 0 10px;
                 font-size: 13px;
@@ -9079,6 +9092,7 @@ def partner_report_page_html(
         const exportFrame = document.getElementById("partnerPlayersCsvFrame");
         let activeDeleteForm = null;
         let exportResetTimer = null;
+        let pageIsLeaving = false;
         const uploadMenuStorageKey = window.teambeadStorageKey("players-upload-menu-open");
         function closeDeleteModal() {{
             if (!deleteOverlay) return;
@@ -9116,10 +9130,22 @@ def partner_report_page_html(
             uploadMenu.addEventListener("toggle", () => {{
                 try {{
                     if (uploadMenu.open) localStorage.setItem(uploadMenuStorageKey, "1");
-                    else localStorage.removeItem(uploadMenuStorageKey);
+                    else if (!pageIsLeaving) localStorage.removeItem(uploadMenuStorageKey);
                 }} catch (error) {{}}
             }});
         }}
+        window.addEventListener("pagehide", () => {{
+            pageIsLeaving = true;
+            try {{
+                if (uploadMenu?.open) localStorage.setItem(uploadMenuStorageKey, "1");
+            }} catch (error) {{}}
+        }});
+        window.addEventListener("beforeunload", () => {{
+            pageIsLeaving = true;
+            try {{
+                if (uploadMenu?.open) localStorage.setItem(uploadMenuStorageKey, "1");
+            }} catch (error) {{}}
+        }});
         document.querySelectorAll(".players-delete-upload-trigger").forEach((button) => {{
             button.addEventListener("click", () => {{
                 activeDeleteForm = button.closest("form");
