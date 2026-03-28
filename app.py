@@ -3302,117 +3302,42 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 min-height: 96px;
                 resize: vertical;
             }}
-            .select-shell {{
-                position: relative;
+            select {{
                 width: 100%;
                 min-width: 0;
-            }}
-            .select-shell select {{
-                position: absolute;
-                inset: 0;
-                opacity: 0;
-                pointer-events: none;
-            }}
-            .select-shell.is-open {{
-                z-index: 140;
-            }}
-            .select-display {{
-                width: 100%;
-                min-width: 0;
-                min-height: 38px;
+                min-height: 40px;
                 border-radius: 14px;
                 border: 1px solid var(--border);
-                background:
-                    linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)),
-                    var(--panel-3);
+                background-color: var(--panel-3);
                 color: var(--text);
-                padding: 10px 42px 10px 12px;
+                padding: 10px 38px 10px 12px;
                 outline: none;
                 font: inherit;
                 font-size: 14px;
                 font-weight: 800;
                 line-height: 1.2;
-                text-align: left;
-                display: flex;
-                align-items: center;
-                justify-content: space-between;
-                gap: 10px;
-                cursor: pointer;
                 box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
-                appearance: none;
-                -webkit-appearance: none;
+                appearance: auto;
+                -webkit-appearance: menulist;
+                box-sizing: border-box;
             }}
-            .select-display:hover {{
-                border-color: rgba(56,189,248,0.34);
-                background:
-                    linear-gradient(180deg, rgba(56,189,248,0.04), rgba(37,99,235,0.03)),
-                    var(--panel-3);
+            select:hover {{
+                border-color: rgba(56,189,248,0.3);
+                background-color: var(--panel-3);
             }}
-            .select-display:focus-visible {{
-                border-color: rgba(56,189,248,0.6);
-                box-shadow: 0 0 0 3px rgba(56,189,248,0.16);
+            select:focus,
+            select:focus-visible {{
+                border-color: rgba(56,189,248,0.58);
+                box-shadow: 0 0 0 3px rgba(56,189,248,0.14);
             }}
-            .select-label {{
-                min-width: 0;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                white-space: nowrap;
+            select option {{
+                background: #f5f8fc;
+                color: #12213d;
+                font-weight: 700;
             }}
-            .select-caret {{
-                position: absolute;
-                right: 12px;
-                top: 50%;
-                transform: translateY(-50%);
-                pointer-events: none;
-                color: var(--muted);
-                font-size: 12px;
-                transition: transform 0.16s ease, color 0.16s ease;
-            }}
-            .select-shell.is-open .select-caret {{
-                transform: translateY(-50%) rotate(180deg);
-                color: var(--text);
-            }}
-            .select-options {{
-                display: none;
-                position: absolute;
-                top: calc(100% + 8px);
-                left: 0;
-                right: 0;
-                max-height: min(360px, 55vh);
-                overflow: auto;
-                padding: 8px;
-                border-radius: 16px;
-                border: 1px solid var(--border);
-                background: linear-gradient(180deg, var(--panel), var(--panel-2));
-                box-shadow: var(--shadow);
-                gap: 4px;
-            }}
-            .select-shell.is-open .select-options {{
-                display: grid;
-            }}
-            .select-option {{
-                width: 100%;
-                border: 0;
-                background: transparent;
-                color: var(--text);
-                padding: 11px 12px;
-                border-radius: 12px;
-                text-align: left;
-                font: inherit;
-                font-size: 14px;
-                font-weight: 800;
-                line-height: 1.2;
-                cursor: pointer;
-            }}
-            .select-option:hover {{
-                background: var(--soft);
-            }}
-            .select-option.is-selected {{
-                background: linear-gradient(90deg, rgba(56,189,248,0.18), rgba(37,99,235,0.16));
-                outline: 1px solid rgba(56,189,248,0.26);
-            }}
-            .select-option.is-empty {{
-                color: var(--muted);
+            body.light select option {{
+                background: #f5f8fc;
+                color: #12213d;
             }}
             input[type="file"]::file-selector-button {{
                 border: 1px solid var(--border);
@@ -4114,98 +4039,6 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             </main>
         </div>
         <script>
-            function closeCustomSelects(exceptShell) {{
-                document.querySelectorAll('.select-shell.is-open').forEach(function(shell) {{
-                    if (!exceptShell || shell !== exceptShell) {{
-                        shell.classList.remove('is-open');
-                    }}
-                }});
-            }}
-            function enhanceSelect(select) {{
-                if (!select || select.dataset.customized === '1') return;
-                select.dataset.customized = '1';
-
-                const shell = document.createElement('div');
-                shell.className = 'select-shell';
-                select.parentNode.insertBefore(shell, select);
-                shell.appendChild(select);
-
-                const button = document.createElement('button');
-                button.type = 'button';
-                button.className = 'select-display';
-
-                const label = document.createElement('span');
-                label.className = 'select-label';
-
-                const caret = document.createElement('span');
-                caret.className = 'select-caret';
-                caret.textContent = '▾';
-
-                button.appendChild(label);
-                button.appendChild(caret);
-                shell.appendChild(button);
-
-                const options = document.createElement('div');
-                options.className = 'select-options';
-                shell.appendChild(options);
-
-                function syncLabel() {{
-                    const selectedOption = select.options[select.selectedIndex];
-                    label.textContent = selectedOption ? selectedOption.textContent : '';
-                }}
-
-                function rebuildOptions() {{
-                    options.innerHTML = '';
-                    Array.from(select.options).forEach(function(option) {{
-                        const item = document.createElement('button');
-                        item.type = 'button';
-                        item.className = 'select-option';
-                        if (!option.value) item.classList.add('is-empty');
-                        if (option.selected) item.classList.add('is-selected');
-                        item.textContent = option.textContent;
-                        item.disabled = !!option.disabled;
-                        item.addEventListener('click', function() {{
-                            if (option.disabled) return;
-                            select.value = option.value;
-                            Array.from(select.options).forEach(function(opt) {{
-                                opt.selected = opt.value === option.value;
-                            }});
-                            syncLabel();
-                            rebuildOptions();
-                            shell.classList.remove('is-open');
-                            select.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                        }});
-                        options.appendChild(item);
-                    }});
-                }}
-
-                button.addEventListener('click', function() {{
-                    const willOpen = !shell.classList.contains('is-open');
-                    closeCustomSelects(shell);
-                    shell.classList.toggle('is-open', willOpen);
-                }});
-
-                select.addEventListener('change', function() {{
-                    syncLabel();
-                    rebuildOptions();
-                }});
-
-                const form = select.closest('form');
-                if (form) {{
-                    form.addEventListener('reset', function() {{
-                        setTimeout(function() {{
-                            syncLabel();
-                            rebuildOptions();
-                        }}, 0);
-                    }});
-                }}
-
-                syncLabel();
-                rebuildOptions();
-            }}
-            function enhanceSelects(root) {{
-                (root || document).querySelectorAll('select').forEach(enhanceSelect);
-            }}
             function setTheme(mode) {{
                 if (mode === 'light') document.body.classList.add('light');
                 else document.body.classList.remove('light');
@@ -4215,7 +4048,6 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 const saved = localStorage.getItem('teambead-theme');
                 if (saved === 'light') document.body.classList.add('light');
             }})();
-            enhanceSelects(document);
             document.addEventListener('click', function(e) {{
                 const wrap = document.querySelector('.column-menu-wrap');
                 const menu = document.getElementById('columnMenu');
@@ -4228,9 +4060,6 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 document.querySelectorAll('.upload-menu').forEach(function(item) {{
                     if (!item.contains(e.target)) item.removeAttribute('open');
                 }});
-                if (!e.target.closest('.select-shell')) {{
-                    closeCustomSelects();
-                }}
             }});
         </script>
         {extra_scripts}
@@ -7290,7 +7119,13 @@ def render_dashboard_page(
     if not user:
         return auth_redirect_response()
     enforce_page_access(user, "hierarchy")
-    buyer = resolve_effective_buyer(user, buyer)
+    buyer = resolve_effective_buyer(user, safe_text(buyer))
+    manager = safe_text(manager)
+    geo = safe_text(geo)
+    offer = safe_text(offer)
+    search = safe_text(search)
+    period_view = safe_text(period_view) or "current"
+    period_label = safe_text(period_label)
     effective_period_label = resolve_period_label(period_view, period_label) or get_current_period_label()
     data = get_filtered_data(buyer, manager, geo, offer, search, period_label=effective_period_label)
     rows = enrich_statistic_rows(aggregate_grouped_rows(data), period_label=effective_period_label)
@@ -7692,6 +7527,14 @@ def caps_page(
     if not user:
         return auth_redirect_response()
     enforce_page_access(user, "caps")
+    search = safe_text(search)
+    period_view = safe_text(period_view) or "current"
+    period_label = safe_text(period_label)
+    buyer = safe_text(buyer)
+    geo = safe_text(geo)
+    owner_name = safe_text(owner_name)
+    edit = safe_text(edit)
+    message = safe_text(message)
     refresh_cap_current_ftd_from_partner()
     effective_period_label = resolve_period_label(period_view, period_label) or get_current_period_label()
 
@@ -8393,6 +8236,10 @@ def hold_wager_page(
     if not user:
         return auth_redirect_response()
     enforce_page_access(user, "holdwager")
+    period_view = safe_text(period_view) or "current"
+    period_label = safe_text(period_label)
+    cabinet_name = safe_text(cabinet_name)
+    search = safe_text(search)
     effective_period_label = resolve_period_label(period_view, period_label) or get_current_period_label()
     rows = get_hold_wager_rows(
         period_label=effective_period_label,
