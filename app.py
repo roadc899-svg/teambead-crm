@@ -1755,6 +1755,29 @@ def detect_period_from_dataframe_dates(df, column_name: str):
         return None
 
 
+def detect_half_month_period_from_dataframe_dates(df, column_name: str):
+    if column_name not in list(df.columns):
+        return None
+    try:
+        series = pd.to_datetime(df[column_name], errors="coerce", utc=True).dropna()
+        if series.empty:
+            return None
+        unique_periods = []
+        seen_labels = set()
+        for item in series:
+            period_info = get_half_month_period_from_date(item.date().isoformat())
+            label = safe_text(period_info.get("period_label"))
+            if not label or label in seen_labels:
+                continue
+            seen_labels.add(label)
+            unique_periods.append(period_info)
+        if len(unique_periods) == 1:
+            return unique_periods[0]
+    except Exception:
+        return None
+    return None
+
+
 def normalize_partner_period(date_start: str = "", date_end: str = ""):
     clean_start = safe_text(date_start)
     clean_end = safe_text(date_end)
@@ -1773,7 +1796,43 @@ def normalize_partner_period(date_start: str = "", date_end: str = ""):
 
 
 def get_partner_platform_options():
-    return [("1xbet", "1xBet"), ("cellxpert", "CellXpert")]
+    rows = get_cabinet_rows()
+    options = []
+    seen = set()
+    for row in rows:
+        raw_platform = safe_text(getattr(row, "platform", "")).strip()
+        if not raw_platform:
+            continue
+        key = raw_platform.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        options.append((raw_platform, raw_platform))
+    if not options:
+        return [("1xBet", "1xBet"), ("CellXpert", "CellXpert")]
+    options.sort(key=lambda item: item[1].lower())
+    return options
+
+
+def get_partner_upload_cabinet_catalog():
+    rows = get_cabinet_rows()
+    catalog = []
+    seen = set()
+    for row in rows:
+        cabinet_name = safe_text(getattr(row, "name", "")).strip()
+        platform_name = safe_text(getattr(row, "platform", "")).strip()
+        if not cabinet_name:
+            continue
+        key = (cabinet_name.lower(), platform_name.lower())
+        if key in seen:
+            continue
+        seen.add(key)
+        catalog.append({
+            "cabinet_name": cabinet_name,
+            "platform_name": platform_name,
+        })
+    catalog.sort(key=lambda item: (safe_text(item.get("platform_name")).lower(), safe_text(item.get("cabinet_name")).lower()))
+    return catalog
 
 
 def normalize_partner_platform(value: str = ""):
@@ -2569,6 +2628,12 @@ def get_partner_rows_by_period(period_value="", period_label="", cabinet_name=""
     ensure_partner_table()
     active_cabinets = get_active_cabinet_name_set()
     cabinet_platform_map = get_cabinet_platform_map()
+    cabinet_rows = get_cabinet_rows()
+    cabinet_meta_map = {
+        safe_text(getattr(item, "name", "")): item
+        for item in cabinet_rows
+        if safe_text(getattr(item, "name", ""))
+    }
     db = SessionLocal()
     try:
         query = db.query(PartnerRow)
@@ -2613,6 +2678,9 @@ def get_partner_rows_by_period(period_value="", period_label="", cabinet_name=""
         row.chat_link = safe_text(linked.get("chat_link"))
         row.chatter_status = safe_text(chatter_info.get("status"))
         row.chatter_step = safe_text(chatter_info.get("step"))
+        cabinet_item = cabinet_meta_map.get(safe_text(getattr(row, "cabinet_name", "")))
+        row.brand_name = safe_text(getattr(cabinet_item, "brands", "")) if cabinet_item else ""
+        row.geo_name = geo_display_name(getattr(row, "country", "") or "")
     return rows
 
 
@@ -8287,7 +8355,8 @@ def partner_report_page_html(
     upload_summaries = upload_summaries or []
     all_sources = get_partner_period_options()
     all_cabinets = get_partner_cabinet_options(period_label if period_view == "period" else "")
-    upload_cabinets = get_partner_cabinet_options() or all_cabinets
+    upload_cabinet_catalog = get_partner_upload_cabinet_catalog()
+    upload_cabinets = [item["cabinet_name"] for item in upload_cabinet_catalog] or get_partner_cabinet_options() or all_cabinets
     all_countries = get_partner_country_options()
     period_view_options = "".join([
         f'<option value="{value}" {"selected" if period_view == value else ""}>{label}</option>'
@@ -8297,40 +8366,30 @@ def partner_report_page_html(
     source_options = make_options(all_sources, source_name)
     cabinet_options = make_options(all_cabinets, cabinet_name)
     upload_platform_options = "".join([
-        f'<option value="{escape(value)}" {"selected" if normalize_partner_platform(upload_platform) == value else ""}>{escape(label)}</option>'
+        f'<option value="{escape(value)}" {"selected" if safe_text(upload_platform).strip().lower() == safe_text(value).strip().lower() else ""}>{escape(label)}</option>'
         for value, label in get_partner_platform_options()
     ])
     upload_cabinet_options = "".join([
-        f'<option value="{escape(name)}">{escape(name)}</option>'
-        for name in upload_cabinets
+        f'<option value="{escape(item["cabinet_name"])}" data-platform="{escape(item["platform_name"])}">{escape(item["cabinet_name"])}</option>'
+        for item in upload_cabinet_catalog
     ]) or '<option value="">No cabinets yet</option>'
     country_options = make_options(all_countries, country)
     totals = aggregate_partner_totals(rows)
 
     rows_html = ""
     for row in rows:
-        chat_link = safe_text(getattr(row, "chat_link", ""))
-        chat_html = f'<a href="https://{escape(chat_link)}" target="_blank" rel="noreferrer" class="ghost-btn small-btn">Open</a>' if chat_link else "—"
-        chatter_status_html = render_chatterfy_status_icon(getattr(row, "chatter_status", ""))
         rows_html += f"""
         <tr>
-            <td>{escape(safe_text(getattr(row, "report_date", "")) or get_half_month_period_from_date(row.registration_date).get("report_date", ""))}</td>
-            <td>{escape(partner_row_period_label(row))}</td>
-            <td>{escape(row.registration_date or "")}</td>
+            <td>{escape(getattr(row, "brand_name", "") or "")}</td>
             <td>{escape(row.cabinet_name or "")}</td>
-            <td>{escape('CellXpert' if getattr(row, 'partner_platform', '1xbet') == 'cellxpert' else '1xBet')}</td>
-            <td>{escape(row.sub_id or "")}</td>
+            <td>{escape(getattr(row, "geo_name", "") or "")}</td>
+            <td>{escape(row.registration_date or "")}</td>
             <td>{escape(row.player_id or "")}</td>
-            <td>{escape(getattr(row, "telegram_id", "") or "")}</td>
-            <td>{escape(getattr(row, "pp_player_id", "") or "")}</td>
-            <td>{chat_html}</td>
-            <td>{chatter_status_html}</td>
-            <td>{escape(row.country or "")}</td>
             <td>${safe_number(row.deposit_amount):,.2f}</td>
             <td>${safe_number(row.bet_amount):,.2f}</td>
+            <td>{escape(row.sub_id or "")}</td>
             <td>${safe_number(row.company_income):,.2f}</td>
             <td>${safe_number(row.cpa_amount):,.2f}</td>
-            <td>{escape(row.source_name or "")}</td>
         </tr>
         """
 
@@ -8411,10 +8470,10 @@ def partner_report_page_html(
                     <div class="upload-menu-list" style="width:380px; max-width:min(380px, calc(100vw - 48px));">
                         <form method="post" action="/partner-report/upload" enctype="multipart/form-data">
                             <label>Platform
-                                <select name="partner_platform" required>{upload_platform_options}</select>
+                                <select name="partner_platform" id="partner-upload-platform" required>{upload_platform_options}</select>
                             </label>
                             <label>Cabinet
-                                <select name="cabinet_name" required>{upload_cabinet_options}</select>
+                                <select name="cabinet_name" id="partner-upload-cabinet" required>{upload_cabinet_options}</select>
                             </label>
                             <label>Partner File
                                 <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
@@ -8461,29 +8520,60 @@ def partner_report_page_html(
             <table style="min-width:1500px;">
                 <thead>
                     <tr>
-                        <th>{header_link('report_date', 'Report Date')}</th>
-                        <th>{header_link('period_label', 'Period')}</th>
-                        <th>{header_link('registration_date', 'Registration')}</th>
+                        <th>{header_link('brand_name', 'Brands')}</th>
                         <th>{header_link('cabinet_name', 'Cabinet')}</th>
-                        <th>{header_link('partner_platform', 'Platform')}</th>
-                        <th>{header_link('sub_id', 'Promo/Link')}</th>
-                        <th>{header_link('player_id', 'Player ID')}</th>
-                        <th>{header_link('telegram_id', 'ID Chatterfy')}</th>
-                        <th>{header_link('pp_player_id', 'ID in PP')}</th>
-                        <th>{header_link('chat_link', 'Chat')}</th>
-                        <th>{header_link('chatter_status', 'Status')}</th>
-                        <th>{header_link('country', 'Country')}</th>
+                        <th>{header_link('geo_name', 'Geo')}</th>
+                        <th>{header_link('registration_date', 'Registration')}</th>
+                        <th>{header_link('player_id', 'ID')}</th>
                         <th>{header_link('deposit_amount', 'Deposit')}</th>
                         <th>{header_link('bet_amount', 'Bet')}</th>
-                        <th>{header_link('company_income', 'Income')}</th>
+                        <th>{header_link('sub_id', 'Promo/Link')}</th>
+                        <th>{header_link('company_income', 'NGR')}</th>
                         <th>{header_link('cpa_amount', 'CPA')}</th>
-                        <th>{header_link('source_name', 'Upload')}</th>
                     </tr>
                 </thead>
-                <tbody>{rows_html if rows_html else '<tr><td colspan="17">No partner rows yet</td></tr>'}</tbody>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="10">No partner rows yet</td></tr>'}</tbody>
             </table>
         </div>
     </div>
+
+    <script>
+    (() => {{
+        const platformSelect = document.getElementById("partner-upload-platform");
+        const cabinetSelect = document.getElementById("partner-upload-cabinet");
+        if (!platformSelect || !cabinetSelect) return;
+        const allOptions = Array.from(cabinetSelect.querySelectorAll("option")).map((option) => ({{
+            value: option.value,
+            label: option.textContent,
+            platform: option.dataset.platform || "",
+        }}));
+        const rebuildCabinetOptions = () => {{
+            const selectedPlatform = (platformSelect.value || "").trim().toLowerCase();
+            const currentValue = cabinetSelect.value;
+            const filtered = allOptions.filter((item) => !selectedPlatform || (item.platform || "").trim().toLowerCase() === selectedPlatform);
+            cabinetSelect.innerHTML = "";
+            if (!filtered.length) {{
+                const emptyOption = document.createElement("option");
+                emptyOption.value = "";
+                emptyOption.textContent = "No cabinets yet";
+                cabinetSelect.appendChild(emptyOption);
+                return;
+            }}
+            filtered.forEach((item, index) => {{
+                const option = document.createElement("option");
+                option.value = item.value;
+                option.textContent = item.label;
+                option.dataset.platform = item.platform;
+                if (item.value === currentValue || (!currentValue && index === 0)) {{
+                    option.selected = true;
+                }}
+                cabinetSelect.appendChild(option);
+            }});
+        }};
+        platformSelect.addEventListener("change", rebuildCabinetOptions);
+        rebuildCabinetOptions();
+    }})();
+    </script>
     """
     return page_shell("Report Players", content, active_page="partner", current_user=current_user)
 
@@ -10271,10 +10361,8 @@ def partner_report_page(
             return safe_number(value)
         if sort_by == "id":
             return safe_number(row.id)
-        if sort_by == "report_date":
-            return safe_text(getattr(row, "report_date", ""))
-        if sort_by == "period_label":
-            return partner_row_period_label(row)
+        if sort_by in {"brand_name", "geo_name"}:
+            return safe_text(value).lower()
         return safe_text(value).lower()
 
     filtered.sort(key=sort_value, reverse=reverse)
@@ -10312,6 +10400,12 @@ async def upload_partner_report_file(
     clean_platform = normalize_partner_platform(partner_platform)
     if not clean_cabinet_name:
         return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=clean_platform, error_text="Choose a cabinet before upload."), status_code=400)
+    cabinet_item = next((item for item in get_cabinet_rows() if safe_text(getattr(item, "name", "")) == clean_cabinet_name), None)
+    if not cabinet_item:
+        return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=partner_platform, error_text="Choose a valid cabinet from Partners."), status_code=400)
+    raw_platform_name = safe_text(getattr(cabinet_item, "platform", "")).strip()
+    if safe_text(partner_platform).strip().lower() != raw_platform_name.lower():
+        return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=partner_platform, error_text="Selected cabinet does not belong to this platform."), status_code=400)
 
     original_name = file.filename or "partner_report.xlsx"
     ext = os.path.splitext(original_name)[1].lower() or ".xlsx"
@@ -10328,6 +10422,7 @@ async def upload_partner_report_file(
             return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=clean_platform, error_text="Partner file is empty."), status_code=400)
         detected_period = (
             detect_partner_period_from_dataframe(df)
+            or (detect_half_month_period_from_dataframe_dates(df, "Registration Date") if clean_platform == "cellxpert" else None)
             or detect_period_from_dataframe_dates(df, "Registration Date")
             or detect_period_from_dataframe_dates(df, "Дата регистрации")
             or get_half_month_period()
