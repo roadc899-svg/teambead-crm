@@ -3743,20 +3743,31 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 flex: 1 1 auto;
             }}
             .period-jump-btn {{
-                width: 28px;
-                min-width: 28px;
-                height: 28px;
+                width: 38px !important;
+                min-width: 38px !important;
+                max-width: 38px !important;
+                height: 38px !important;
+                min-height: 38px !important;
                 padding: 0 !important;
                 display: inline-flex;
                 align-items: center;
                 justify-content: center;
                 border-radius: 10px;
-                font-size: 13px;
+                font-size: 15px;
                 line-height: 1;
-                margin-bottom: 5px;
             }}
             .period-picker select {{
                 min-width: 200px !important;
+            }}
+            .filter-actions-stack {{
+                display: grid;
+                gap: 8px;
+                align-self: end;
+            }}
+            .filter-actions-stack .btn,
+            .filter-actions-stack .ghost-btn {{
+                width: 104px;
+                min-width: 104px;
             }}
             .panel.compact-panel.filters input,
             .panel.compact-panel.filters select {{
@@ -5743,8 +5754,10 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                         <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="Search caps"></label>
                         <input type="hidden" name="sort_by" value="{escape(sort_by)}">
                         <input type="hidden" name="order" value="{escape(order)}">
-                        <button type="submit" class="btn small-btn">Filter</button>
-                        <a href="/caps" class="ghost-btn small-btn" data-reset-filters="caps">Reset</a>
+                        <div class="filter-actions-stack">
+                            <button type="submit" class="btn small-btn">Filter</button>
+                            <a href="/caps" class="ghost-btn small-btn" data-reset-filters="caps">Reset</a>
+                        </div>
                     </form>
                 </div>
                 <div class="caps-toolbar-stats">
