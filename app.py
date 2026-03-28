@@ -3175,20 +3175,16 @@ def sidebar_html(active_page, current_user=None):
 
     for key, href, icon, title, children in items:
         if key == "export":
-            if not any([
-                can_access_page(current_user, "chatterfy"),
-                can_access_page(current_user, "partner"),
-                can_access_page(current_user, "grouped"),
-            ]):
+            export_children = []
+            if can_access_page(current_user, "chatterfy"):
+                export_children.append(("/chatterfy", "Chatterfy", active_page == "chatterfy"))
+            if can_access_page(current_user, "partner"):
+                export_children.append(("/partner-report", "Players", active_page == "partner"))
+            if can_access_page(current_user, "grouped"):
+                export_children.append(("/grouped", "📈 Export FB", active_page == "grouped"))
+            if not export_children:
                 continue
-            children = [
-                child for child in children
-                if (
-                    (child[1] == "/chatterfy" and can_access_page(current_user, "chatterfy"))
-                    or (child[1] == "/partner-report" and can_access_page(current_user, "partner"))
-                    or (child[1] == "/grouped" and can_access_page(current_user, "grouped"))
-                )
-            ]
+            children = export_children
         elif key == "fb":
             if not can_access_page(current_user, "fb"):
                 continue
