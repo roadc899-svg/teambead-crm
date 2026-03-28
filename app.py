@@ -9,7 +9,7 @@ import shutil
 import uuid
 import os
 import json
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote_plus
 from html import escape
 import io
 import csv
@@ -138,6 +138,7 @@ class CapRow(Base):
     link = Column(String, default="")
     comments = Column(String, default="")
     agent = Column(String, default="")
+    period_label = Column(String, default="")
     current_ftd = Column(Float, default=0)
 
 
@@ -1105,7 +1106,14 @@ def ensure_upload_dir():
 
 
 def ensure_caps_table():
-    ensure_table_once("cap_rows", [CapRow.__table__])
+    def sqlite_migration():
+        with engine.begin() as conn:
+            columns = [row[1] for row in conn.execute(text("PRAGMA table_info(cap_rows)")).fetchall()]
+            if "period_label" not in columns:
+                conn.execute(text("ALTER TABLE cap_rows ADD COLUMN period_label VARCHAR DEFAULT ''"))
+                default_period = get_current_period_label()
+                conn.execute(text("UPDATE cap_rows SET period_label = :period_label WHERE COALESCE(period_label, '') = ''"), {"period_label": default_period})
+    ensure_table_once("cap_rows", [CapRow.__table__], sqlite_migration)
 
 
 def ensure_task_table():
@@ -1173,15 +1181,17 @@ def get_filter_options():
         db.close()
 
 
-def get_caps_rows(search="", buyer="", geo="", owner_name=""):
+def get_caps_rows(search="", buyer="", geo="", owner_name="", period_label=""):
     ensure_caps_table()
     db = SessionLocal()
     try:
         query = db.query(CapRow)
+        if period_label:
+            query = query.filter(CapRow.period_label == period_label)
         if buyer:
             query = query.filter(CapRow.buyer == buyer)
         if geo:
-            query = query.filter(CapRow.geo == geo)
+            query = query.filter(CapRow.geo == normalize_geo_value(geo))
         if owner_name:
             query = query.filter(CapRow.owner_name == owner_name)
         if search:
@@ -1202,13 +1212,17 @@ def get_caps_rows(search="", buyer="", geo="", owner_name=""):
         db.close()
 
 
-def get_caps_filter_options():
+def get_caps_filter_options(period_label=""):
     ensure_caps_table()
     db = SessionLocal()
     try:
-        buyers = sorted(value[0] for value in db.query(CapRow.buyer).distinct().all() if value[0])
-        geos = sorted(value[0] for value in db.query(CapRow.geo).distinct().all() if value[0])
-        owners = sorted(value[0] for value in db.query(CapRow.owner_name).distinct().all() if value[0])
+        query = db.query(CapRow)
+        if period_label:
+            query = query.filter(CapRow.period_label == period_label)
+        caps = query.all()
+        buyers = sorted({value.buyer for value in caps if value.buyer})
+        geos = sorted({geo_display_name(value.geo) for value in caps if value.geo})
+        owners = sorted({value.owner_name for value in caps if value.owner_name})
         return buyers, geos, owners
     finally:
         db.close()
@@ -2480,12 +2494,9 @@ def refresh_cap_current_ftd_from_partner():
         cabinet_platform_map = get_cabinet_platform_map()
         caps_by_promo, caps_by_scope = build_cap_match_maps(caps)
         for cap in caps:
-            matched = []
-            promo_key = safe_text(cap.promo_code).upper()
-            if promo_key:
-                matched.extend(caps_by_promo.get(promo_key, []))
             matched = [
                 row for row in partner_rows
+                if safe_text(getattr(row, "period_label", "")) == safe_text(getattr(cap, "period_label", ""))
                 if cap in get_caps_for_partner_row(row, caps_by_promo, caps_by_scope, cabinet_platform_map)
             ]
             cap.current_ftd = float(sum(1 for item in matched if safe_number(item.deposit_amount) > 0))
@@ -2520,12 +2531,14 @@ def get_statistic_support_maps(period_label=""):
     ensure_caps_table()
     db = SessionLocal()
     try:
-        caps = db.query(CapRow).all()
+        caps_query = db.query(CapRow)
         partner_query = db.query(PartnerRow)
         chatterfy_query = db.query(ChatterfyRow)
         if period_label:
+            caps_query = caps_query.filter(CapRow.period_label == period_label)
             partner_query = partner_query.filter(PartnerRow.period_label == period_label)
             chatterfy_query = chatterfy_query.filter(ChatterfyRow.period_label == period_label)
+        caps = caps_query.all()
         partner_rows = partner_query.all()
         chatterfy_rows = chatterfy_query.all()
     finally:
@@ -4196,12 +4209,14 @@ def build_dashboard_overview(user, rows, buyer="", manager="", geo="", offer="",
         if period_label:
             partner_query = partner_query.filter(PartnerRow.period_label == period_label)
             chatterfy_query = chatterfy_query.filter(ChatterfyRow.period_label == period_label)
+        if period_label:
+            caps_query = caps_query.filter(CapRow.period_label == period_label)
         if buyer:
             caps_query = caps_query.filter(CapRow.buyer == buyer)
         if manager:
             caps_query = caps_query.filter(CapRow.owner_name == manager)
         if geo:
-            caps_query = caps_query.filter(CapRow.geo == geo)
+            caps_query = caps_query.filter(CapRow.geo == normalize_geo_value(geo))
 
         partner_rows = [row for row in partner_query.all() if partner_matches_filters(row, geo=geo, search=search)]
         chatterfy_rows = [row for row in chatterfy_query.all() if chatterfy_matches_filters(row, manager=manager, geo=geo, offer=offer, search=search)]
@@ -4333,6 +4348,11 @@ def render_dashboard_overview(overview):
         table_columns,
         empty_text="No CRM overview data yet",
     )
+
+
+def render_active_period_banner(period_label=""):
+    active_period = safe_text(period_label) or get_current_period_label()
+    return f'<div class="user-chip" style="margin-bottom:12px;">Active Period: {escape(active_period)}</div>'
 
 
 def aggregate_stat_rows_by_keys(rows, keys):
@@ -4717,13 +4737,16 @@ def users_page_html(current_user, error_text="", success_text="", form_data=None
 def caps_page_html(current_user, rows, filter_values=None, form_data=None, success_text="", error_text=""):
     filter_values = filter_values or {}
     form_data = form_data or {}
-    buyers, geos, owners = get_caps_filter_options()
+    selected_period = safe_text(filter_values.get("period_label") or form_data.get("period_label") or get_current_period_label())
+    buyers, geos, owners = get_caps_filter_options(period_label=selected_period)
+    period_options = make_options(build_period_options(), selected_period)
     buyer_options = make_options(buyers, filter_values.get("buyer", ""))
     geo_options = make_options(geos, filter_values.get("geo", ""))
     owner_options = make_options(owners, filter_values.get("owner_name", ""))
 
     total_cap = sum(safe_number(row.cap_value) for row in rows)
     total_current = sum(safe_number(row.current_ftd) for row in rows)
+    total_remaining = sum(max(0.0, safe_number(row.cap_value) - safe_number(row.current_ftd)) for row in rows)
     fill_avg = cap_fill_percent(total_current, total_cap)
     active_caps = len([row for row in rows if safe_number(row.cap_value) > 0])
 
@@ -4731,6 +4754,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     for row in rows:
         fill_percent = cap_fill_percent(row.current_ftd, row.cap_value)
         bar_width = max(0, min(100, fill_percent))
+        remaining_value = max(0.0, safe_number(row.cap_value) - safe_number(row.current_ftd))
         state = "OK"
         if fill_percent >= 100:
             state = "FULL"
@@ -4744,10 +4768,12 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             <td class="buyer-col" title="{escape(row.buyer or '')}">{escape(row.buyer or "")}</td>
             <td class="code-col" title="{escape(row.code or '')}">{escape(row.code or "")}</td>
             <td class="geo-col" title="{escape(geo_display_name(row.geo or ''))}">{escape(geo_display_name(row.geo or ""))}</td>
+            <td class="period-col" title="{escape(row.period_label or '')}">{escape(row.period_label or "")}</td>
             <td class="rate-col" title="{escape(row.rate or '')}">{escape(format_plain_number_text(row.rate))}</td>
             <td class="baseline-col" title="{escape(row.baseline or '')}">{escape(format_plain_number_text(row.baseline))}</td>
             <td class="cap-col">{format_int_or_float(row.cap_value)}</td>
             <td class="current-col">{format_int_or_float(row.current_ftd)}</td>
+            <td class="remaining-col">{format_int_or_float(remaining_value)}</td>
             <td class="fill-col">
                 <div class="progress-shell">
                     <div><strong>{fill_percent:.0f}%</strong> · {state}</div>
@@ -4841,6 +4867,9 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             <datalist id="capCabinetOptions">{cabinet_list}</datalist>
             <datalist id="capGeoOptions">{geo_list}</datalist>
             <datalist id="capAgentOptions">{agent_list}</datalist>
+            <label>Period
+                <select name="period_label" required>{period_options}</select>
+            </label>
             <div class="caps-grid-2">
                 <label>Advertiser
                     <input type="text" name="advertiser" list="capAdvertiserOptions" value="{escape(form_data.get('advertiser', ''))}" placeholder="1xbet / BetMen">
@@ -4904,11 +4933,13 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
 
     content = f"""
     {message_html}
+    {render_active_period_banner(selected_period)}
     <div>
         <div class="panel compact-panel">
             <div class="toolbar-actions">
                 <div class="panel compact-panel filters">
                     <form method="get" action="/caps">
+                        <label>Period<select name="period_label">{period_options}</select></label>
                         <label>Buyer<select name="buyer">{buyer_options}</select></label>
                         <label>Geo<select name="geo">{geo_options}</select></label>
                         <label>Manager<select name="owner_name">{owner_options}</select></label>
@@ -4926,6 +4957,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 <div class="stat-card"><div class="name">Caps</div><div class="value">{active_caps}</div></div>
                 <div class="stat-card"><div class="name">Cap Total</div><div class="value">{format_int_or_float(total_cap)}</div></div>
                 <div class="stat-card"><div class="name">Current FTD</div><div class="value">{format_int_or_float(total_current)}</div></div>
+                <div class="stat-card"><div class="name">Remaining</div><div class="value">{format_int_or_float(total_remaining)}</div></div>
                 <div class="stat-card"><div class="name">Fill Avg</div><div class="value">{fill_avg:.0f}%</div></div>
             </div>
         </div>
@@ -4946,10 +4978,12 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                             <th class="buyer-col">Cabinet</th>
                             <th class="code-col">CODE</th>
                             <th class="geo-col">GEO</th>
+                            <th class="period-col">Period</th>
                             <th class="rate-col">Rate</th>
                             <th class="baseline-col">Baseline</th>
                             <th class="cap-col">Cap</th>
                             <th class="current-col">Current FTD</th>
+                            <th class="remaining-col">Remaining</th>
                             <th class="fill-col">Fill</th>
                             <th class="promo-col">Promo Code</th>
                             <th class="agent-col">Agent</th>
@@ -4957,7 +4991,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                             <th class="action-col">Action</th>
                         </tr>
                     </thead>
-                        <tbody>{rows_html if rows_html else '<tr><td colspan="15">No caps yet</td></tr>'}</tbody>
+                        <tbody>{rows_html if rows_html else '<tr><td colspan="17">No caps yet</td></tr>'}</tbody>
                 </table>
             </div>
         </div>
@@ -5473,7 +5507,7 @@ def chatterfy_page_html(
     time_filter="",
     telegram_id="",
     pp_player_id="",
-    period_view="all",
+    period_view="current",
     period_label="",
     sort_by="started_date",
     order="desc",
@@ -5741,6 +5775,7 @@ def chatterfy_page_html(
 
     content = f"""
     {message_html}
+    {render_active_period_banner(period_label)}
 
     <div class="panel compact-panel">
         <div class="toolbar-actions">
@@ -5825,7 +5860,7 @@ def chatterfy_page_html(
     return page_shell("Chatterfy", content, active_page="chatterfy", current_user=current_user, extra_scripts=extra_scripts)
 
 
-def hold_wager_page_html(current_user, rows, cabinet_name="", period_view="all", period_label="", search="", success_text="", error_text=""):
+def hold_wager_page_html(current_user, rows, cabinet_name="", period_view="current", period_label="", search="", success_text="", error_text=""):
     all_cabinets = sorted(set(get_cabinet_names(active_only=True)))
     cabinet_options = make_options(all_cabinets, cabinet_name)
     period_view_options = "".join([
@@ -5979,6 +6014,7 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
 
     content = f"""
     {message_html}
+    {render_active_period_banner(period_label)}
 
     <div class="panel compact-panel">
         <div class="toolbar-actions">
@@ -6072,7 +6108,7 @@ def partner_report_page_html(
     upload_platform="1xbet",
     country="",
     search="",
-    period_view="all",
+    period_view="current",
     period_label="",
     sort_by="id",
     order="desc",
@@ -6178,6 +6214,7 @@ def partner_report_page_html(
 
     content = f"""
     {message_html}
+    {render_active_period_banner(period_label)}
 
     <div class="panel compact-panel">
         <div class="toolbar-actions">
@@ -6669,7 +6706,7 @@ def export_hierarchy_csv(
     geo: str = Query(default=""),
     offer: str = Query(default=""),
     search: str = Query(default=""),
-    period_view: str = Query(default="all"),
+    period_view: str = Query(default="current"),
     period_label: str = Query(default=""),
 ):
     user = get_current_user(request)
@@ -6677,7 +6714,7 @@ def export_hierarchy_csv(
         return auth_redirect_response()
     require_any_role(user, "superadmin", "admin")
     buyer = resolve_effective_buyer(user, buyer)
-    effective_period_label = resolve_period_label(period_view, period_label)
+    effective_period_label = resolve_period_label(period_view, period_label) or get_current_period_label()
     rows = enrich_statistic_rows(
         aggregate_grouped_rows(get_filtered_data(buyer, manager, geo, offer, search, period_label=effective_period_label)),
         period_label=effective_period_label,
@@ -7034,7 +7071,7 @@ def render_dashboard_page(
     geo: str = Query(default=""),
     offer: str = Query(default=""),
     search: str = Query(default=""),
-    period_view: str = Query(default="all"),
+    period_view: str = Query(default="current"),
     period_label: str = Query(default=""),
 ):
     user = get_current_user(request)
@@ -7042,7 +7079,7 @@ def render_dashboard_page(
         return auth_redirect_response()
     enforce_page_access(user, "hierarchy")
     buyer = resolve_effective_buyer(user, buyer)
-    effective_period_label = resolve_period_label(period_view, period_label)
+    effective_period_label = resolve_period_label(period_view, period_label) or get_current_period_label()
     data = get_filtered_data(buyer, manager, geo, offer, search, period_label=effective_period_label)
     rows = enrich_statistic_rows(aggregate_grouped_rows(data), period_label=effective_period_label)
     all_buyers, all_managers, all_geos, all_offers = get_scoped_filter_options(user, period_label=effective_period_label)
@@ -7072,6 +7109,8 @@ def render_dashboard_page(
     export_link = f"/export/hierarchy?{export_qs}" if export_qs else "/export/hierarchy"
 
     content = f'''
+    {render_active_period_banner(effective_period_label)}
+
     <div class="panel compact-panel">
         <div class="toolbar-actions">
             <div class="panel compact-panel filters">
@@ -7429,6 +7468,8 @@ def delete_finance_transfer(request: Request, transfer_id: str = Form(...)):
 def caps_page(
     request: Request,
     search: str = Query(default=""),
+    period_view: str = Query(default="current"),
+    period_label: str = Query(default=""),
     buyer: str = Query(default=""),
     geo: str = Query(default=""),
     owner_name: str = Query(default=""),
@@ -7440,8 +7481,9 @@ def caps_page(
         return auth_redirect_response()
     enforce_page_access(user, "caps")
     refresh_cap_current_ftd_from_partner()
+    effective_period_label = resolve_period_label(period_view, period_label) or get_current_period_label()
 
-    rows = get_caps_rows(search=search, buyer=buyer, geo=geo, owner_name=owner_name)
+    rows = get_caps_rows(search=search, buyer=buyer, geo=geo, owner_name=owner_name, period_label=effective_period_label)
     form_data = {}
     if edit:
         db = SessionLocal()
@@ -7456,6 +7498,7 @@ def caps_page(
                     "flow": item.flow or "",
                     "code": item.code or "",
                     "geo": item.geo or "",
+                    "period_label": item.period_label or effective_period_label,
                     "rate": format_plain_number_text(item.rate),
                     "baseline": format_plain_number_text(item.baseline),
                     "cap_value": format_int_or_float(item.cap_value),
@@ -7471,7 +7514,7 @@ def caps_page(
     return caps_page_html(
         user,
         rows,
-        filter_values={"search": search, "buyer": buyer, "geo": geo, "owner_name": owner_name},
+        filter_values={"search": search, "period_label": effective_period_label, "buyer": buyer, "geo": geo, "owner_name": owner_name},
         form_data=form_data,
         success_text=message,
     )
@@ -7483,6 +7526,7 @@ def save_cap(
     edit_id: str = Form(default=""),
     advertiser: str = Form(default=""),
     owner_name: str = Form(default=""),
+    period_label: str = Form(default=""),
     buyer: str = Form(...),
     flow: str = Form(default=""),
     code: str = Form(default=""),
@@ -7503,11 +7547,13 @@ def save_cap(
     enforce_page_access(user, "caps")
 
     clean_buyer = safe_text(buyer)
+    clean_period_label = safe_text(period_label) or get_current_period_label()
     clean_cap_value = safe_cap_number(cap_value)
     form_data = {
         "edit_id": edit_id,
         "advertiser": advertiser,
         "owner_name": owner_name,
+        "period_label": clean_period_label,
         "buyer": buyer,
         "flow": flow,
         "code": code,
@@ -7523,9 +7569,9 @@ def save_cap(
         "agent": agent,
     }
     if not clean_buyer:
-        return HTMLResponse(caps_page_html(user, get_caps_rows(), form_data=form_data, error_text="Cabinet is required."), status_code=400)
+        return HTMLResponse(caps_page_html(user, get_caps_rows(period_label=clean_period_label), filter_values={"period_label": clean_period_label}, form_data=form_data, error_text="Cabinet is required."), status_code=400)
     if clean_cap_value <= 0:
-        return HTMLResponse(caps_page_html(user, get_caps_rows(), form_data=form_data, error_text="Cap must be greater than 0."), status_code=400)
+        return HTMLResponse(caps_page_html(user, get_caps_rows(period_label=clean_period_label), filter_values={"period_label": clean_period_label}, form_data=form_data, error_text="Cap must be greater than 0."), status_code=400)
 
     db = SessionLocal()
     try:
@@ -7536,6 +7582,7 @@ def save_cap(
 
         item.advertiser = safe_text(advertiser)
         item.owner_name = safe_text(owner_name)
+        item.period_label = clean_period_label
         item.buyer = clean_buyer
         item.flow = safe_text(flow)
         item.code = normalize_geo_value(code)
@@ -7556,7 +7603,7 @@ def save_cap(
         db.close()
     refresh_cap_current_ftd_from_partner()
     clear_runtime_cache("stat_support::")
-    return RedirectResponse(url="/caps?message=Cap+saved", status_code=303)
+    return RedirectResponse(url=f"/caps?period_view=period&period_label={quote_plus(clean_period_label)}&message=Cap+saved", status_code=303)
 
 @app.post("/caps/delete")
 def delete_cap(request: Request, cap_id: str = Form(...)):
@@ -7787,7 +7834,7 @@ def delete_cabinet(request: Request, cabinet_id: str = Form(...)):
 def partner_report_page(
     request: Request,
     source_name: str = Query(default=""),
-    period_view: str = Query(default="all"),
+    period_view: str = Query(default="current"),
     period_label: str = Query(default=""),
     cabinet_name: str = Query(default=""),
     country: str = Query(default=""),
@@ -7800,7 +7847,7 @@ def partner_report_page(
     if not user:
         return auth_redirect_response()
     enforce_page_access(user, "partner")
-    effective_period_label = resolve_period_label(period_view, period_label)
+    effective_period_label = resolve_period_label(period_view, period_label) or get_current_period_label()
     upload_summaries = get_partner_upload_summaries()
     filtered = get_partner_rows_by_period(
         period_value=source_name,
@@ -7959,7 +8006,7 @@ def chatterfy_page(
     request: Request,
     status: str = Query(default=""),
     search: str = Query(default=""),
-    period_view: str = Query(default="all"),
+    period_view: str = Query(default="current"),
     period_label: str = Query(default=""),
     date_filter: str = Query(default=""),
     time_filter: str = Query(default=""),
@@ -7976,7 +8023,7 @@ def chatterfy_page(
     enforce_page_access(user, "chatterfy")
     import_chatterfy_from_csv_if_needed()
     import_chatterfy_ids_from_csv_if_needed()
-    effective_period_label = resolve_period_label(period_view, period_label)
+    effective_period_label = resolve_period_label(period_view, period_label) or get_current_period_label()
     rows = get_chatterfy_rows(
         status=status,
         search=search,
@@ -8115,7 +8162,7 @@ async def upload_chatterfy_ids_file(request: Request, file: UploadFile = File(..
 @app.get("/hold-wager", response_class=HTMLResponse)
 def hold_wager_page(
     request: Request,
-    period_view: str = Query(default="all"),
+    period_view: str = Query(default="current"),
     period_label: str = Query(default=""),
     cabinet_name: str = Query(default=""),
     search: str = Query(default=""),
@@ -8124,7 +8171,7 @@ def hold_wager_page(
     if not user:
         return auth_redirect_response()
     enforce_page_access(user, "holdwager")
-    effective_period_label = resolve_period_label(period_view, period_label)
+    effective_period_label = resolve_period_label(period_view, period_label) or get_current_period_label()
     rows = get_hold_wager_rows(
         period_label=effective_period_label,
         cabinet_name=cabinet_name,
