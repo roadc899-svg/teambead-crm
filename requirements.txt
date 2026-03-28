@@ -6,4 +6,3 @@ pandas
 python-multipart
 openpyxl
 psycopg2-binary
-playwright
