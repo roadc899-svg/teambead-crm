@@ -34,6 +34,7 @@ STATIC_DIR = "./static"
 FINANCE_UPLOAD_PATH = os.path.join(DATA_UPLOAD_DIR, "finance_latest.csv")
 PARTNER_UPLOAD_DIR = os.path.join(DATA_UPLOAD_DIR, "partner_reports")
 PARTNER_IMPORT_API_KEY = os.getenv("TEAMBEAD_PARTNER_IMPORT_KEY", "8hF9sK2LmQpX91zA")
+CELLXPERT_EUR_TO_USD_RATE = float(os.getenv("CELLXPERT_EUR_TO_USD_RATE", "1.08").strip() or "1.08")
 DEFAULT_USERS = [
     {
         "username": os.getenv("TEAMBEAD_ADMIN1_LOGIN", "Ivan"),
@@ -762,6 +763,11 @@ def safe_number(value):
         return 0.0
 
 
+def convert_cellxpert_eur_to_usd(value):
+    amount = safe_number(value)
+    return round(amount * CELLXPERT_EUR_TO_USD_RATE, 2)
+
+
 
 def format_int_or_float(value):
     if value is None:
@@ -791,6 +797,16 @@ def format_money(value):
         return f"${float(value or 0):,.2f}"
     except Exception:
         return "$0.00"
+
+
+
+def format_optional_money(value):
+    if value is None:
+        return ""
+    text_value = safe_text(value)
+    if not text_value:
+        return ""
+    return format_money(value)
 
 
 
@@ -874,6 +890,16 @@ def make_options(options, selected_value):
         option_text = escape(str(option))
         selected = "selected" if str(option) == str(selected_value) else ""
         html += f'<option value="{option_text}" {selected}>{option_text}</option>'
+    return html
+
+
+def make_labeled_options(options, selected_value):
+    html = '<option value="">Все</option>'
+    for value, label in options:
+        option_value = escape(safe_text(value))
+        option_label = escape(safe_text(label))
+        selected = "selected" if safe_text(value) == safe_text(selected_value) else ""
+        html += f'<option value="{option_value}" {selected}>{option_label}</option>'
     return html
 
 
@@ -2112,9 +2138,8 @@ def parse_cellxpert_partner_dataframe(df, source_name="", cabinet_name="", uploa
     player_id_col = resolve_dataframe_column(alias_map, ["User ID", "Player ID", "UserID"])
     country_col = resolve_dataframe_column(alias_map, ["Country", "Geo"])
     registration_col = resolve_dataframe_column(alias_map, ["Registration Date", "Reg Date"])
-    ftd_amount_col = resolve_dataframe_column(alias_map, ["First Time Deposit Amount", "FTD Amount", "Deposit Sum"])
-    deposits_col = resolve_dataframe_column(alias_map, ["Deposits", "Net Deposits", "Deposit Amount"])
-    commissions_col = resolve_dataframe_column(alias_map, ["Commissions", "NGR", "Income"])
+    deposits_col = resolve_dataframe_column(alias_map, ["Deposits", "Deposit Amount", "Net Deposits"])
+    net_deposits_col = resolve_dataframe_column(alias_map, ["Net Deposits", "Net Deposit", "NGR"])
     activity_count_col = resolve_dataframe_column(alias_map, ["Activity Count", "Hold Time", "Hold time"])
     status_col = resolve_dataframe_column(alias_map, ["Status", "Blocked"])
     upload_period = build_partner_storage_period(upload_period_data)
@@ -2125,15 +2150,13 @@ def parse_cellxpert_partner_dataframe(df, source_name="", cabinet_name="", uploa
         country = normalize_geo_value(row.get(country_col)) if country_col else ""
         if not player_id or not country:
             continue
-        ftd_amount = safe_number(row.get(ftd_amount_col)) if ftd_amount_col else 0.0
-        total_deposits = safe_number(row.get(deposits_col)) if deposits_col else 0.0
-        deposit_amount = ftd_amount if ftd_amount > 0 else total_deposits
+        deposit_amount = convert_cellxpert_eur_to_usd(row.get(deposits_col)) if deposits_col else 0.0
         registration_value = row.get(registration_col) if registration_col else ""
         period_info = upload_period if safe_text(upload_period.get("period_label")) else {"report_date": "", "period_start": "", "period_end": "", "period_label": ""}
         records.append(PartnerRow(
             source_name=source_name,
             cabinet_name=safe_text(cabinet_name),
-            sub_id=player_id,
+            sub_id="",
             player_id=player_id,
             report_date=period_info["report_date"],
             period_start=period_info["period_start"],
@@ -2142,8 +2165,8 @@ def parse_cellxpert_partner_dataframe(df, source_name="", cabinet_name="", uploa
             registration_date=safe_text(registration_value),
             country=country,
             deposit_amount=deposit_amount,
-            bet_amount=0.0,
-            company_income=safe_number(row.get(commissions_col)) if commissions_col else 0.0,
+            bet_amount=None,
+            company_income=convert_cellxpert_eur_to_usd(row.get(net_deposits_col)) if net_deposits_col else None,
             cpa_amount=0.0,
             hold_time=safe_text(row.get(activity_count_col)) if activity_count_col else "",
             blocked=safe_text(row.get(status_col)) if status_col else "",
@@ -2334,6 +2357,37 @@ def get_partner_country_options():
         if value:
             result.append(value)
     return sorted(set(result))
+
+
+def get_partner_brand_options():
+    result = []
+    seen = set()
+    for row in get_cabinet_rows():
+        if safe_text(getattr(row, "status", "")).lower() == "archived":
+            continue
+        for brand in split_list_tokens(getattr(row, "brands", "")):
+            key = brand.lower()
+            if not brand or key in seen:
+                continue
+            seen.add(key)
+            result.append(brand)
+    return sorted(result, key=lambda item: safe_text(item).lower())
+
+
+def get_partner_geo_options():
+    result = []
+    seen = set()
+    for row in get_cabinet_rows():
+        if safe_text(getattr(row, "status", "")).lower() == "archived":
+            continue
+        for geo_code in split_geo_tokens(getattr(row, "geo_list", "")):
+            key = geo_code.upper()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            result.append((geo_code, geo_display_name(geo_code)))
+    result.sort(key=lambda item: safe_text(item[1]).lower())
+    return result
 
 
 def get_chatterfy_linkage_maps(period_label=""):
@@ -2795,11 +2849,14 @@ def import_chatterfy_ids_from_csv_if_needed():
     import_chatterfy_ids_dataframe(df)
     AUTO_IMPORT_CHECKS.add("chatterfy_id_rows")
 
-def get_partner_period_options():
+def get_partner_period_options(period_label=""):
     ensure_partner_table()
     db = SessionLocal()
     try:
-        values = db.query(PartnerRow.source_name).distinct().all()
+        query = db.query(PartnerRow.source_name)
+        if period_label:
+            query = query.filter(PartnerRow.period_label == safe_text(period_label))
+        values = query.distinct().all()
         result = []
         for item in values:
             value = safe_text(item[0])
@@ -2845,7 +2902,7 @@ def get_partner_upload_summaries():
     return result
 
 
-def get_partner_rows_by_period(period_value="", period_label="", cabinet_name="", country="", search=""):
+def get_partner_rows_by_period(period_value="", period_label="", cabinet_name="", brand="", geo="", search=""):
     ensure_partner_table()
     ensure_caps_table()
     active_cabinets = get_active_cabinet_name_set()
@@ -2867,8 +2924,6 @@ def get_partner_rows_by_period(period_value="", period_label="", cabinet_name=""
             caps_query = caps_query.filter(CapRow.period_label == period_label)
         if cabinet_name:
             query = query.filter(PartnerRow.cabinet_name == cabinet_name)
-        if country:
-            query = query.filter(PartnerRow.country == country)
         if search:
             search_pattern = f"%{safe_text(search)}%"
             query = query.filter(or_(
@@ -2886,6 +2941,20 @@ def get_partner_rows_by_period(period_value="", period_label="", cabinet_name=""
 
     if active_cabinets:
         rows = [row for row in rows if safe_text(getattr(row, "cabinet_name", "")) in active_cabinets]
+
+    clean_brand = safe_text(brand)
+    clean_geo = normalize_geo_value(geo)
+    if clean_brand or clean_geo:
+        filtered_rows = []
+        for row in rows:
+            cabinet_item = cabinet_meta_map.get(safe_text(getattr(row, "cabinet_name", "")))
+            brand_tokens = split_list_tokens(getattr(cabinet_item, "brands", "") if cabinet_item else "")
+            if clean_brand and clean_brand.lower() not in {item.lower() for item in brand_tokens}:
+                continue
+            if clean_geo and normalize_geo_value(getattr(row, "country", "")) != clean_geo:
+                continue
+            filtered_rows.append(row)
+        rows = filtered_rows
 
     caps_by_scope_period = {}
     for cap in caps:
@@ -2913,6 +2982,7 @@ def get_partner_rows_by_period(period_value="", period_label="", cabinet_name=""
         row.chatter_step = safe_text(chatter_info.get("step"))
         cabinet_item = cabinet_meta_map.get(safe_text(getattr(row, "cabinet_name", "")))
         row.brand_name = safe_text(getattr(cabinet_item, "brands", "")) if cabinet_item else ""
+        row.partner_geo_name = format_geo_list_names(getattr(cabinet_item, "geo_list", "")) if cabinet_item else ""
         row.geo_name = geo_display_name(getattr(row, "country", "") or "")
         row_period_label = partner_row_period_label(row)
         scope_key = build_cap_scope_key(getattr(row, "cabinet_name", ""), getattr(row, "country", ""))
@@ -4349,11 +4419,14 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .players-toolbar .players-filter-form label.period-label {{
                 flex: 1 1 260px;
             }}
+            .players-toolbar .players-filter-form label.brand-label {{
+                flex: 0 0 180px;
+            }}
             .players-toolbar .players-filter-form label.cabinet-label {{
                 flex: 1 1 200px;
             }}
-            .players-toolbar .players-filter-form label.country-label {{
-                flex: 0 0 150px;
+            .players-toolbar .players-filter-form label.geo-label {{
+                flex: 0 0 170px;
             }}
             .players-toolbar .players-filter-form label.search-label {{
                 flex: 1 1 190px;
@@ -8501,8 +8574,8 @@ def hold_wager_page_html(current_user, rows, cabinet_name="", period_view="curre
             <td>{escape(item['flow'])}</td>
             <td>{format_plain_number_text(item['baseline'])}</td>
             <td>{format_plain_number_text(item['rate'])}</td>
-            <td>{format_money(item['deposit_amount'])}</td>
-            <td>{format_money(item['bet_amount'])}</td>
+            <td>{format_optional_money(item['deposit_amount'])}</td>
+            <td>{format_optional_money(item['bet_amount'])}</td>
             <td>{escape(item['reason'])}</td>
             <td>{format_money(item['missing_baseline'])}</td>
             <td>{format_money(item['missing_wager'])}</td>
@@ -8712,8 +8785,9 @@ def partner_report_page_html(
     upload_summaries=None,
     source_name="",
     cabinet_name="",
+    brand="",
     upload_platform="1xbet",
-    country="",
+    geo="",
     search="",
     period_view="current",
     period_label="",
@@ -8723,11 +8797,12 @@ def partner_report_page_html(
     error_text="",
 ):
     upload_summaries = upload_summaries or []
-    all_sources = get_partner_period_options()
+    all_sources = get_partner_period_options(period_label)
     all_cabinets = get_partner_cabinet_options(period_label if period_view == "period" else "")
     upload_cabinet_catalog = get_partner_upload_cabinet_catalog()
     upload_cabinets = [item["cabinet_name"] for item in upload_cabinet_catalog] or get_partner_cabinet_options() or all_cabinets
-    all_countries = get_partner_country_options()
+    all_brands = get_partner_brand_options()
+    all_geos = get_partner_geo_options()
     period_view_options = "".join([
         f'<option value="{value}" {"selected" if period_view == value else ""}>{label}</option>'
         for value, label in [("all", "All Time"), ("current", "Current Period"), ("period", "Choose Period")]
@@ -8735,6 +8810,7 @@ def partner_report_page_html(
     period_options = make_options(build_period_options(), period_label)
     source_options = make_options(all_sources, source_name)
     cabinet_options = make_options(all_cabinets, cabinet_name)
+    brand_options = make_options(all_brands, brand)
     upload_platform_options = "".join([
         f'<option value="{escape(value)}" {"selected" if safe_text(upload_platform).strip().lower() == safe_text(value).strip().lower() else ""}>{escape(label)}</option>'
         for value, label in get_partner_platform_options()
@@ -8743,7 +8819,7 @@ def partner_report_page_html(
         f'<option value="{escape(item["cabinet_name"])}" data-platform="{escape(item["platform_name"])}">{escape(item["cabinet_name"])}</option>'
         for item in upload_cabinet_catalog
     ]) or '<option value="">No cabinets yet</option>'
-    country_options = make_options(all_countries, country)
+    geo_options = make_labeled_options(all_geos, geo)
     totals = aggregate_partner_totals(rows)
 
     rows_html = ""
@@ -8755,9 +8831,9 @@ def partner_report_page_html(
             <td>{escape(getattr(row, "geo_name", "") or "")}</td>
             <td>{escape(row.registration_date or "")}</td>
             <td>{escape(row.player_id or "")}</td>
-            <td>${safe_number(row.deposit_amount):,.2f}</td>
-            <td>${safe_number(row.bet_amount):,.2f}</td>
-            <td>${safe_number(row.company_income):,.2f}</td>
+            <td>{format_optional_money(row.deposit_amount)}</td>
+            <td>{format_optional_money(row.bet_amount)}</td>
+            <td>{format_optional_money(row.company_income)}</td>
             <td>{escape(row.sub_id or "")}</td>
             <td>${safe_number(row.cpa_amount):,.2f}</td>
         </tr>
@@ -8786,7 +8862,8 @@ def partner_report_page_html(
                     <input type="hidden" name="period_view" value="{escape(period_view)}">
                     <input type="hidden" name="period_label" value="{escape(period_label)}">
                     <input type="hidden" name="cabinet_name" value="{escape(cabinet_name)}">
-                    <input type="hidden" name="country" value="{escape(country)}">
+                    <input type="hidden" name="brand" value="{escape(brand)}">
+                    <input type="hidden" name="geo" value="{escape(geo)}">
                     <input type="hidden" name="search" value="{escape(search)}">
                     <input type="hidden" name="sort_by" value="{escape(sort_by)}">
                     <input type="hidden" name="order" value="{escape(order)}">
@@ -8810,7 +8887,8 @@ def partner_report_page_html(
             period_view=period_view,
             period_label=period_label,
             cabinet_name=cabinet_name,
-            country=country,
+            brand=brand,
+            geo=geo,
             search=search,
             sort_by=field,
             order=next_order,
@@ -8828,8 +8906,9 @@ def partner_report_page_html(
                         <input type="hidden" name="period_view" value="period">
                         <input type="hidden" name="source_name" value="{escape(source_name)}">
                         <label class="period-label">Period<select name="period_label">{period_options}</select></label>
+                        <label class="brand-label">Brands<select name="brand">{brand_options}</select></label>
                         <label class="cabinet-label">Cabinet<select name="cabinet_name">{cabinet_options}</select></label>
-                        <label class="country-label">Country<select name="country">{country_options}</select></label>
+                        <label class="geo-label">Geo<select name="geo">{geo_options}</select></label>
                         <label class="search-label">Search<input type="text" name="search" value="{escape(search)}" placeholder=""></label>
                         <button type="submit" class="btn small-btn">Filter</button>
                         <a href="/partner-report" class="ghost-btn small-btn" data-reset-filters="partner-report">×</a>
@@ -8847,6 +8926,8 @@ def partner_report_page_html(
                     <summary class="btn toggle-indicator toolbar-square-trigger" aria-label="Upload players" title="Upload players"></summary>
                     <div class="upload-menu-list" style="width:380px; max-width:min(380px, calc(100vw - 48px));">
                         <form method="post" action="/partner-report/upload" enctype="multipart/form-data">
+                            <input type="hidden" name="period_view" value="{escape(period_view)}">
+                            <input type="hidden" name="period_label" value="{escape(period_label)}">
                             <label>Platform
                                 <select name="partner_platform" id="partner-upload-platform" required>{upload_platform_options}</select>
                             </label>
@@ -8887,8 +8968,9 @@ def partner_report_page_html(
                 <form method="get" action="/partner-report" class="players-upload-filter">
                     <input type="hidden" name="period_view" value="period">
                     <input type="hidden" name="period_label" value="{escape(period_label)}">
+                    <input type="hidden" name="brand" value="{escape(brand)}">
                     <input type="hidden" name="cabinet_name" value="{escape(cabinet_name)}">
-                    <input type="hidden" name="country" value="{escape(country)}">
+                    <input type="hidden" name="geo" value="{escape(geo)}">
                     <input type="hidden" name="search" value="{escape(search)}">
                     <label>Upload<select name="source_name" onchange="this.form.submit()">{source_options}</select></label>
                 </form>
@@ -10759,7 +10841,8 @@ def partner_report_page(
     period_view: str = Query(default="current"),
     period_label: str = Query(default=""),
     cabinet_name: str = Query(default=""),
-    country: str = Query(default=""),
+    brand: str = Query(default=""),
+    geo: str = Query(default=""),
     search: str = Query(default=""),
     sort_by: str = Query(default="id"),
     order: str = Query(default="desc"),
@@ -10775,7 +10858,8 @@ def partner_report_page(
         period_value=source_name,
         period_label=effective_period_label,
         cabinet_name=cabinet_name,
-        country=country,
+        brand=brand,
+        geo=geo,
         search=search,
     )
 
@@ -10801,7 +10885,8 @@ def partner_report_page(
         period_view=period_view,
         period_label=effective_period_label,
         cabinet_name=cabinet_name,
-        country=country,
+        brand=brand,
+        geo=geo,
         search=search,
         sort_by=sort_by,
         order=order,
@@ -10813,6 +10898,8 @@ def partner_report_page(
 async def upload_partner_report_file(
     request: Request,
     partner_platform: str = Form(default="1xbet"),
+    period_view: str = Form(default="current"),
+    period_label: str = Form(default=""),
     cabinet_name: str = Form(default=""),
     file: UploadFile = File(...),
 ):
@@ -10825,14 +10912,20 @@ async def upload_partner_report_file(
 
     clean_cabinet_name = safe_text(cabinet_name)
     clean_platform = normalize_partner_platform(partner_platform)
+    clean_period_view = safe_text(period_view) or "current"
+    clean_period_label = safe_text(period_label)
+    redirect_qs = (
+        f"/partner-report?period_view={quote_plus(clean_period_view)}"
+        f"&period_label={quote_plus(clean_period_label)}"
+    )
     if not clean_cabinet_name:
-        return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=clean_platform, error_text="Choose a cabinet before upload."), status_code=400)
+        return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=clean_platform, period_view=clean_period_view, period_label=clean_period_label, error_text="Choose a cabinet before upload."), status_code=400)
     cabinet_item = next((item for item in get_cabinet_rows() if safe_text(getattr(item, "name", "")) == clean_cabinet_name), None)
     if not cabinet_item:
-        return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=partner_platform, error_text="Choose a valid cabinet from Partners."), status_code=400)
+        return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=partner_platform, period_view=clean_period_view, period_label=clean_period_label, error_text="Choose a valid cabinet from Partners."), status_code=400)
     raw_platform_name = safe_text(getattr(cabinet_item, "platform", "")).strip()
     if safe_text(partner_platform).strip().lower() != raw_platform_name.lower():
-        return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=partner_platform, error_text="Selected cabinet does not belong to this platform."), status_code=400)
+        return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=partner_platform, period_view=clean_period_view, period_label=clean_period_label, error_text="Selected cabinet does not belong to this platform."), status_code=400)
 
     original_name = file.filename or "partner_report.xlsx"
     ext = os.path.splitext(original_name)[1].lower() or ".xlsx"
@@ -10846,10 +10939,10 @@ async def upload_partner_report_file(
         else:
             df = read_partner_uploaded_dataframe(filename, ext)
         if df is None or getattr(df, "empty", False):
-            return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=clean_platform, error_text="Partner file is empty."), status_code=400)
+            return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=clean_platform, period_view=clean_period_view, period_label=clean_period_label, error_text="Partner file is empty."), status_code=400)
         detected_period = detect_partner_upload_period(df, partner_platform=clean_platform, fallback_text=original_name)
         if not detected_period:
-            return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=clean_platform, error_text="Could not determine upload period from the file header or filename."), status_code=400)
+            return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=clean_platform, period_view=clean_period_view, period_label=clean_period_label, error_text="Could not determine upload period from the file header or filename."), status_code=400)
         source_prefix = clean_cabinet_name.replace("|", "/")
         if clean_platform == "cellxpert":
             source_prefix = f"cellxpert/{source_prefix}"
@@ -10866,11 +10959,11 @@ async def upload_partner_report_file(
             upload_period_data=detected_period,
         )
         if not rows:
-            return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=clean_platform, error_text="No valid player rows found in this file."), status_code=400)
+            return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=clean_platform, period_view=clean_period_view, period_label=clean_period_label, error_text="No valid player rows found in this file."), status_code=400)
         replace_partner_rows(final_source_name, rows)
-        return RedirectResponse(url="/partner-report?message=Upload+saved", status_code=303)
+        return RedirectResponse(url=f"{redirect_qs}&message=Upload+saved", status_code=303)
     except Exception as exc:
-        return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=clean_platform, error_text=f"Could not process partner file: {exc}"), status_code=400)
+        return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=clean_platform, period_view=clean_period_view, period_label=clean_period_label, error_text=f"Could not process partner file: {exc}"), status_code=400)
     finally:
         if os.path.exists(filename):
             os.remove(filename)
@@ -10883,7 +10976,8 @@ def delete_partner_upload(
     period_view: str = Form(default="current"),
     period_label: str = Form(default=""),
     cabinet_name: str = Form(default=""),
-    country: str = Form(default=""),
+    brand: str = Form(default=""),
+    geo: str = Form(default=""),
     search: str = Form(default=""),
     sort_by: str = Form(default="id"),
     order: str = Form(default="desc"),
@@ -10899,7 +10993,8 @@ def delete_partner_upload(
                 f"/partner-report?period_view={quote_plus(safe_text(period_view) or 'current')}"
                 f"&period_label={quote_plus(safe_text(period_label))}"
                 f"&cabinet_name={quote_plus(safe_text(cabinet_name))}"
-                f"&country={quote_plus(safe_text(country))}"
+                f"&brand={quote_plus(safe_text(brand))}"
+                f"&geo={quote_plus(safe_text(geo))}"
                 f"&search={quote_plus(safe_text(search))}"
                 f"&sort_by={quote_plus(safe_text(sort_by) or 'id')}"
                 f"&order={quote_plus(safe_text(order).lower() or 'desc')}"
@@ -10922,7 +11017,8 @@ def delete_partner_upload(
             f"/partner-report?period_view={quote_plus(safe_text(period_view) or 'current')}"
             f"&period_label={quote_plus(safe_text(period_label))}"
             f"&cabinet_name={quote_plus(safe_text(cabinet_name))}"
-            f"&country={quote_plus(safe_text(country))}"
+            f"&brand={quote_plus(safe_text(brand))}"
+            f"&geo={quote_plus(safe_text(geo))}"
             f"&search={quote_plus(safe_text(search))}"
             f"&sort_by={quote_plus(safe_text(sort_by) or 'id')}"
             f"&order={quote_plus(safe_text(order).lower() or 'desc')}"
