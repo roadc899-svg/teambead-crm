@@ -4406,12 +4406,14 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 align-self: flex-start;
             }}
             .caps-toolbar-panel .toolbar-actions,
+            .chatterfy-toolbar,
             .hold-toolbar {{
                 align-items: center;
                 justify-content: flex-start;
                 flex-wrap: nowrap;
             }}
             .caps-toolbar-panel .panel.compact-panel.filters,
+            .chatterfy-toolbar .panel.compact-panel.filters,
             .hold-toolbar .panel.compact-panel.filters {{
                 order: 1;
                 flex: 1 1 760px;
@@ -4430,6 +4432,12 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             }}
             .caps-toolbar-panel .upload-menu {{
                 order: 3;
+                flex: 0 0 auto;
+                align-self: center;
+                margin-left: auto;
+            }}
+            .chatterfy-toolbar .upload-menu {{
+                order: 2;
                 flex: 0 0 auto;
                 align-self: center;
                 margin-left: auto;
@@ -5092,7 +5100,8 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .partners-table .cabinet-col {{ width: 108px; min-width: 108px; }}
             .partners-table .code-col {{ width: 78px; min-width: 78px; }}
             .partners-table .geo-col {{ width: 118px; min-width: 118px; }}
-            .partners-table .brands-col {{ width: 84px; min-width: 84px; }}
+            .partners-table .brands-col {{ width: 92px; min-width: 92px; }}
+            .partners-table th.brands-col {{ white-space: nowrap; }}
             .partners-table .tg-col {{ width: 62px; min-width: 62px; }}
             .partners-table .manager-col {{ width: 78px; min-width: 78px; }}
             .partners-table .manager-contact-col {{ width: 108px; min-width: 108px; }}
@@ -8579,9 +8588,9 @@ def chatterfy_page_html(
     {message_html}
 
     <div class="panel compact-panel">
-        <div class="toolbar-actions">
+        <div class="toolbar-actions chatterfy-toolbar">
                 <div class="panel compact-panel filters">
-                    <form method="get" action="/chatterfy" style="justify-content:flex-end;" data-persist-filters="chatterfy">
+                    <form method="get" action="/chatterfy" data-persist-filters="chatterfy">
                         <label>Date<input type="text" name="date_filter" value="{escape(date_filter)}" placeholder="27.03.2026"></label>
                         <label>Time<input type="text" name="time_filter" value="{escape(time_filter)}" placeholder="09:3"></label>
                         <label>View<select name="period_view">{period_view_options}</select></label>
@@ -8595,8 +8604,8 @@ def chatterfy_page_html(
                         <a href="/chatterfy" class="ghost-btn small-btn" data-reset-filters="chatterfy">Reset</a>
                     </form>
                 </div>
-                <details class="upload-menu">
-                    <summary class="btn toggle-indicator" style="width:34px; height:34px; border-radius:10px;"></summary>
+                <details class="upload-menu upload-menu-right">
+                    <summary class="btn toggle-indicator toolbar-square-trigger" aria-label="Upload chatterfy" title="Upload chatterfy"></summary>
                     <div class="upload-menu-list">
                         <form method="post" action="/chatterfy/upload" enctype="multipart/form-data" class="upload-inline" style="justify-content:space-between;">
                             <label>Chatterfy File
