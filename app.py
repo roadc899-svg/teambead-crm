@@ -127,6 +127,7 @@ class CapRow(Base):
     advertiser = Column(String, default="")
     owner_name = Column(String, default="")
     buyer = Column(String, default="")
+    cabinet_name = Column(String, default="")
     flow = Column(String, default="")
     code = Column(String, default="")
     geo = Column(String, default="")
@@ -1109,6 +1110,9 @@ def ensure_caps_table():
     def sqlite_migration():
         with engine.begin() as conn:
             columns = [row[1] for row in conn.execute(text("PRAGMA table_info(cap_rows)")).fetchall()]
+            if "cabinet_name" not in columns:
+                conn.execute(text("ALTER TABLE cap_rows ADD COLUMN cabinet_name VARCHAR DEFAULT ''"))
+                conn.execute(text("UPDATE cap_rows SET cabinet_name = buyer WHERE COALESCE(cabinet_name, '') = ''"))
             if "period_label" not in columns:
                 conn.execute(text("ALTER TABLE cap_rows ADD COLUMN period_label VARCHAR DEFAULT ''"))
                 default_period = get_current_period_label()
@@ -1117,14 +1121,23 @@ def ensure_caps_table():
     if not DATABASE_URL.startswith("sqlite"):
         inspector = inspect(engine)
         columns = {item.get("name") for item in inspector.get_columns("cap_rows")}
+        migration_statements = []
+        if "cabinet_name" not in columns:
+            migration_statements.append(text("ALTER TABLE cap_rows ADD COLUMN IF NOT EXISTS cabinet_name VARCHAR DEFAULT ''"))
         if "period_label" not in columns:
+            migration_statements.append(text("ALTER TABLE cap_rows ADD COLUMN IF NOT EXISTS period_label VARCHAR DEFAULT ''"))
+        if migration_statements:
             default_period = get_current_period_label()
             with engine.begin() as conn:
-                conn.execute(text("ALTER TABLE cap_rows ADD COLUMN IF NOT EXISTS period_label VARCHAR DEFAULT ''"))
-                conn.execute(
-                    text("UPDATE cap_rows SET period_label = :period_label WHERE COALESCE(period_label, '') = ''"),
-                    {"period_label": default_period},
-                )
+                for statement in migration_statements:
+                    conn.execute(statement)
+                if "cabinet_name" not in columns:
+                    conn.execute(text("UPDATE cap_rows SET cabinet_name = buyer WHERE COALESCE(cabinet_name, '') = ''"))
+                if "period_label" not in columns:
+                    conn.execute(
+                        text("UPDATE cap_rows SET period_label = :period_label WHERE COALESCE(period_label, '') = ''"),
+                        {"period_label": default_period},
+                    )
 
 
 def ensure_task_table():
@@ -3029,6 +3042,7 @@ def sidebar_html(active_page, current_user=None):
 
 def page_shell(title, content, active_page="grouped", extra_scripts="", top_actions="", current_user=None):
     sidebar = sidebar_html(active_page, current_user=current_user)
+    storage_namespace = json.dumps(safe_text((current_user or {}).get("username") or "guest"))
     return f"""
     <html>
     <head>
@@ -3715,23 +3729,23 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 accent-color: var(--accent1);
             }}
             .caps-actions {{
-                display: flex;
+                display: grid;
                 gap: 8px;
-                align-items: center;
-                justify-content: flex-start;
-                flex-wrap: nowrap;
+                align-items: stretch;
+                justify-items: stretch;
                 min-width: 0;
+                width: 100%;
             }}
             .caps-actions form {{
                 margin: 0;
-                width: auto;
+                width: 100%;
                 flex: 0 0 auto;
             }}
             .caps-actions .ghost-btn,
             .caps-actions .btn,
             .caps-actions button {{
-                width: auto;
-                min-width: 84px;
+                width: 100%;
+                min-width: 0;
                 text-align: center;
             }}
             .drag-target-left::before, .drag-target-right::after {{
@@ -3879,13 +3893,16 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .caps-table .fill-col {{ width: 108px; min-width: 108px; }}
             .caps-table .promo-col {{ width: 98px; min-width: 98px; }}
             .caps-table .agent-col {{ width: 84px; min-width: 84px; }}
+            .caps-table .kpi-col {{ width: 128px; min-width: 128px; }}
             .caps-table .comment-col {{ width: 122px; min-width: 122px; }}
-            .caps-table .action-col {{ width: 148px; min-width: 148px; }}
+            .caps-table .link-col {{ width: 92px; min-width: 92px; }}
+            .caps-table .action-col {{ width: 108px; min-width: 108px; }}
             .progress-shell {{
                 min-width: 0;
                 display:grid;
-                gap:4px;
+                gap:5px;
                 font-size: 12px;
+                line-height: 1.25;
             }}
             .progress-bar {{ height: 8px; }}
             .confirm-overlay {{
@@ -3952,31 +3969,31 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 background: linear-gradient(90deg, var(--accent3), var(--accent1));
             }}
             .progress-shell.progress-free {{
-                color: #93a4bf;
+                color: #7f8da6;
             }}
             .progress-shell.progress-free .progress-bar {{
-                background: rgba(148, 163, 184, 0.18);
+                background: rgba(148, 163, 184, 0.12);
             }}
             .progress-shell.progress-free .progress-bar > span {{
-                background: linear-gradient(90deg, #94a3b8, #cbd5e1);
+                background: linear-gradient(90deg, #a8b5c7, #ccd5e2);
             }}
             .progress-shell.progress-filling {{
-                color: #fbbf24;
+                color: #b78a1b;
             }}
             .progress-shell.progress-filling .progress-bar {{
-                background: rgba(251, 191, 36, 0.18);
+                background: rgba(245, 186, 59, 0.13);
             }}
             .progress-shell.progress-filling .progress-bar > span {{
-                background: linear-gradient(90deg, #f59e0b, #facc15);
+                background: linear-gradient(90deg, #d7a13a, #e7c46d);
             }}
             .progress-shell.progress-overflow {{
-                color: #f87171;
+                color: #c96f72;
             }}
             .progress-shell.progress-overflow .progress-bar {{
-                background: rgba(248, 113, 113, 0.18);
+                background: rgba(226, 128, 128, 0.13);
             }}
             .progress-shell.progress-overflow .progress-bar > span {{
-                background: linear-gradient(90deg, #ef4444, #dc2626);
+                background: linear-gradient(90deg, #d58b8d, #c96f72);
             }}
             .tasks-layout {{ display:grid; grid-template-columns: minmax(360px, 430px) 1fr; gap:16px; align-items:start; }}
             .tasks-form {{ display:grid; gap:12px; }}
@@ -4077,13 +4094,17 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             </main>
         </div>
         <script>
+            window.teambeadStorageNamespace = {storage_namespace};
+            window.teambeadStorageKey = function(base) {{
+                return 'teambead:' + window.teambeadStorageNamespace + ':' + base;
+            }};
             function setTheme(mode) {{
                 if (mode === 'light') document.body.classList.add('light');
                 else document.body.classList.remove('light');
-                localStorage.setItem('teambead-theme', mode === 'light' ? 'light' : 'dark');
+                localStorage.setItem(window.teambeadStorageKey('theme'), mode === 'light' ? 'light' : 'dark');
             }}
             (function initTheme() {{
-                const saved = localStorage.getItem('teambead-theme');
+                const saved = localStorage.getItem(window.teambeadStorageKey('theme'));
                 if (saved === 'light') document.body.classList.add('light');
             }})();
             document.addEventListener('click', function(e) {{
@@ -4826,11 +4847,40 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     fill_avg = cap_fill_percent(total_current, total_cap)
     active_caps = len([row for row in rows if safe_number(row.cap_value) > 0])
 
+    caps_columns = [
+        ("id", "ID"),
+        ("advertiser", "Advertiser"),
+        ("manager", "Manager"),
+        ("buyer", "Buyer"),
+        ("cabinet", "Cabinet"),
+        ("code", "CODE"),
+        ("geo", "GEO"),
+        ("rate", "Rate"),
+        ("baseline", "Baseline"),
+        ("cap", "Cap"),
+        ("current_ftd", "Current FTD"),
+        ("remaining", "Remaining"),
+        ("fill", "Fill"),
+        ("promo_code", "Promo Code"),
+        ("agent", "Agent"),
+        ("kpi", "KPI"),
+        ("comments", "Comments"),
+        ("link", "Link"),
+        ("action", "Action"),
+    ]
+    caps_column_chips = "".join(
+        f'<label class="column-chip"><input class="column-toggle-caps" type="checkbox" value="{escape(key)}" checked> {escape(label)}</label>'
+        for key, label in caps_columns
+    )
+
     rows_html = ""
     for row in rows:
         fill_percent = cap_fill_percent(row.current_ftd, row.cap_value)
         bar_width = max(0, min(100, fill_percent))
         remaining_value = max(0.0, safe_number(row.cap_value) - safe_number(row.current_ftd))
+        geo_code = normalize_geo_value(row.geo or "")
+        link_value = safe_text(row.link)
+        link_button = f'<a href="{escape(link_value)}" target="_blank" rel="noreferrer" class="ghost-btn small-btn">Open</a>' if link_value else "—"
         state = "Free"
         progress_class = "progress-free"
         if fill_percent >= 100:
@@ -4841,28 +4891,30 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             progress_class = "progress-filling"
         rows_html += f"""
         <tr>
-            <td class="id-col">{row.id}</td>
-            <td class="advertiser-col" title="{escape(row.advertiser or '')}">{escape(row.advertiser or "")}</td>
-            <td class="owner-col" title="{escape(row.owner_name or '')}">{escape(row.owner_name or "")}</td>
-            <td class="buyer-col" title="{escape(row.buyer or '')}">{escape(row.buyer or "")}</td>
-            <td class="code-col" title="{escape(row.code or '')}">{escape(row.code or "")}</td>
-            <td class="geo-col" title="{escape(geo_display_name(row.geo or ''))}">{escape(geo_display_name(row.geo or ""))}</td>
-            <td class="period-col" title="{escape(row.period_label or '')}">{escape(row.period_label or "")}</td>
-            <td class="rate-col" title="{escape(row.rate or '')}">{escape(format_plain_number_text(row.rate))}</td>
-            <td class="baseline-col" title="{escape(row.baseline or '')}">{escape(format_plain_number_text(row.baseline))}</td>
-            <td class="cap-col">{format_int_or_float(row.cap_value)}</td>
-            <td class="current-col">{format_int_or_float(row.current_ftd)}</td>
-            <td class="remaining-col">{format_int_or_float(remaining_value)}</td>
-            <td class="fill-col">
+            <td class="id-col" data-col="id">{row.id}</td>
+            <td class="advertiser-col" data-col="advertiser" title="{escape(row.advertiser or '')}">{escape(row.advertiser or "")}</td>
+            <td class="owner-col" data-col="manager" title="{escape(row.owner_name or '')}">{escape(row.owner_name or "")}</td>
+            <td class="buyer-col" data-col="buyer" title="{escape(row.buyer or '')}">{escape(row.buyer or "")}</td>
+            <td class="buyer-col" data-col="cabinet" title="{escape(row.cabinet_name or '')}">{escape(row.cabinet_name or "")}</td>
+            <td class="code-col" data-col="code" title="{escape(row.code or '')}">{escape(row.code or "")}</td>
+            <td class="geo-col" data-col="geo" title="{escape(geo_code)}">{escape(geo_code)}</td>
+            <td class="rate-col" data-col="rate" title="{escape(row.rate or '')}">{escape(format_plain_number_text(row.rate))}</td>
+            <td class="baseline-col" data-col="baseline" title="{escape(row.baseline or '')}">{escape(format_plain_number_text(row.baseline))}</td>
+            <td class="cap-col" data-col="cap">{format_int_or_float(row.cap_value)}</td>
+            <td class="current-col" data-col="current_ftd">{format_int_or_float(row.current_ftd)}</td>
+            <td class="remaining-col" data-col="remaining">{format_int_or_float(remaining_value)}</td>
+            <td class="fill-col" data-col="fill">
                 <div class="progress-shell {progress_class}">
                     <div><strong>{fill_percent:.0f}%</strong> · {state}</div>
                     <div class="progress-bar"><span style="width:{bar_width}%;"></span></div>
                 </div>
             </td>
-            <td class="promo-col" title="{escape(row.promo_code or '')}">{escape(row.promo_code or "")}</td>
-            <td class="agent-col" title="{escape(row.agent or '')}">{escape(row.agent or "")}</td>
-            <td class="comment-col" title="{escape(row.comments or '')}">{escape(row.comments or "")}</td>
-            <td class="action-col">
+            <td class="promo-col" data-col="promo_code" title="{escape(row.promo_code or '')}">{escape(row.promo_code or "")}</td>
+            <td class="agent-col" data-col="agent" title="{escape(row.agent or '')}">{escape(row.agent or "")}</td>
+            <td class="kpi-col" data-col="kpi" title="{escape(row.kpi or '')}">{escape(row.kpi or "")}</td>
+            <td class="comment-col" data-col="comments" title="{escape(row.comments or '')}">{escape(row.comments or "")}</td>
+            <td class="link-col" data-col="link">{link_button}</td>
+            <td class="action-col" data-col="action">
                 <div class="caps-actions">
                     <form method="get" action="/caps">
                         <input type="hidden" name="edit" value="{row.id}">
@@ -4924,6 +4976,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     cabinet_list = build_datalist(
         [row.name for row in cabinet_rows]
         + [row.cabinet_name for row in partner_rows]
+        + [row.cabinet_name for row in cap_rows]
         + [row.buyer for row in cap_rows]
     )
     geo_list = build_datalist(
@@ -4962,6 +5015,9 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     <input type="text" name="owner_name" list="capOwnerOptions" value="{escape(form_data.get('owner_name', ''))}" placeholder="Manager">
                 </label>
             </div>
+            <label>Cabinet
+                <input type="text" name="cabinet_name" list="capCabinetOptions" value="{escape(form_data.get('cabinet_name', ''))}" placeholder="Cabinet">
+            </label>
             <div class="caps-grid-2">
                 <label>CODE
                     <input type="text" name="code" value="{escape(form_data.get('code', ''))}">
@@ -5032,6 +5088,16 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                         <a href="/caps" class="ghost-btn small-btn">Reset</a>
                     </form>
                 </div>
+                <div class="column-menu-wrap">
+                    <button type="button" class="ghost-btn small-btn" onclick="toggleCapsColumnMenu()">Columns</button>
+                    <div class="column-menu" id="capsColumnMenu">
+                        <div class="column-actions">
+                            <button type="button" class="ghost-btn small-btn" onclick="showAllCapsColumns()">Show All</button>
+                            <button type="button" class="ghost-btn small-btn" onclick="resetCapsColumnsAll()">Reset All</button>
+                        </div>
+                        <div class="column-grid">{caps_column_chips}</div>
+                    </div>
+                </div>
                 {create_panel}
             </div>
         </div>
@@ -5053,29 +5119,31 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 </div>
             </div>
             <div class="table-wrap">
-                <table class="caps-table">
+                <table class="caps-table" id="capsTable" style="min-width:1750px;">
                     <thead>
                         <tr>
-                            <th class="id-col">ID</th>
-                            <th class="advertiser-col">Advertiser</th>
-                            <th class="owner-col">Manager</th>
-                            <th class="buyer-col">Cabinet</th>
-                            <th class="code-col">CODE</th>
-                            <th class="geo-col">GEO</th>
-                            <th class="period-col">Period</th>
-                            <th class="rate-col">Rate</th>
-                            <th class="baseline-col">Baseline</th>
-                            <th class="cap-col">Cap</th>
-                            <th class="current-col">Current FTD</th>
-                            <th class="remaining-col">Remaining</th>
-                            <th class="fill-col">Fill</th>
-                            <th class="promo-col">Promo Code</th>
-                            <th class="agent-col">Agent</th>
-                            <th class="comment-col">Comments</th>
-                            <th class="action-col">Action</th>
+                            <th class="id-col" data-col="id" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>ID<span class="resizer"></span></div></th>
+                            <th class="advertiser-col" data-col="advertiser" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Advertiser<span class="resizer"></span></div></th>
+                            <th class="owner-col" data-col="manager" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Manager<span class="resizer"></span></div></th>
+                            <th class="buyer-col" data-col="buyer" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Buyer<span class="resizer"></span></div></th>
+                            <th class="buyer-col" data-col="cabinet" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Cabinet<span class="resizer"></span></div></th>
+                            <th class="code-col" data-col="code" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>CODE<span class="resizer"></span></div></th>
+                            <th class="geo-col" data-col="geo" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>GEO<span class="resizer"></span></div></th>
+                            <th class="rate-col" data-col="rate" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Rate<span class="resizer"></span></div></th>
+                            <th class="baseline-col" data-col="baseline" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Baseline<span class="resizer"></span></div></th>
+                            <th class="cap-col" data-col="cap" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Cap<span class="resizer"></span></div></th>
+                            <th class="current-col" data-col="current_ftd" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Current FTD<span class="resizer"></span></div></th>
+                            <th class="remaining-col" data-col="remaining" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Remaining<span class="resizer"></span></div></th>
+                            <th class="fill-col" data-col="fill" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Fill<span class="resizer"></span></div></th>
+                            <th class="promo-col" data-col="promo_code" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Promo Code<span class="resizer"></span></div></th>
+                            <th class="agent-col" data-col="agent" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Agent<span class="resizer"></span></div></th>
+                            <th class="kpi-col" data-col="kpi" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>KPI<span class="resizer"></span></div></th>
+                            <th class="comment-col" data-col="comments" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Comments<span class="resizer"></span></div></th>
+                            <th class="link-col" data-col="link" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Link<span class="resizer"></span></div></th>
+                            <th class="action-col" data-col="action" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Action<span class="resizer"></span></div></th>
                         </tr>
                     </thead>
-                        <tbody>{rows_html if rows_html else '<tr><td colspan="17">No caps yet</td></tr>'}</tbody>
+                        <tbody>{rows_html if rows_html else '<tr><td colspan="19">No caps yet</td></tr>'}</tbody>
                 </table>
             </div>
         </div>
@@ -5124,6 +5192,154 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             document.addEventListener('keydown', function(event) {
                 if (event.key === 'Escape' && overlay.classList.contains('open')) closeModal();
             });
+        })();
+        (function initCapsColumns() {
+            const table = document.getElementById('capsTable');
+            if (!table) return;
+            const ORDER_KEY = window.teambeadStorageKey('capsColumnsOrder');
+            const WIDTH_KEY = window.teambeadStorageKey('capsColumnsWidth');
+            const HIDDEN_KEY = window.teambeadStorageKey('capsColumnsHidden');
+
+            function getCurrentOrder() {
+                return Array.from(table.querySelectorAll('thead th[data-col]')).map(th => th.dataset.col);
+            }
+            function reorderCells(order) {
+                table.querySelectorAll('tr').forEach(function(row) {
+                    const cells = {};
+                    Array.from(row.children).forEach(function(cell) {
+                        if (cell.dataset.col) cells[cell.dataset.col] = cell;
+                    });
+                    order.forEach(function(key) {
+                        if (cells[key]) row.appendChild(cells[key]);
+                    });
+                });
+            }
+            function applyOrder() {
+                const saved = JSON.parse(localStorage.getItem(ORDER_KEY) || '[]');
+                const current = getCurrentOrder();
+                if (!saved.length) return;
+                const merged = saved.filter(x => current.includes(x)).concat(current.filter(x => !saved.includes(x)));
+                reorderCells(merged);
+            }
+            function applyVisibility() {
+                const hidden = JSON.parse(localStorage.getItem(HIDDEN_KEY) || '[]');
+                document.querySelectorAll('.column-toggle-caps').forEach(cb => {
+                    cb.checked = !hidden.includes(cb.value);
+                });
+                document.querySelectorAll('#capsTable [data-col]').forEach(el => {
+                    el.style.display = hidden.includes(el.dataset.col) ? 'none' : '';
+                });
+            }
+            function saveVisibility() {
+                const hidden = [];
+                document.querySelectorAll('.column-toggle-caps').forEach(cb => {
+                    if (!cb.checked) hidden.push(cb.value);
+                });
+                localStorage.setItem(HIDDEN_KEY, JSON.stringify(hidden));
+                applyVisibility();
+            }
+            window.toggleCapsColumnMenu = function() {
+                const menu = document.getElementById('capsColumnMenu');
+                if (menu) menu.classList.toggle('open');
+            }
+            window.showAllCapsColumns = function() {
+                localStorage.setItem(HIDDEN_KEY, JSON.stringify([]));
+                applyVisibility();
+            }
+            window.resetCapsColumnsAll = function() {
+                localStorage.removeItem(HIDDEN_KEY);
+                localStorage.removeItem(ORDER_KEY);
+                localStorage.removeItem(WIDTH_KEY);
+                window.location.reload();
+            }
+            function applyWidths() {
+                const widths = JSON.parse(localStorage.getItem(WIDTH_KEY) || '{}');
+                Object.entries(widths).forEach(([key, width]) => {
+                    document.querySelectorAll('#capsTable [data-col="' + key + '"]').forEach(el => {
+                        el.style.width = width + 'px';
+                        el.style.minWidth = width + 'px';
+                        el.style.maxWidth = width + 'px';
+                    });
+                });
+            }
+            function saveWidth(key, width) {
+                const widths = JSON.parse(localStorage.getItem(WIDTH_KEY) || '{}');
+                widths[key] = Math.max(90, Math.round(width));
+                localStorage.setItem(WIDTH_KEY, JSON.stringify(widths));
+            }
+            table.querySelectorAll('th[data-col]').forEach(th => {
+                const resizer = th.querySelector('.resizer');
+                if (!resizer) return;
+                let startX = 0;
+                let startWidth = 0;
+                let resizing = false;
+                const key = th.dataset.col;
+                resizer.addEventListener('mousedown', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    resizing = true;
+                    startX = e.clientX;
+                    startWidth = th.getBoundingClientRect().width;
+                    document.body.style.cursor = 'col-resize';
+                });
+                document.addEventListener('mousemove', function(e) {
+                    if (!resizing) return;
+                    const newWidth = Math.max(90, startWidth + (e.clientX - startX));
+                    document.querySelectorAll('#capsTable [data-col="' + key + '"]').forEach(el => {
+                        el.style.width = newWidth + 'px';
+                        el.style.minWidth = newWidth + 'px';
+                        el.style.maxWidth = newWidth + 'px';
+                    });
+                });
+                document.addEventListener('mouseup', function() {
+                    if (!resizing) return;
+                    resizing = false;
+                    document.body.style.cursor = '';
+                    saveWidth(key, th.getBoundingClientRect().width);
+                });
+            });
+            let dragged = null;
+            table.querySelectorAll('th[data-col]').forEach(th => {
+                th.addEventListener('dragstart', function(e) {
+                    if (e.target.classList.contains('resizer')) {
+                        e.preventDefault();
+                        return;
+                    }
+                    dragged = th;
+                    th.classList.add('dragging');
+                });
+                th.addEventListener('dragend', function() {
+                    table.querySelectorAll('th[data-col]').forEach(x => x.classList.remove('dragging', 'drag-target-left', 'drag-target-right'));
+                    dragged = null;
+                });
+                th.addEventListener('dragover', function(e) {
+                    e.preventDefault();
+                    if (!dragged || dragged === th) return;
+                    const rect = th.getBoundingClientRect();
+                    const before = (e.clientX - rect.left) < rect.width / 2;
+                    th.classList.toggle('drag-target-left', before);
+                    th.classList.toggle('drag-target-right', !before);
+                });
+                th.addEventListener('dragleave', function() {
+                    th.classList.remove('drag-target-left', 'drag-target-right');
+                });
+                th.addEventListener('drop', function(e) {
+                    e.preventDefault();
+                    if (!dragged || dragged === th) return;
+                    const rect = th.getBoundingClientRect();
+                    const before = (e.clientX - rect.left) < rect.width / 2;
+                    if (before) th.parentNode.insertBefore(dragged, th);
+                    else th.parentNode.insertBefore(dragged, th.nextSibling);
+                    const order = getCurrentOrder();
+                    reorderCells(order);
+                    localStorage.setItem(ORDER_KEY, JSON.stringify(order));
+                    table.querySelectorAll('th[data-col]').forEach(x => x.classList.remove('drag-target-left', 'drag-target-right'));
+                });
+            });
+            document.querySelectorAll('.column-toggle-caps').forEach(cb => cb.addEventListener('change', saveVisibility));
+            applyOrder();
+            applyVisibility();
+            applyWidths();
         })();
     </script>
     """
@@ -5709,9 +5925,9 @@ def chatterfy_page_html(
         (function() {
             const table = document.getElementById('chatterfyTable');
             if (!table) return;
-            const WIDTH_KEY = 'teambead_chatterfy_widths_v1';
-            const HIDDEN_KEY = 'teambead_chatterfy_hidden_columns_v1';
-            const ORDER_KEY = 'teambead_chatterfy_column_order_v1';
+            const WIDTH_KEY = window.teambeadStorageKey('chatterfy_widths_v1');
+            const HIDDEN_KEY = window.teambeadStorageKey('chatterfy_hidden_columns_v1');
+            const ORDER_KEY = window.teambeadStorageKey('chatterfy_column_order_v1');
             function getHeaderRow() { return table.querySelector('thead tr'); }
             function getRows() { return Array.from(table.querySelectorAll('tr')); }
             function getCurrentOrder() {
@@ -6984,9 +7200,9 @@ def show_grouped_table(
 
     extra_scripts = """
     <script>
-        const HIDDEN_KEY = 'teambead-hidden-columns-v2';
-        const ORDER_KEY = 'teambead-column-order-v2';
-        const WIDTH_KEY = 'teambead-column-widths-v2';
+        const HIDDEN_KEY = window.teambeadStorageKey('hidden-columns-v2');
+        const ORDER_KEY = window.teambeadStorageKey('column-order-v2');
+        const WIDTH_KEY = window.teambeadStorageKey('column-widths-v2');
 
         function getTable() { return document.getElementById('groupedTable'); }
         function getHeaderRow() { return getTable()?.querySelector('thead tr'); }
@@ -7591,6 +7807,7 @@ def caps_page(
                     "advertiser": item.advertiser or "",
                     "owner_name": item.owner_name or "",
                     "buyer": item.buyer or "",
+                    "cabinet_name": item.cabinet_name or "",
                     "flow": item.flow or "",
                     "code": item.code or "",
                     "geo": item.geo or "",
@@ -7625,6 +7842,7 @@ def save_cap(
     period_view: str = Form(default="period"),
     period_label: str = Form(default=""),
     buyer: str = Form(...),
+    cabinet_name: str = Form(default=""),
     flow: str = Form(default=""),
     code: str = Form(default=""),
     geo: str = Form(default=""),
@@ -7652,6 +7870,7 @@ def save_cap(
         "owner_name": owner_name,
         "period_label": clean_period_label,
         "buyer": buyer,
+        "cabinet_name": cabinet_name,
         "flow": flow,
         "code": code,
         "geo": geo,
@@ -7681,6 +7900,7 @@ def save_cap(
         item.owner_name = safe_text(owner_name)
         item.period_label = clean_period_label
         item.buyer = clean_buyer
+        item.cabinet_name = safe_text(cabinet_name)
         item.flow = safe_text(flow)
         item.code = normalize_geo_value(code)
         item.geo = normalize_geo_value(geo)
