@@ -2994,14 +2994,21 @@ def get_partner_rows_by_period(period_value="", period_label="", cabinet_name=""
 
 
 def aggregate_partner_totals(rows):
+    deposits_total = sum(safe_number(r.deposit_amount) for r in rows)
+    bets_total = sum(safe_number(r.bet_amount) for r in rows)
+    income_total = sum(safe_number(r.company_income) for r in rows)
+    cpa_total = sum(safe_number(r.cpa_amount) for r in rows)
+    ftd_count = sum(1 for r in rows if safe_number(r.deposit_amount) > 0)
     return {
         "players": len(rows),
-        "deposits": sum(safe_number(r.deposit_amount) for r in rows),
-        "bets": sum(safe_number(r.bet_amount) for r in rows),
-        "income": sum(safe_number(r.company_income) for r in rows),
-        "cpa": sum(safe_number(r.cpa_amount) for r in rows),
-        "ftd_count": sum(1 for r in rows if safe_number(r.deposit_amount) > 0),
+        "deposits": deposits_total,
+        "bets": bets_total,
+        "income": income_total,
+        "cpa": cpa_total,
+        "ftd_count": ftd_count,
         "qualified_ftd_count": sum(1 for r in rows if bool(getattr(r, "is_qualified_ftd", False))),
+        "avg_deposit": (deposits_total / ftd_count) if ftd_count > 0 else 0.0,
+        "sumdep2spend": ((deposits_total / cpa_total) * 100) if cpa_total > 0 else 0.0,
     }
 def refresh_cap_current_ftd_from_partner():
     ensure_partner_table()
@@ -5303,7 +5310,6 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 <div class="topbar">
                     <div>
                         <div class="page-title">{escape(title)}</div>
-                        <div class="subtitle">TeamBead CRM System</div>
                     </div>
                     <div class="top-actions">
                         {top_actions}
@@ -8918,7 +8924,11 @@ def partner_report_page_html(
                     <div class="mini-stat"><div class="name">ftd</div><div class="value">{totals['players']}</div></div>
                     <div class="mini-stat"><div class="name">qftd</div><div class="value">{totals['qualified_ftd_count']}</div></div>
                     <div class="mini-stat"><div class="name">deposit sum</div><div class="value">${totals['deposits']:,.2f}</div></div>
+                    <div class="mini-stat"><div class="name">avg deposit</div><div class="value">${totals['avg_deposit']:,.2f}</div></div>
+                    <div class="mini-stat"><div class="name">bet sum</div><div class="value">${totals['bets']:,.2f}</div></div>
+                    <div class="mini-stat"><div class="name">sumdep2spend</div><div class="value">{totals['sumdep2spend']:,.2f}%</div></div>
                     <div class="mini-stat"><div class="name">ngr</div><div class="value">${totals['income']:,.2f}</div></div>
+                    <div class="mini-stat"><div class="name">cpa</div><div class="value">${totals['cpa']:,.2f}</div></div>
                 </div>
                 <div class="players-side-tools">
                 <div class="players-icon-stack">
