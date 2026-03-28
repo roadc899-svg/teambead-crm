@@ -3295,20 +3295,34 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 align-items:end;
             }}
             .cap-menu-list {{
-                width: min(560px, calc(100vw - 48px));
-                gap: 14px;
-                padding: 14px;
-                border-radius: 18px;
+                width: min(500px, calc(100vw - 48px));
+                gap: 10px;
+                padding: 12px;
+                border-radius: 16px;
             }}
             .cap-menu-list .caps-form {{
-                gap: 10px;
+                gap: 8px;
             }}
             .cap-menu-list .caps-grid-2 {{
-                gap: 10px;
+                gap: 8px;
             }}
             .cap-menu-list .panel-subtitle {{
                 margin: 0;
                 padding-bottom: 2px;
+            }}
+            .cap-menu-list label {{
+                gap: 5px;
+                font-size: 11px;
+            }}
+            .cap-menu-list input,
+            .cap-menu-list select,
+            .cap-menu-list textarea {{
+                padding: 9px 10px;
+                border-radius: 11px;
+                font-size: 13px;
+            }}
+            .cap-menu-list textarea {{
+                min-height: 84px;
             }}
             .upload-menu-list label {{
                 display:grid;
@@ -3936,8 +3950,15 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 display: inline-flex;
                 justify-content: center;
                 align-items: center;
-                width: 58px;
-                max-width: 58px;
+                width: 32px;
+                min-width: 32px;
+                max-width: 32px;
+                height: 32px;
+                padding: 0;
+                border-radius: 10px;
+                font-size: 14px;
+                font-weight: 800;
+                line-height: 1;
             }}
             .caps-table td.link-col .cap-copy-link.is-copied {{
                 border-color: rgba(34, 197, 94, 0.36) !important;
@@ -5000,9 +5021,9 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         ("current_ftd", "FTD"),
         ("remaining", "Remaining"),
         ("fill", "Fill"),
-        ("promo_code", "Promo Code"),
-        ("agent", "Agent"),
-        ("chat_title", "Chat"),
+        ("promo_code", "Promocode"),
+        ("agent", "TG"),
+        ("chat_title", "Chat Name"),
         ("kpi", "KPI"),
         ("comments", "Comments"),
         ("link", "Link"),
@@ -5032,7 +5053,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         bar_width = max(0, min(100, fill_percent))
         remaining_value = max(0.0, safe_number(row.cap_value) - safe_number(row.current_ftd))
         link_value = safe_text(row.link)
-        link_button = f'<button type="button" class="ghost-btn small-btn cap-copy-link" data-link="{escape(link_value)}">Copy</button>' if link_value else "—"
+        link_button = f'<button type="button" class="ghost-btn small-btn cap-copy-link" data-link="{escape(link_value)}" aria-label="Copy link" title="Copy link">⧉</button>' if link_value else "—"
         state = "Free"
         progress_class = "progress-free"
         if fill_percent >= 100:
@@ -5178,14 +5199,11 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             <label>Cap
                 <input type="number" step="0.01" name="cap_value" value="{escape(form_data.get('cap_value', ''))}" required>
             </label>
-            <label>Current FTD
-                <input type="number" step="0.01" name="current_ftd" value="{escape(form_data.get('current_ftd', '0'))}">
-            </label>
             <div class="caps-grid-2">
-                <label>Promo Code
+                <label>Promocode
                     <input type="text" name="promo_code" value="{escape(form_data.get('promo_code', ''))}">
                 </label>
-                <label>Agent
+                <label>TG
                     <input type="text" name="agent" list="capAgentOptions" value="{escape(form_data.get('agent', ''))}">
                 </label>
             </div>
@@ -5253,11 +5271,6 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         </div>
 
         <div class="panel compact-panel">
-            <div class="controls-line">
-                <div>
-                    <div class="panel-title" style="margin-bottom:4px;">Caps Table</div>
-                </div>
-            </div>
             <div class="table-wrap">
                 <table class="caps-table" id="capsTable">
                     <thead>
@@ -5272,9 +5285,9 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                             <th class="current-col" data-col="current_ftd" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("current_ftd", "FTD")}<span class="resizer"></span></div></th>
                             <th class="remaining-col" data-col="remaining" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("remaining", "Remaining")}<span class="resizer"></span></div></th>
                             <th class="fill-col" data-col="fill" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("fill", "Fill")}<span class="resizer"></span></div></th>
-                            <th class="promo-col" data-col="promo_code" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("promo_code", "Promo Code")}<span class="resizer"></span></div></th>
-                            <th class="agent-col" data-col="agent" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("agent", "Agent")}<span class="resizer"></span></div></th>
-                            <th class="chat-col" data-col="chat_title" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("chat_title", "Chat")}<span class="resizer"></span></div></th>
+                            <th class="promo-col" data-col="promo_code" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("promo_code", "Promocode")}<span class="resizer"></span></div></th>
+                            <th class="agent-col" data-col="agent" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("agent", "TG")}<span class="resizer"></span></div></th>
+                            <th class="chat-col" data-col="chat_title" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("chat_title", "Chat Name")}<span class="resizer"></span></div></th>
                             <th class="kpi-col" data-col="kpi" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("kpi", "KPI")}<span class="resizer"></span></div></th>
                             <th class="comment-col" data-col="comments" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("comments", "Comments")}<span class="resizer"></span></div></th>
                             <th class="link-col" data-col="link" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("link", "Link")}<span class="resizer"></span></div></th>
@@ -5349,7 +5362,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     if (!value) return;
                     try {
                         await navigator.clipboard.writeText(value);
-                        showCopyFeedback(button, 'Copied');
+                        showCopyFeedback(button, '✓');
                     } catch (err) {
                         const temp = document.createElement('textarea');
                         temp.value = value;
@@ -5360,9 +5373,9 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                         temp.select();
                         try {
                             document.execCommand('copy');
-                            showCopyFeedback(button, 'Copied');
+                            showCopyFeedback(button, '✓');
                         } catch (copyErr) {
-                            showCopyFeedback(button, 'Failed');
+                            showCopyFeedback(button, '!');
                         }
                         document.body.removeChild(temp);
                     }
