@@ -4405,6 +4405,30 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 flex: 0 0 auto;
                 align-self: flex-start;
             }}
+            .caps-toolbar-panel .toolbar-actions,
+            .hold-toolbar {{
+                align-items: center;
+                justify-content: space-between;
+                flex-wrap: nowrap;
+            }}
+            .caps-toolbar-panel .panel.compact-panel.filters,
+            .hold-toolbar .panel.compact-panel.filters {{
+                flex: 1 1 auto;
+                min-width: 0;
+            }}
+            .caps-toolbar-panel .caps-toolbar-stats,
+            .hold-toolbar .caps-toolbar-stats {{
+                flex: 0 0 auto;
+                display: flex;
+                align-items: stretch;
+                gap: 10px;
+                flex-wrap: nowrap;
+                justify-content: flex-end;
+            }}
+            .caps-toolbar-panel .upload-menu {{
+                flex: 0 0 auto;
+                align-self: center;
+            }}
             .players-toolbar {{
                 align-items: flex-start;
                 row-gap: 8px;
@@ -4543,6 +4567,19 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 font-size: 20px;
                 font-weight: 900;
                 line-height: 1.05;
+            }}
+            .players-stats-controls .caps-toolbar-stats .mini-stat {{
+                min-width: 92px;
+                padding: 6px 10px;
+                gap: 2px;
+                border-radius: 12px;
+            }}
+            .players-stats-controls .caps-toolbar-stats .mini-stat .name {{
+                font-size: 10px;
+            }}
+            .players-stats-controls .caps-toolbar-stats .mini-stat .value {{
+                font-size: 16px;
+                line-height: 1;
             }}
             .toolbar-actions .column-menu-wrap {{
                 order:3;
@@ -6647,7 +6684,7 @@ def users_page_html(current_user, error_text="", success_text="", form_data=None
     content = f"""
     {message_html}
     <div class="panel compact-panel">
-        <div class="toolbar-actions">
+        <div class="toolbar-actions hold-toolbar">
             {create_panel}
         </div>
     </div>
