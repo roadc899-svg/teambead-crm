@@ -3009,7 +3009,8 @@ def aggregate_partner_totals(rows):
         "qualified_ftd_count": sum(1 for r in rows if bool(getattr(r, "is_qualified_ftd", False))),
         "avg_deposit": (deposits_total / ftd_count) if ftd_count > 0 else 0.0,
         "sumdep2spend": ((deposits_total / cpa_total) * 100) if cpa_total > 0 else 0.0,
-        "bet_to_deposit_ratio": ((bets_total / deposits_total) * 100) if deposits_total > 0 else 0.0,
+        "bet_to_deposit_ratio": (bets_total / deposits_total) if deposits_total > 0 else 0.0,
+        "romi_ratio": ((income_total - cpa_total) / cpa_total) if cpa_total > 0 else 0.0,
     }
 def refresh_cap_current_ftd_from_partner():
     ensure_partner_table()
@@ -8946,10 +8947,11 @@ def partner_report_page_html(
                     <div class="mini-stat"><div class="name">deposit sum</div><div class="value">${totals['deposits']:,.2f}</div></div>
                     <div class="mini-stat"><div class="name">avg deposit</div><div class="value">${totals['avg_deposit']:,.2f}</div></div>
                     <div class="mini-stat"><div class="name">bet sum</div><div class="value">${totals['bets']:,.2f}</div></div>
-                    <div class="mini-stat"><div class="name">bet/deposit</div><div class="value">{totals['bet_to_deposit_ratio']:,.2f}%</div></div>
+                    <div class="mini-stat"><div class="name">bet/deposit</div><div class="value">{totals['bet_to_deposit_ratio']:,.1f}x</div></div>
                     <div class="mini-stat"><div class="name">sumdep2spend</div><div class="value">{totals['sumdep2spend']:,.2f}%</div></div>
                     <div class="mini-stat"><div class="name">ngr</div><div class="value">${totals['income']:,.2f}</div></div>
                     <div class="mini-stat"><div class="name">cpa</div><div class="value">${totals['cpa']:,.2f}</div></div>
+                    <div class="mini-stat"><div class="name">romi</div><div class="value">{totals['romi_ratio']:,.2f}x</div></div>
                 </div>
                 <div class="players-side-tools">
                 <div class="players-icon-stack">
