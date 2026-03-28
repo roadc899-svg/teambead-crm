@@ -9,7 +9,7 @@ import shutil
 import uuid
 import os
 import json
-from urllib.parse import urlencode, quote_plus
+from urllib.parse import urlencode, quote_plus, urlparse
 from html import escape
 import io
 import csv
@@ -19,6 +19,9 @@ import calendar
 import re
 import sys
 import time
+import ssl
+import urllib.request
+import urllib.error
 from functools import lru_cache
 from datetime import datetime, timedelta, date
 
@@ -35,6 +38,10 @@ FINANCE_UPLOAD_PATH = os.path.join(DATA_UPLOAD_DIR, "finance_latest.csv")
 PARTNER_UPLOAD_DIR = os.path.join(DATA_UPLOAD_DIR, "partner_reports")
 PARTNER_IMPORT_API_KEY = os.getenv("TEAMBEAD_PARTNER_IMPORT_KEY", "8hF9sK2LmQpX91zA")
 CELLXPERT_EUR_TO_USD_RATE = float(os.getenv("CELLXPERT_EUR_TO_USD_RATE", "1.08").strip() or "1.08")
+CHATTERFY_API_BASE_URL = "https://api.chatterfy.ai/api"
+CHATTERFY_SIGNIN_URL = "https://new.chatterfy.ai/signin"
+CHATTERFY_PARSER_DEFAULT_START = "2026-03-16"
+CHATTERFY_PARSER_DEFAULT_END = "2026-03-31"
 DEFAULT_USERS = [
     {
         "username": os.getenv("TEAMBEAD_ADMIN1_LOGIN", "Ivan"),
@@ -2810,6 +2817,180 @@ def import_chatterfy_upload_dataframe(df, source_name="", upload_kind="auto"):
     if kind == "ids":
         return {"kind": "ids", "count": import_chatterfy_ids_dataframe(df)}
     return {"kind": "", "count": 0}
+
+
+def extract_chatterfy_bot_id(value):
+    parsed = urlparse(safe_text(value).strip())
+    path = parsed.path or safe_text(value).strip()
+    match = re.search(r"/bots/([0-9a-fA-F-]+)/users/?$", path)
+    return safe_text(match.group(1)) if match else ""
+
+
+def build_chatterfy_users_url(bot_id):
+    clean_bot_id = safe_text(bot_id).strip()
+    if not clean_bot_id:
+        return ""
+    return f"https://new.chatterfy.ai/bots/{clean_bot_id}/users"
+
+
+def chatterfy_tracker_field_map(chat_item):
+    result = {}
+    for item in chat_item.get("tracker_fields") or []:
+        key = safe_text(item.get("key"))
+        if key and key not in result:
+            result[key] = safe_text(item.get("value"))
+    return result
+
+
+def chatterfy_tag_names(chat_item):
+    result = []
+    for item in (chat_item.get("tags") or chat_item.get("bot_tags") or []):
+        if isinstance(item, dict):
+            value = safe_text(item.get("name"))
+        else:
+            value = safe_text(item)
+        if value:
+            result.append(value)
+    return result
+
+
+def chatterfy_chat_started_at(chat_item):
+    return parse_datetime_flexible(chat_item.get("created_at"))
+
+
+def chatterfy_chat_matches_period(chat_item, start_dt, end_dt):
+    started_at = chatterfy_chat_started_at(chat_item)
+    if not started_at:
+        return False
+    return start_dt <= started_at <= end_dt
+
+
+def chatterfy_chat_to_import_row(chat_item, step_map=None):
+    tracker_map = chatterfy_tracker_field_map(chat_item)
+    last_message = chat_item.get("last_message") or {}
+    last_bot_message = chat_item.get("last_bot_message") or {}
+    row = {
+        "Name": safe_text(chat_item.get("name")),
+        "Telegram ID": safe_text(chat_item.get("external_id")),
+        "Username": safe_text(chat_item.get("username")),
+        "Tags": ", ".join(chatterfy_tag_names(chat_item)),
+        "Started": safe_text(chat_item.get("created_at")),
+        "Last User Message": safe_text(last_message.get("created_at") or chat_item.get("updated_at")),
+        "Last Bot Message": safe_text(last_bot_message.get("created_at")),
+        "Status": safe_text(chat_item.get("status")),
+        "Step": safe_text(chat_item.get("current_step_name")) or safe_text(step_map.get(safe_text(chat_item.get("current_step_id")))),
+        "ID": safe_text(chat_item.get("id")),
+        "External ID": safe_text(chat_item.get("id")),
+    }
+    for key, value in tracker_map.items():
+        row[key] = value
+    return row
+
+
+def chatterfy_api_request(path, method="GET", token="", payload=None):
+    url = path if safe_text(path).startswith("http") else f"{CHATTERFY_API_BASE_URL}{path}"
+    body = None
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "Mozilla/5.0",
+    }
+    clean_token = safe_text(token).strip()
+    if clean_token:
+        headers["Authorization"] = clean_token
+    if payload is not None:
+        body = json.dumps(payload).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(url, data=body, headers=headers, method=method.upper())
+
+    contexts = [ssl.create_default_context(), ssl._create_unverified_context()]
+    last_error = None
+    for context in contexts:
+        try:
+            with urllib.request.urlopen(request, timeout=60, context=context) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except Exception as exc:
+            last_error = exc
+    raise last_error
+
+
+def chatterfy_login_and_get_token(email, password):
+    clean_email = safe_text(email).strip()
+    clean_password = safe_text(password)
+    if not clean_email or not clean_password:
+        raise ValueError("Email and password are required.")
+    try:
+        from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
+    except Exception as exc:
+        raise RuntimeError("Playwright is not installed. Run `pip install playwright` and `playwright install chromium`.") from exc
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            try:
+                page.goto(CHATTERFY_SIGNIN_URL, wait_until="networkidle", timeout=30000)
+                page.locator('input[type="email"]').fill(clean_email)
+                page.locator('input[type="password"]').fill(clean_password)
+                page.get_by_role("button", name="Sign In").click()
+                page.wait_for_url("**/bots", timeout=30000)
+                token = safe_text(page.evaluate("localStorage.getItem('token')"))
+                if not token:
+                    raise RuntimeError("Chatterfy token was not found after login.")
+                return token
+            finally:
+                browser.close()
+    except PlaywrightTimeoutError as exc:
+        raise RuntimeError("Chatterfy login timed out. Check credentials or site availability.") from exc
+
+
+def chatterfy_fetch_step_map(bot_id, token):
+    response = chatterfy_api_request(f"/bots/{bot_id}/steps", token=token)
+    steps = response.get("steps") if isinstance(response, dict) else response
+    result = {}
+    for item in steps or []:
+        step_id = safe_text(item.get("id"))
+        if step_id:
+            result[step_id] = safe_text(item.get("name"))
+    return result
+
+
+def chatterfy_fetch_period_dataframe(bot_id, token, date_start, date_end):
+    start_dt = parse_datetime_flexible(date_start)
+    end_dt = parse_datetime_flexible(date_end)
+    if not start_dt or not end_dt:
+        raise ValueError("Choose a valid date range.")
+    start_dt = datetime.combine(start_dt.date(), datetime.min.time())
+    end_dt = datetime.combine(end_dt.date(), datetime.max.time())
+    if end_dt < start_dt:
+        raise ValueError("End date must be greater than or equal to start date.")
+
+    step_map = chatterfy_fetch_step_map(bot_id, token)
+    records = []
+    offset = 0
+    limit = 200
+    while True:
+        response = chatterfy_api_request(
+            f"/bots/{bot_id}/chats/search",
+            method="POST",
+            token=token,
+            payload={
+                "filter": None,
+                "offset": offset,
+                "limit": limit,
+                "full": True,
+                "sort_direction": "desc",
+            },
+        )
+        chats = response.get("chats") or []
+        if not chats:
+            break
+        for item in chats:
+            if chatterfy_chat_matches_period(item, start_dt, end_dt):
+                records.append(chatterfy_chat_to_import_row(item, step_map=step_map))
+        if len(chats) < limit:
+            break
+        offset += limit
+    return pd.DataFrame(records), start_dt, end_dt
 
 
 def get_chatterfy_rows(status="", search="", date_filter="", time_filter="", telegram_id="", pp_player_id="", period_label=""):
@@ -8394,13 +8575,150 @@ def render_dev_page(title, emoji, active_page, current_user=None):
     return page_shell(title, content, active_page=active_page, current_user=current_user)
 
 
+def chatterfy_parser_page_html(
+    current_user,
+    form_data=None,
+    success_text="",
+    error_text="",
+):
+    form_data = form_data or {}
+    default_url = safe_text(form_data.get("bot_url")) or "https://new.chatterfy.ai/bots/e12733c2-7da6-4952-838b-8a318113c2bd/users"
+    default_email = safe_text(form_data.get("email"))
+    default_start = safe_text(form_data.get("date_start")) or CHATTERFY_PARSER_DEFAULT_START
+    default_end = safe_text(form_data.get("date_end")) or CHATTERFY_PARSER_DEFAULT_END
+
+    message_html = ""
+    if success_text:
+        message_html += f'<div class="notice">{escape(success_text)}</div>'
+    if error_text:
+        message_html += f'<div class="notice notice-danger">{escape(error_text)}</div>'
+
+    content = f"""
+    {message_html}
+    <div class="panel compact-panel">
+        <div class="empty-dev" style="padding:0;">
+            <div class="empty-dev-card" style="width:min(100%, 760px); text-align:left;">
+                <div class="big">🧩 Chatterfy Parser</div>
+                <div class="muted" style="margin-top:8px;">
+                    Импортирует только пользователей, у которых <b>Started</b> попадает в выбранный диапазон.
+                    Сейчас по умолчанию выставлен период <b>16.03.2026 - 31.03.2026</b>.
+                </div>
+                <form method="post" action="/chatterfy-parser/run" style="margin-top:18px; display:grid; gap:12px;">
+                    <label>Chatterfy Users URL
+                        <input type="text" name="bot_url" value="{escape(default_url)}" required placeholder="https://new.chatterfy.ai/bots/.../users">
+                    </label>
+                    <label>Email
+                        <input type="text" name="email" value="{escape(default_email)}" required placeholder="example@gmail.com">
+                    </label>
+                    <label>Password
+                        <input type="password" name="password" value="" required placeholder="Chatterfy password">
+                    </label>
+                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
+                        <label>Date From
+                            <input type="date" name="date_start" value="{escape(default_start)}" required>
+                        </label>
+                        <label>Date To
+                            <input type="date" name="date_end" value="{escape(default_end)}" required>
+                        </label>
+                    </div>
+                    <div style="display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap;">
+                        <a href="/chatterfy" class="ghost-btn small-btn">Open Chatterfy</a>
+                        <button type="submit" class="btn small-btn">Fetch And Import</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    """
+    return page_shell("Chatterfy Parser", content, active_page="chatterfyparser", current_user=current_user)
+
+
 @app.get("/chatterfy-parser", response_class=HTMLResponse)
-def chatterfy_parser_page(request: Request):
+def chatterfy_parser_page(
+    request: Request,
+    bot_url: str = Query(default=""),
+    email: str = Query(default=""),
+    date_start: str = Query(default=CHATTERFY_PARSER_DEFAULT_START),
+    date_end: str = Query(default=CHATTERFY_PARSER_DEFAULT_END),
+    message: str = Query(default=""),
+):
     user = get_current_user(request)
     if not user:
         return auth_redirect_response()
     enforce_page_access(user, "chatterfyparser")
-    return render_dev_page("Chatterfy Parser", "🧩", "chatterfyparser", current_user=user)
+    return chatterfy_parser_page_html(
+        user,
+        form_data={
+            "bot_url": bot_url,
+            "email": email,
+            "date_start": date_start,
+            "date_end": date_end,
+        },
+        success_text=message,
+    )
+
+
+@app.post("/chatterfy-parser/run")
+def run_chatterfy_parser(
+    request: Request,
+    bot_url: str = Form(...),
+    email: str = Form(...),
+    password: str = Form(...),
+    date_start: str = Form(default=CHATTERFY_PARSER_DEFAULT_START),
+    date_end: str = Form(default=CHATTERFY_PARSER_DEFAULT_END),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "chatterfyparser")
+
+    form_data = {
+        "bot_url": safe_text(bot_url),
+        "email": safe_text(email),
+        "date_start": safe_text(date_start) or CHATTERFY_PARSER_DEFAULT_START,
+        "date_end": safe_text(date_end) or CHATTERFY_PARSER_DEFAULT_END,
+    }
+    bot_id = extract_chatterfy_bot_id(bot_url)
+    if not bot_id:
+        return HTMLResponse(
+            chatterfy_parser_page_html(user, form_data=form_data, error_text="Invalid Chatterfy Users URL. Expected format: /bots/<bot_id>/users"),
+            status_code=400,
+        )
+
+    try:
+        token = chatterfy_login_and_get_token(email, password)
+        df, start_dt, end_dt = chatterfy_fetch_period_dataframe(bot_id, token, form_data["date_start"], form_data["date_end"])
+        if df.empty:
+            return HTMLResponse(
+                chatterfy_parser_page_html(
+                    user,
+                    form_data=form_data,
+                    error_text=f"No chats found for {start_dt.strftime('%d.%m.%Y')} - {end_dt.strftime('%d.%m.%Y')}.",
+                ),
+                status_code=400,
+            )
+        source_name = f"Chatterfy API {start_dt.strftime('%d.%m.%Y')} - {end_dt.strftime('%d.%m.%Y')}"
+        result = import_chatterfy_upload_dataframe(df, source_name, upload_kind="main")
+        if result["count"] <= 0:
+            return HTMLResponse(
+                chatterfy_parser_page_html(user, form_data=form_data, error_text="Chatterfy data was fetched, but the import format was invalid."),
+                status_code=400,
+            )
+        return RedirectResponse(
+            url=(
+                f"/chatterfy-parser?bot_url={quote_plus(build_chatterfy_users_url(bot_id))}"
+                f"&email={quote_plus(safe_text(email))}"
+                f"&date_start={quote_plus(form_data['date_start'])}"
+                f"&date_end={quote_plus(form_data['date_end'])}"
+                f"&message={quote_plus(f'Imported {result['count']} chats for {start_dt.strftime('%d.%m.%Y')} - {end_dt.strftime('%d.%m.%Y')}')}"
+            ),
+            status_code=303,
+        )
+    except Exception as exc:
+        return HTMLResponse(
+            chatterfy_parser_page_html(user, form_data=form_data, error_text=f"Could not import Chatterfy data: {exc}"),
+            status_code=400,
+        )
 
 
 def chatterfy_page_html(
