@@ -8824,7 +8824,7 @@ def partner_report_page_html(
                         <th>{header_link('deposit_amount', 'Deposit Sum')}</th>
                         <th>{header_link('bet_amount', 'Bet Sum')}</th>
                         <th>{header_link('company_income', 'NGR')}</th>
-                        <th>{header_link('sub_id', 'subid')}</th>
+                        <th>{header_link('sub_id', 'SubID')}</th>
                         <th>{header_link('cpa_amount', 'CPA')}</th>
                     </tr>
                 </thead>
