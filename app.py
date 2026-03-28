@@ -4408,15 +4408,10 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 align-items: flex-start;
                 row-gap: 8px;
             }}
-            .players-toolbar .players-export-link {{
-                order: 0;
-                flex: 0 0 auto;
-                align-self: flex-start;
-            }}
             .players-toolbar .panel.compact-panel.filters {{
                 order: 1;
-                flex: 1 1 700px;
-                min-width: min(700px, 100%);
+                flex: 1 1 900px;
+                min-width: min(900px, 100%);
             }}
             .players-toolbar .caps-toolbar-stats {{
                 order: 3;
@@ -4476,6 +4471,23 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 gap: 8px;
                 justify-content: flex-end;
                 flex: 0 0 auto;
+            }}
+            .players-toolbar .players-export-form {{
+                margin: 0;
+            }}
+            .players-toolbar .players-export-button {{
+                min-width: 58px;
+                min-height: 58px;
+                padding: 0 10px;
+                font-size: 14px;
+                font-weight: 900;
+                transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+            }}
+            .players-toolbar .players-export-button.is-loading {{
+                background: linear-gradient(180deg, #6ddf9b, #2fbf71);
+                border-color: rgba(47, 191, 113, 0.6);
+                color: #0d2a18;
+                box-shadow: 0 10px 24px rgba(47, 191, 113, 0.28);
             }}
             .toolbar-actions .caps-toolbar-stats {{
                 order:2;
@@ -5924,6 +5936,7 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                     if (!item.contains(e.target)) item.removeAttribute('open');
                 }});
                 document.querySelectorAll('.upload-menu').forEach(function(item) {{
+                    if (item.hasAttribute('data-manual-close')) return;
                     if (!item.contains(e.target)) item.removeAttribute('open');
                 }});
             }});
@@ -8908,25 +8921,12 @@ def partner_report_page_html(
         )
         return f'<a href="/partner-report?{qs}">{escape(label)}{arrow}</a>'
 
-    export_qs = build_query_string(
-        source_name=source_name,
-        period_view=period_view,
-        period_label=period_label,
-        cabinet_name=cabinet_name,
-        brand=brand,
-        geo=geo,
-        search=search,
-        sort_by=sort_by,
-        order=order,
-    )
-
     content = f"""
     {message_html}
     {render_active_period_banner(period_label)}
 
     <div class="panel compact-panel">
         <div class="toolbar-actions players-toolbar">
-                <a href="/partner-report/export?{export_qs}" class="ghost-btn small-btn toolbar-square-icon-btn players-export-link" aria-label="Export CSV" title="Export CSV">CSV</a>
                 <div class="panel compact-panel filters">
                     <form method="get" action="/partner-report" class="players-filter-form" data-persist-filters="partner-report">
                         <input type="hidden" name="period_view" value="period">
@@ -8976,7 +8976,7 @@ def partner_report_page_html(
                             </div>
                         </div>
                     </details>
-                    <details class="upload-menu upload-menu-right" style="z-index:90;">
+                    <details class="upload-menu upload-menu-right" style="z-index:90;" id="playersUploadMenu" data-manual-close>
                         <summary class="btn toggle-indicator toolbar-square-trigger" aria-label="Upload players" title="Upload players"></summary>
                         <div class="upload-menu-list" style="width:380px; max-width:min(380px, calc(100vw - 48px));">
                             <form method="post" action="/partner-report/upload" enctype="multipart/form-data">
@@ -8995,6 +8995,18 @@ def partner_report_page_html(
                             </form>
                         </div>
                     </details>
+                    <form method="get" action="/partner-report/export" target="partnerPlayersCsvFrame" class="players-export-form" id="playersExportForm">
+                        <input type="hidden" name="source_name" value="{escape(source_name)}">
+                        <input type="hidden" name="period_view" value="{escape(period_view)}">
+                        <input type="hidden" name="period_label" value="{escape(period_label)}">
+                        <input type="hidden" name="cabinet_name" value="{escape(cabinet_name)}">
+                        <input type="hidden" name="brand" value="{escape(brand)}">
+                        <input type="hidden" name="geo" value="{escape(geo)}">
+                        <input type="hidden" name="search" value="{escape(search)}">
+                        <input type="hidden" name="sort_by" value="{escape(sort_by)}">
+                        <input type="hidden" name="order" value="{escape(order)}">
+                        <button type="submit" class="ghost-btn small-btn toolbar-square-icon-btn players-export-button" id="playersExportButton" aria-label="Export CSV" title="Export CSV">CSV</button>
+                    </form>
                 </div>
                 <form method="get" action="/partner-report" class="players-upload-filter">
                     <input type="hidden" name="period_view" value="period">
@@ -9008,6 +9020,7 @@ def partner_report_page_html(
                 </div>
         </div>
     </div>
+    <iframe name="partnerPlayersCsvFrame" id="partnerPlayersCsvFrame" style="display:none;"></iframe>
 
     <div class="panel compact-panel">
         <div class="table-wrap">
@@ -9046,12 +9059,52 @@ def partner_report_page_html(
         const deleteOverlay = document.getElementById("playersDeleteUploadOverlay");
         const deleteCancel = document.getElementById("playersDeleteUploadCancel");
         const deleteConfirm = document.getElementById("playersDeleteUploadConfirm");
+        const uploadMenu = document.getElementById("playersUploadMenu");
+        const exportForm = document.getElementById("playersExportForm");
+        const exportButton = document.getElementById("playersExportButton");
+        const exportFrame = document.getElementById("partnerPlayersCsvFrame");
         let activeDeleteForm = null;
+        let exportResetTimer = null;
+        const uploadMenuStorageKey = window.teambeadStorageKey("players-upload-menu-open");
         function closeDeleteModal() {{
             if (!deleteOverlay) return;
             deleteOverlay.classList.remove("open");
             deleteOverlay.setAttribute("aria-hidden", "true");
             activeDeleteForm = null;
+        }}
+        function resetExportButton() {{
+            if (!exportButton) return;
+            exportButton.classList.remove("is-loading");
+            exportButton.disabled = false;
+            if (exportResetTimer) {{
+                clearTimeout(exportResetTimer);
+                exportResetTimer = null;
+            }}
+        }}
+        if (exportForm && exportButton) {{
+            exportForm.addEventListener("submit", () => {{
+                exportButton.classList.add("is-loading");
+                exportButton.disabled = true;
+                exportResetTimer = window.setTimeout(resetExportButton, 4000);
+            }});
+        }}
+        if (exportFrame) {{
+            exportFrame.addEventListener("load", () => {{
+                window.setTimeout(resetExportButton, 250);
+            }});
+        }}
+        if (uploadMenu) {{
+            try {{
+                if (localStorage.getItem(uploadMenuStorageKey) === "1") {{
+                    uploadMenu.setAttribute("open", "open");
+                }}
+            }} catch (error) {{}}
+            uploadMenu.addEventListener("toggle", () => {{
+                try {{
+                    if (uploadMenu.open) localStorage.setItem(uploadMenuStorageKey, "1");
+                    else localStorage.removeItem(uploadMenuStorageKey);
+                }} catch (error) {{}}
+            }});
         }}
         document.querySelectorAll(".players-delete-upload-trigger").forEach((button) => {{
             button.addEventListener("click", () => {{
