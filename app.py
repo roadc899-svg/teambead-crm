@@ -2031,6 +2031,7 @@ def read_csv_with_auto_separator(path: str, header="infer"):
 
 def parse_1xbet_partner_dataframe(df, source_name="", cabinet_name="", upload_period_data=None):
     alias_map = build_dataframe_column_alias_map(df)
+    row_number_col = resolve_dataframe_column(alias_map, ["№", "#", "No", "Row", "Row Number"])
     sub_id_col = resolve_dataframe_column(alias_map, ["SubId", "SubID", "Sub Id", "Sub ID"])
     player_id_col = resolve_dataframe_column(alias_map, ["ID игрока", "Player ID", "ID Player", "PlayerId"])
     country_col = resolve_dataframe_column(alias_map, ["Страна", "Country", "Geo"])
@@ -2045,10 +2046,13 @@ def parse_1xbet_partner_dataframe(df, source_name="", cabinet_name="", upload_pe
 
     records = []
     for _, row in df.iterrows():
+        row_number = safe_text(row.get(row_number_col)) if row_number_col else ""
         sub_id = safe_text(row.get(sub_id_col)) if sub_id_col else ""
         player_id = safe_text(row.get(player_id_col)) if player_id_col else ""
         country = normalize_geo_value(row.get(country_col)) if country_col else ""
-        if not sub_id or sub_id in {"SUBID", "ID ПАРТНЕРА", "ПЕРИОД", "ВАЛЮТА", "КАМПАНИЯ", "ТОЛЬКО НОВЫЕ ИГРОКИ", "ТОЛЬКО ИГРОКИ БЕЗ ДЕПОЗИТОВ"}:
+        if sub_id in {"SUBID", "ID ПАРТНЕРА", "ПЕРИОД", "ВАЛЮТА", "КАМПАНИЯ", "ТОЛЬКО НОВЫЕ ИГРОКИ", "ТОЛЬКО ИГРОКИ БЕЗ ДЕПОЗИТОВ"}:
+            continue
+        if row_number in {"№", "#", "NO", "ROW", "ROW NUMBER"}:
             continue
         if not player_id or player_id == "ID игрока":
             continue
@@ -2132,10 +2136,10 @@ def parse_partner_dataframe(df, source_name="", cabinet_name="", partner_platfor
 
 
 def build_partner_row_identity(row):
+    player_key = normalize_id_value(getattr(row, "player_id", "")) or safe_text(getattr(row, "player_id", "")).strip().upper()
     return (
         safe_text(getattr(row, "cabinet_name", "")),
-        safe_text(getattr(row, "sub_id", "")),
-        safe_text(getattr(row, "player_id", "")),
+        player_key,
         safe_text(getattr(row, "registration_date", "")),
     )
 
@@ -2143,9 +2147,8 @@ def build_partner_row_identity(row):
 def build_partner_row_merge_identity(row):
     cabinet_key = safe_text(getattr(row, "cabinet_name", "")).strip().lower()
     player_key = normalize_id_value(getattr(row, "player_id", "")) or safe_text(getattr(row, "player_id", "")).strip().upper()
-    sub_key = safe_text(getattr(row, "sub_id", "")).strip().upper()
     registration_key = safe_text(getattr(row, "registration_date", "")).strip()
-    return (cabinet_key, player_key, sub_key, registration_key)
+    return (cabinet_key, player_key, registration_key)
 
 
 def cleanup_partner_duplicates(period_label="", preferred_source_name="", preferred_cabinet=""):
