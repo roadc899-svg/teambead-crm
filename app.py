@@ -135,6 +135,7 @@ class CapRow(Base):
     baseline = Column(String, default="")
     cap_value = Column(Float, default=0)
     promo_code = Column(String, default="")
+    chat_title = Column(String, default="")
     kpi = Column(String, default="")
     link = Column(String, default="")
     comments = Column(String, default="")
@@ -933,6 +934,11 @@ def normalize_geo_value(value):
         "PERU": "PE",
         "COLOMBIA": "CO",
         "CHILE": "CL",
+        "ECUADOR": "EC",
+        "BOLIVIA": "BO",
+        "PARAGUAY": "PY",
+        "URUGUAY": "UY",
+        "VENEZUELA": "VE",
         "MEXICO": "MX",
         "BRAZIL": "BR",
         "PORTUGAL": "PT",
@@ -949,6 +955,11 @@ def geo_display_name(value):
         "PE": "Peru",
         "CO": "Colombia",
         "CL": "Chile",
+        "EC": "Ecuador",
+        "BO": "Bolivia",
+        "PY": "Paraguay",
+        "UY": "Uruguay",
+        "VE": "Venezuela",
         "MX": "Mexico",
         "BR": "Brazil",
         "PT": "Portugal",
@@ -1117,6 +1128,8 @@ def ensure_caps_table():
                 conn.execute(text("ALTER TABLE cap_rows ADD COLUMN period_label VARCHAR DEFAULT ''"))
                 default_period = get_current_period_label()
                 conn.execute(text("UPDATE cap_rows SET period_label = :period_label WHERE COALESCE(period_label, '') = ''"), {"period_label": default_period})
+            if "chat_title" not in columns:
+                conn.execute(text("ALTER TABLE cap_rows ADD COLUMN chat_title VARCHAR DEFAULT ''"))
     ensure_table_once("cap_rows", [CapRow.__table__], sqlite_migration)
     if not DATABASE_URL.startswith("sqlite"):
         inspector = inspect(engine)
@@ -1126,6 +1139,8 @@ def ensure_caps_table():
             migration_statements.append(text("ALTER TABLE cap_rows ADD COLUMN IF NOT EXISTS cabinet_name VARCHAR DEFAULT ''"))
         if "period_label" not in columns:
             migration_statements.append(text("ALTER TABLE cap_rows ADD COLUMN IF NOT EXISTS period_label VARCHAR DEFAULT ''"))
+        if "chat_title" not in columns:
+            migration_statements.append(text("ALTER TABLE cap_rows ADD COLUMN IF NOT EXISTS chat_title VARCHAR DEFAULT ''"))
         if migration_statements:
             default_period = get_current_period_label()
             with engine.begin() as conn:
@@ -3618,9 +3633,9 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             body.hide-row-colors tbody tr.warn-row,
             body.hide-row-colors tbody tr.bad-row {{ background: transparent !important; }}
             th a {{ color: inherit; text-decoration: none; }}
-            .th-inner {{ display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-right: 10px; font-size: 13px; font-weight: 900; line-height: 1.15; }}
-            th, th a, th span {{ font-size: 13px; font-weight: 900; line-height: 1.15; }}
-            .drag-handle {{ cursor: grab; opacity: 0.75; font-size: 12px; }}
+            .th-inner {{ display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-right: 10px; font-size: 12px; font-weight: 800; line-height: 1.15; }}
+            th, th a, th span {{ font-size: 12px; font-weight: 800; line-height: 1.15; }}
+            .drag-handle {{ cursor: grab; opacity: 0.72; font-size: 11px; }}
             .dragging {{ opacity: 0.45; }}
             .stat-cell-right {{ text-align: right; }}
             .stat-cell-wrap {{ white-space: normal; min-width: 180px; }}
@@ -3864,40 +3879,39 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             }}
             .caps-form textarea {{ min-height: 110px; resize: vertical; }}
             .caps-grid-2 {{ display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:10px; }}
-            .caps-table {{ min-width: 1220px; table-layout: fixed; width: 100%; }}
+            .caps-table {{ min-width: 1000px; table-layout: fixed; width: 100%; }}
             .caps-table th, .caps-table td {{
                 white-space: nowrap;
                 overflow: hidden;
                 text-overflow: ellipsis;
                 vertical-align: middle;
                 line-height: 1.2;
-                padding: 7px 8px;
+                padding: 7px 6px;
                 font-size: 12px;
+                box-sizing: border-box;
             }}
             .caps-table thead th {{
                 font-size: 11px;
-                padding: 7px 8px;
+                padding: 7px 6px;
             }}
             .caps-table tbody tr {{ height: 40px; }}
-            .caps-table .id-col {{ width: 48px; min-width: 48px; }}
             .caps-table .advertiser-col {{ width: 82px; min-width: 82px; }}
             .caps-table .owner-col {{ width: 82px; min-width: 82px; }}
             .caps-table .buyer-col {{ width: 92px; min-width: 92px; }}
-            .caps-table .flow-col {{ width: 148px; min-width: 148px; }}
-            .caps-table .code-col {{ width: 56px; min-width: 56px; }}
-            .caps-table .geo-col {{ width: 58px; min-width: 58px; }}
-            .caps-table .rate-col {{ width: 58px; min-width: 58px; }}
-            .caps-table .baseline-col {{ width: 64px; min-width: 64px; }}
-            .caps-table .cap-col {{ width: 58px; min-width: 58px; }}
-            .caps-table .current-col {{ width: 74px; min-width: 74px; }}
-            .caps-table .remaining-col {{ width: 74px; min-width: 74px; }}
-            .caps-table .fill-col {{ width: 92px; min-width: 92px; }}
-            .caps-table .promo-col {{ width: 82px; min-width: 82px; }}
-            .caps-table .agent-col {{ width: 72px; min-width: 72px; }}
-            .caps-table .kpi-col {{ width: 94px; min-width: 94px; }}
-            .caps-table .comment-col {{ width: 94px; min-width: 94px; }}
-            .caps-table .link-col {{ width: 72px; min-width: 72px; }}
-            .caps-table .action-col {{ width: 82px; min-width: 82px; }}
+            .caps-table .code-col {{ width: 54px; min-width: 54px; }}
+            .caps-table .rate-col {{ width: 56px; min-width: 56px; }}
+            .caps-table .baseline-col {{ width: 62px; min-width: 62px; }}
+            .caps-table .cap-col {{ width: 56px; min-width: 56px; }}
+            .caps-table .current-col {{ width: 72px; min-width: 72px; }}
+            .caps-table .remaining-col {{ width: 72px; min-width: 72px; }}
+            .caps-table .fill-col {{ width: 86px; min-width: 86px; }}
+            .caps-table .promo-col {{ width: 78px; min-width: 78px; }}
+            .caps-table .agent-col {{ width: 70px; min-width: 70px; }}
+            .caps-table .chat-col {{ width: 108px; min-width: 108px; }}
+            .caps-table .kpi-col {{ width: 72px; min-width: 72px; }}
+            .caps-table .comment-col {{ width: 72px; min-width: 72px; }}
+            .caps-table .link-col {{ width: 70px; min-width: 70px; }}
+            .caps-table .action-col {{ width: 76px; min-width: 76px; }}
             .caps-table th .th-inner {{
                 justify-content: flex-start;
                 gap: 6px;
@@ -3914,12 +3928,46 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 font-size: 11px;
                 border-radius: 10px;
             }}
+            .caps-table td.link-col {{
+                text-align: center;
+            }}
+            .caps-table td.link-col .cap-copy-link {{
+                margin: 0 auto;
+                display: inline-flex;
+                justify-content: center;
+                align-items: center;
+                width: 58px;
+                max-width: 58px;
+            }}
+            .caps-table td.link-col .cap-copy-link.is-copied {{
+                border-color: rgba(34, 197, 94, 0.36) !important;
+                background: linear-gradient(90deg, rgba(74, 222, 128, 0.92), rgba(34, 197, 94, 0.9)) !important;
+                color: #ffffff !important;
+            }}
             .progress-shell {{
                 min-width: 0;
                 display:grid;
                 gap:5px;
                 font-size: 12px;
                 line-height: 1.25;
+            }}
+            .fill-meta {{
+                min-width: 0;
+                display: flex;
+                align-items: center;
+                gap: 4px;
+                white-space: nowrap;
+                overflow: hidden;
+            }}
+            .fill-meta strong {{
+                flex: 0 0 auto;
+            }}
+            .fill-status {{
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                font-size: 11px;
+                font-weight: 700;
             }}
             .progress-bar {{ height: 8px; }}
             .confirm-overlay {{
@@ -4928,10 +4976,11 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     form_data = form_data or {}
     selected_period = safe_text(filter_values.get("period_label") or form_data.get("period_label") or get_current_period_label())
     selected_period_view = safe_text(filter_values.get("period_view") or "period")
-    buyers, geos, owners = get_caps_filter_options(period_label=selected_period)
+    sort_by = safe_text(filter_values.get("sort_by") or "cabinet")
+    order = safe_text(filter_values.get("order") or "asc")
+    buyers, _geos, owners = get_caps_filter_options(period_label=selected_period)
     period_options = make_options(build_period_options(), selected_period)
     buyer_options = make_options(buyers, filter_values.get("buyer", ""))
-    geo_options = make_options(geos, filter_values.get("geo", ""))
     owner_options = make_options(owners, filter_values.get("owner_name", ""))
 
     total_cap = sum(safe_number(row.cap_value) for row in rows)
@@ -4941,20 +4990,19 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     active_caps = len([row for row in rows if safe_number(row.cap_value) > 0])
 
     caps_columns = [
-        ("id", "ID"),
         ("advertiser", "Advertiser"),
         ("manager", "Manager"),
         ("cabinet", "Cabinet"),
         ("code", "CODE"),
-        ("geo", "GEO"),
         ("rate", "Rate"),
         ("baseline", "Baseline"),
         ("cap", "Cap"),
-        ("current_ftd", "Current FTD"),
+        ("current_ftd", "FTD"),
         ("remaining", "Remaining"),
         ("fill", "Fill"),
         ("promo_code", "Promo Code"),
         ("agent", "Agent"),
+        ("chat_title", "Chat"),
         ("kpi", "KPI"),
         ("comments", "Comments"),
         ("link", "Link"),
@@ -4965,12 +5013,24 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         for key, label in caps_columns
     )
 
+    def header_link(field, label):
+        return sort_link(
+            label,
+            field,
+            sort_by,
+            order,
+            search=filter_values.get("search", ""),
+            period_view=selected_period_view,
+            period_label=selected_period,
+            buyer=filter_values.get("buyer", ""),
+            owner_name=filter_values.get("owner_name", ""),
+        )
+
     rows_html = ""
     for row in rows:
         fill_percent = cap_fill_percent(row.current_ftd, row.cap_value)
         bar_width = max(0, min(100, fill_percent))
         remaining_value = max(0.0, safe_number(row.cap_value) - safe_number(row.current_ftd))
-        geo_code = normalize_geo_value(row.geo or "")
         link_value = safe_text(row.link)
         link_button = f'<button type="button" class="ghost-btn small-btn cap-copy-link" data-link="{escape(link_value)}">Copy</button>' if link_value else "—"
         state = "Free"
@@ -4983,12 +5043,10 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             progress_class = "progress-filling"
         rows_html += f"""
         <tr>
-            <td class="id-col" data-col="id">{row.id}</td>
             <td class="advertiser-col" data-col="advertiser" title="{escape(row.advertiser or '')}">{escape(row.advertiser or "")}</td>
             <td class="owner-col" data-col="manager" title="{escape(row.owner_name or '')}">{escape(row.owner_name or "")}</td>
             <td class="buyer-col" data-col="cabinet" title="{escape(row.cabinet_name or '')}">{escape(row.cabinet_name or "")}</td>
-            <td class="code-col" data-col="code" title="{escape(row.code or '')}">{escape(row.code or "")}</td>
-            <td class="geo-col" data-col="geo" title="{escape(geo_code)}">{escape(geo_code)}</td>
+            <td class="code-col" data-col="code" title="{escape(normalize_geo_value(row.code or ''))}">{escape(normalize_geo_value(row.code or ""))}</td>
             <td class="rate-col" data-col="rate" title="{escape(row.rate or '')}">{escape(format_plain_number_text(row.rate))}</td>
             <td class="baseline-col" data-col="baseline" title="{escape(row.baseline or '')}">{escape(format_plain_number_text(row.baseline))}</td>
             <td class="cap-col" data-col="cap">{format_int_or_float(row.cap_value)}</td>
@@ -4996,12 +5054,13 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             <td class="remaining-col" data-col="remaining">{format_int_or_float(remaining_value)}</td>
             <td class="fill-col" data-col="fill">
                 <div class="progress-shell {progress_class}">
-                    <div><strong>{fill_percent:.0f}%</strong> · {state}</div>
+                    <div class="fill-meta"><strong>{fill_percent:.0f}%</strong><span class="fill-status">{state}</span></div>
                     <div class="progress-bar"><span style="width:{bar_width}%;"></span></div>
                 </div>
             </td>
             <td class="promo-col" data-col="promo_code" title="{escape(row.promo_code or '')}">{escape(row.promo_code or "")}</td>
             <td class="agent-col" data-col="agent" title="{escape(row.agent or '')}">{escape(row.agent or "")}</td>
+            <td class="chat-col" data-col="chat_title" title="{escape(row.chat_title or '')}">{escape(row.chat_title or "")}</td>
             <td class="kpi-col" data-col="kpi" title="{escape(row.kpi or '')}">{escape(row.kpi or "")}</td>
             <td class="comment-col" data-col="comments" title="{escape(row.comments or '')}">{escape(row.comments or "")}</td>
             <td class="link-col" data-col="link">{link_button}</td>
@@ -5070,11 +5129,6 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         + [row.cabinet_name for row in cap_rows]
         + [row.buyer for row in cap_rows]
     )
-    geo_list = build_datalist(
-        [geo_display_name(geo_code) for row in cabinet_rows for geo_code in split_geo_tokens(row.geo_list)]
-        + [geo_display_name(row.country) for row in partner_rows]
-        + [geo_display_name(row.geo) for row in cap_rows]
-    )
     agent_list = build_datalist([row.agent for row in cap_rows])
 
     current_edit_id = str(form_data.get("edit_id") or "")
@@ -5093,7 +5147,6 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             <datalist id="capAdvertiserOptions">{advertiser_list}</datalist>
             <datalist id="capOwnerOptions">{owner_list}</datalist>
             <datalist id="capCabinetOptions">{cabinet_list}</datalist>
-            <datalist id="capGeoOptions">{geo_list}</datalist>
             <datalist id="capAgentOptions">{agent_list}</datalist>
             <label>Period
                 <select name="period_label" required>{period_options}</select>
@@ -5112,9 +5165,6 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             <div class="caps-grid-2">
                 <label>CODE
                     <input type="text" name="code" value="{escape(form_data.get('code', ''))}">
-                </label>
-                <label>GEO
-                    <input type="text" name="geo" list="capGeoOptions" value="{escape(geo_display_name(form_data.get('geo', '')))}" placeholder="Spain / Peru / Colombia">
                 </label>
             </div>
             <div class="caps-grid-2">
@@ -5139,6 +5189,9 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     <input type="text" name="agent" list="capAgentOptions" value="{escape(form_data.get('agent', ''))}">
                 </label>
             </div>
+            <label>Chat Title
+                <input type="text" name="chat_title" value="{escape(form_data.get('chat_title', ''))}" placeholder="Chat name">
+            </label>
             <label>Link
                 <input type="text" name="link" value="{escape(form_data.get('link', ''))}">
             </label>
@@ -5167,9 +5220,10 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     <form method="get" action="/caps">
                         <label>Period<select name="period_label">{period_options}</select></label>
                         <label>Cabinet<select name="buyer">{buyer_options}</select></label>
-                        <label>Geo<select name="geo">{geo_options}</select></label>
                         <label>Manager<select name="owner_name">{owner_options}</select></label>
                         <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="Search caps"></label>
+                        <input type="hidden" name="sort_by" value="{escape(sort_by)}">
+                        <input type="hidden" name="order" value="{escape(order)}">
                         <button type="submit" class="btn small-btn">Filter</button>
                         <a href="/caps" class="ghost-btn small-btn" data-reset-filters="caps">Reset</a>
                     </form>
@@ -5208,27 +5262,26 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 <table class="caps-table" id="capsTable">
                     <thead>
                         <tr>
-                            <th class="id-col" data-col="id" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>ID<span class="resizer"></span></div></th>
-                            <th class="advertiser-col" data-col="advertiser" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Advertiser<span class="resizer"></span></div></th>
-                            <th class="owner-col" data-col="manager" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Manager<span class="resizer"></span></div></th>
-                            <th class="buyer-col" data-col="cabinet" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Cabinet<span class="resizer"></span></div></th>
-                            <th class="code-col" data-col="code" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>CODE<span class="resizer"></span></div></th>
-                            <th class="geo-col" data-col="geo" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>GEO<span class="resizer"></span></div></th>
-                            <th class="rate-col" data-col="rate" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Rate<span class="resizer"></span></div></th>
-                            <th class="baseline-col" data-col="baseline" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Baseline<span class="resizer"></span></div></th>
-                            <th class="cap-col" data-col="cap" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Cap<span class="resizer"></span></div></th>
-                            <th class="current-col" data-col="current_ftd" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Current FTD<span class="resizer"></span></div></th>
-                            <th class="remaining-col" data-col="remaining" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Remaining<span class="resizer"></span></div></th>
-                            <th class="fill-col" data-col="fill" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Fill<span class="resizer"></span></div></th>
-                            <th class="promo-col" data-col="promo_code" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Promo Code<span class="resizer"></span></div></th>
-                            <th class="agent-col" data-col="agent" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Agent<span class="resizer"></span></div></th>
-                            <th class="kpi-col" data-col="kpi" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>KPI<span class="resizer"></span></div></th>
-                            <th class="comment-col" data-col="comments" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Comments<span class="resizer"></span></div></th>
-                            <th class="link-col" data-col="link" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Link<span class="resizer"></span></div></th>
-                            <th class="action-col" data-col="action" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Action<span class="resizer"></span></div></th>
+                            <th class="advertiser-col" data-col="advertiser" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("advertiser", "Advertiser")}<span class="resizer"></span></div></th>
+                            <th class="owner-col" data-col="manager" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("manager", "Manager")}<span class="resizer"></span></div></th>
+                            <th class="buyer-col" data-col="cabinet" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("cabinet", "Cabinet")}<span class="resizer"></span></div></th>
+                            <th class="code-col" data-col="code" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("code", "CODE")}<span class="resizer"></span></div></th>
+                            <th class="rate-col" data-col="rate" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("rate", "Rate")}<span class="resizer"></span></div></th>
+                            <th class="baseline-col" data-col="baseline" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("baseline", "Baseline")}<span class="resizer"></span></div></th>
+                            <th class="cap-col" data-col="cap" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("cap", "Cap")}<span class="resizer"></span></div></th>
+                            <th class="current-col" data-col="current_ftd" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("current_ftd", "FTD")}<span class="resizer"></span></div></th>
+                            <th class="remaining-col" data-col="remaining" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("remaining", "Remaining")}<span class="resizer"></span></div></th>
+                            <th class="fill-col" data-col="fill" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("fill", "Fill")}<span class="resizer"></span></div></th>
+                            <th class="promo-col" data-col="promo_code" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("promo_code", "Promo Code")}<span class="resizer"></span></div></th>
+                            <th class="agent-col" data-col="agent" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("agent", "Agent")}<span class="resizer"></span></div></th>
+                            <th class="chat-col" data-col="chat_title" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("chat_title", "Chat")}<span class="resizer"></span></div></th>
+                            <th class="kpi-col" data-col="kpi" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("kpi", "KPI")}<span class="resizer"></span></div></th>
+                            <th class="comment-col" data-col="comments" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("comments", "Comments")}<span class="resizer"></span></div></th>
+                            <th class="link-col" data-col="link" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("link", "Link")}<span class="resizer"></span></div></th>
+                            <th class="action-col" data-col="action" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("action", "Action")}<span class="resizer"></span></div></th>
                         </tr>
                     </thead>
-                        <tbody>{rows_html if rows_html else '<tr><td colspan="18">No caps yet</td></tr>'}</tbody>
+                        <tbody>{rows_html if rows_html else '<tr><td colspan="17">No caps yet</td></tr>'}</tbody>
                 </table>
             </div>
         </div>
@@ -5283,8 +5336,10 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 if (!button) return;
                 const original = button.dataset.originalLabel || button.textContent;
                 button.dataset.originalLabel = original;
+                button.classList.add('is-copied');
                 button.textContent = text;
                 setTimeout(function() {
+                    button.classList.remove('is-copied');
                     button.textContent = original;
                 }, 1200);
             }
@@ -5317,9 +5372,9 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         (function initCapsColumns() {
             const table = document.getElementById('capsTable');
             if (!table) return;
-            const ORDER_KEY = window.teambeadStorageKey('capsColumnsOrder');
-            const WIDTH_KEY = window.teambeadStorageKey('capsColumnsWidth');
-            const HIDDEN_KEY = window.teambeadStorageKey('capsColumnsHidden');
+            const ORDER_KEY = window.teambeadStorageKey('capsColumnsOrder:v3');
+            const WIDTH_KEY = window.teambeadStorageKey('capsColumnsWidth:v3');
+            const HIDDEN_KEY = window.teambeadStorageKey('capsColumnsHidden:v3');
 
             function getCurrentOrder() {
                 return Array.from(table.querySelectorAll('thead th[data-col]')).map(th => th.dataset.col);
@@ -5379,7 +5434,6 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     document.querySelectorAll('#capsTable [data-col="' + key + '"]').forEach(el => {
                         el.style.width = width + 'px';
                         el.style.minWidth = width + 'px';
-                        el.style.maxWidth = width + 'px';
                     });
                 });
             }
@@ -5409,7 +5463,6 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     document.querySelectorAll('#capsTable [data-col="' + key + '"]').forEach(el => {
                         el.style.width = newWidth + 'px';
                         el.style.minWidth = newWidth + 'px';
-                        el.style.maxWidth = newWidth + 'px';
                     });
                 });
                 document.addEventListener('mouseup', function() {
@@ -7895,8 +7948,9 @@ def caps_page(
     search: str = Query(default=""),
     period_view: str = Query(default="current"),
     period_label: str = Query(default=""),
+    sort_by: str = Query(default="cabinet"),
+    order: str = Query(default="asc"),
     buyer: str = Query(default=""),
-    geo: str = Query(default=""),
     owner_name: str = Query(default=""),
     edit: str = Query(default=""),
     message: str = Query(default=""),
@@ -7908,15 +7962,48 @@ def caps_page(
     search = safe_text(search)
     period_view = safe_text(period_view) or "current"
     period_label = safe_text(period_label)
+    sort_by = safe_text(sort_by) or "cabinet"
+    order = safe_text(order).lower() or "asc"
     buyer = safe_text(buyer)
-    geo = safe_text(geo)
     owner_name = safe_text(owner_name)
     edit = safe_text(edit)
     message = safe_text(message)
     refresh_cap_current_ftd_from_partner()
     effective_period_label = resolve_period_label(period_view, period_label) or get_current_period_label()
 
-    rows = get_caps_rows(search=search, buyer=buyer, geo=geo, owner_name=owner_name, period_label=effective_period_label)
+    rows = get_caps_rows(search=search, buyer=buyer, geo="", owner_name=owner_name, period_label=effective_period_label)
+    allowed_sort_fields = {
+        "advertiser", "manager", "cabinet", "code", "rate", "baseline",
+        "cap", "current_ftd", "remaining", "fill", "promo_code", "agent", "chat_title", "kpi",
+        "comments", "link", "action",
+    }
+    if sort_by not in allowed_sort_fields:
+        sort_by = "cabinet"
+    reverse = order == "desc"
+
+    def caps_sort_value(item):
+        values = {
+            "advertiser": safe_text(item.advertiser).lower(),
+            "manager": safe_text(item.owner_name).lower(),
+            "cabinet": safe_text(item.cabinet_name).lower(),
+            "code": normalize_geo_value(item.code or ""),
+            "rate": safe_cap_number(item.rate),
+            "baseline": safe_cap_number(item.baseline),
+            "cap": safe_number(item.cap_value),
+            "current_ftd": safe_number(item.current_ftd),
+            "remaining": max(0.0, safe_number(item.cap_value) - safe_number(item.current_ftd)),
+            "fill": cap_fill_percent(item.current_ftd, item.cap_value),
+            "promo_code": safe_text(item.promo_code).lower(),
+            "agent": safe_text(item.agent).lower(),
+            "chat_title": safe_text(item.chat_title).lower(),
+            "kpi": safe_text(item.kpi).lower(),
+            "comments": safe_text(item.comments).lower(),
+            "link": safe_text(item.link).lower(),
+            "action": safe_number(item.id),
+        }
+        return values.get(sort_by, "")
+
+    rows.sort(key=caps_sort_value, reverse=reverse)
     form_data = {}
     if edit:
         db = SessionLocal()
@@ -7938,6 +8025,7 @@ def caps_page(
                     "cap_value": format_int_or_float(item.cap_value),
                     "current_ftd": format_int_or_float(item.current_ftd),
                     "promo_code": item.promo_code or "",
+                    "chat_title": item.chat_title or "",
                     "kpi": item.kpi or "",
                     "link": item.link or "",
                     "comments": item.comments or "",
@@ -7948,7 +8036,7 @@ def caps_page(
     return caps_page_html(
         user,
         rows,
-        filter_values={"search": search, "period_view": period_view, "period_label": effective_period_label, "buyer": buyer, "geo": geo, "owner_name": owner_name},
+        filter_values={"search": search, "period_view": period_view, "period_label": effective_period_label, "sort_by": sort_by, "order": order, "buyer": buyer, "owner_name": owner_name},
         form_data=form_data,
         success_text=message,
     )
@@ -7972,6 +8060,7 @@ def save_cap(
     cap_value: str = Form(...),
     current_ftd: str = Form(default="0"),
     promo_code: str = Form(default=""),
+    chat_title: str = Form(default=""),
     kpi: str = Form(default=""),
     link: str = Form(default=""),
     comments: str = Form(default=""),
@@ -8000,6 +8089,7 @@ def save_cap(
         "cap_value": cap_value,
         "current_ftd": current_ftd,
         "promo_code": promo_code,
+        "chat_title": chat_title,
         "kpi": kpi,
         "link": link,
         "comments": comments,
@@ -8030,6 +8120,7 @@ def save_cap(
         item.cap_value = clean_cap_value
         item.current_ftd = safe_cap_number(current_ftd)
         item.promo_code = safe_text(promo_code)
+        item.chat_title = safe_text(chat_title)
         item.kpi = safe_text(kpi)
         item.link = safe_text(link)
         item.comments = safe_text(comments)
