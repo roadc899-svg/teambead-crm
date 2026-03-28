@@ -1220,17 +1220,18 @@ def get_filter_options():
         db.close()
 
 
-def get_caps_rows(search="", buyer="", geo="", owner_name="", period_label=""):
+def get_caps_rows(search="", buyer="", code="", owner_name="", period_label=""):
     ensure_caps_table()
+    ensure_partner_table()
     db = SessionLocal()
     try:
         query = db.query(CapRow)
         if period_label:
             query = query.filter(CapRow.period_label == period_label)
         if buyer:
-            query = query.filter(CapRow.buyer == buyer)
-        if geo:
-            query = query.filter(CapRow.geo == normalize_geo_value(geo))
+            query = query.filter(CapRow.cabinet_name == buyer)
+        if code:
+            query = query.filter(CapRow.code == normalize_geo_value(code))
         if owner_name:
             query = query.filter(CapRow.owner_name == owner_name)
         if search:
@@ -1238,6 +1239,7 @@ def get_caps_rows(search="", buyer="", geo="", owner_name="", period_label=""):
             query = query.filter(or_(
                 CapRow.advertiser.ilike(search_pattern),
                 CapRow.owner_name.ilike(search_pattern),
+                CapRow.cabinet_name.ilike(search_pattern),
                 CapRow.buyer.ilike(search_pattern),
                 CapRow.flow.ilike(search_pattern),
                 CapRow.code.ilike(search_pattern),
@@ -1246,23 +1248,29 @@ def get_caps_rows(search="", buyer="", geo="", owner_name="", period_label=""):
                 CapRow.comments.ilike(search_pattern),
                 CapRow.agent.ilike(search_pattern),
             ))
-        return query.order_by(CapRow.buyer.asc(), CapRow.geo.asc(), CapRow.id.desc()).all()
+        return query.order_by(CapRow.cabinet_name.asc(), CapRow.code.asc(), CapRow.id.desc()).all()
     finally:
         db.close()
 
 
 def get_caps_filter_options(period_label=""):
     ensure_caps_table()
+    ensure_partner_table()
     db = SessionLocal()
     try:
-        query = db.query(CapRow)
+        query = db.query(PartnerRow)
         if period_label:
-            query = query.filter(CapRow.period_label == period_label)
-        caps = query.all()
-        buyers = sorted({value.buyer for value in caps if value.buyer})
-        geos = sorted({geo_display_name(value.geo) for value in caps if value.geo})
+            query = query.filter(PartnerRow.period_label == period_label)
+        partner_rows = query.all()
+        cabinets = sorted({safe_text(value.cabinet_name) for value in partner_rows if safe_text(value.cabinet_name)})
+
+        owners_query = db.query(CapRow)
+        if period_label:
+            owners_query = owners_query.filter(CapRow.period_label == period_label)
+        caps = owners_query.all()
+        codes = sorted({normalize_geo_value(value.code) for value in caps if value.code})
         owners = sorted({value.owner_name for value in caps if value.owner_name})
-        return buyers, geos, owners
+        return cabinets, codes, owners
     finally:
         db.close()
 
@@ -1918,11 +1926,14 @@ def get_active_cabinet_name_set():
     return set(get_cabinet_names(active_only=True))
 
 
-def get_partner_cabinet_options():
+def get_partner_cabinet_options(period_label=""):
     ensure_partner_table()
     db = SessionLocal()
     try:
-        values = db.query(PartnerRow.cabinet_name).distinct().all()
+        query = db.query(PartnerRow.cabinet_name)
+        if period_label:
+            query = query.filter(PartnerRow.period_label == period_label)
+        values = query.distinct().all()
     finally:
         db.close()
     result = []
@@ -3562,8 +3573,38 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 margin:0;
             }}
             .toolbar-actions .upload-menu {{
-                order:2;
+                order:4;
                 flex: 0 0 auto;
+            }}
+            .toolbar-actions .caps-toolbar-stats {{
+                order:2;
+                flex: 0 1 auto;
+                display: flex;
+                align-items: stretch;
+                gap: 8px;
+                flex-wrap: wrap;
+                justify-content: flex-end;
+            }}
+            .caps-toolbar-stats .mini-stat {{
+                min-width: 108px;
+                padding: 9px 12px;
+                border-radius: 14px;
+                border: 1px solid var(--border);
+                background: linear-gradient(180deg, var(--panel), var(--panel-3));
+                display: grid;
+                gap: 3px;
+            }}
+            .caps-toolbar-stats .mini-stat .name {{
+                font-size: 11px;
+                color: var(--muted);
+                font-weight: 700;
+                text-transform: none;
+                letter-spacing: 0;
+            }}
+            .caps-toolbar-stats .mini-stat .value {{
+                font-size: 22px;
+                font-weight: 900;
+                line-height: 1.05;
             }}
             .toolbar-actions .column-menu-wrap {{
                 order:3;
@@ -4999,17 +5040,15 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     selected_period_view = safe_text(filter_values.get("period_view") or "period")
     sort_by = safe_text(filter_values.get("sort_by") or "cabinet")
     order = safe_text(filter_values.get("order") or "asc")
-    buyers, _geos, owners = get_caps_filter_options(period_label=selected_period)
+    buyers, codes, _owners = get_caps_filter_options(period_label=selected_period)
     period_options = make_options(build_period_options(), selected_period)
     buyer_options = make_options(buyers, filter_values.get("buyer", ""))
-    owner_options = make_options(owners, filter_values.get("owner_name", ""))
+    code_options = make_options(codes, filter_values.get("code", ""))
 
     total_cap = sum(safe_number(row.cap_value) for row in rows)
     total_current = sum(safe_number(row.current_ftd) for row in rows)
     total_remaining = sum(max(0.0, safe_number(row.cap_value) - safe_number(row.current_ftd)) for row in rows)
     fill_avg = cap_fill_percent(total_current, total_cap)
-    active_caps = len([row for row in rows if safe_number(row.cap_value) > 0])
-
     caps_columns = [
         ("advertiser", "Advertiser"),
         ("manager", "Manager"),
@@ -5044,7 +5083,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             period_view=selected_period_view,
             period_label=selected_period,
             buyer=filter_values.get("buyer", ""),
-            owner_name=filter_values.get("owner_name", ""),
+            code=filter_values.get("code", ""),
         )
 
     rows_html = ""
@@ -5145,10 +5184,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         + [row.owner_name for row in cap_rows]
     )
     cabinet_list = build_datalist(
-        [row.name for row in cabinet_rows]
-        + [row.cabinet_name for row in partner_rows]
-        + [row.cabinet_name for row in cap_rows]
-        + [row.buyer for row in cap_rows]
+        [row.cabinet_name for row in partner_rows]
     )
     agent_list = build_datalist([row.agent for row in cap_rows])
 
@@ -5207,7 +5243,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     <input type="text" name="agent" list="capAgentOptions" value="{escape(form_data.get('agent', ''))}">
                 </label>
             </div>
-            <label>Chat Title
+            <label>Chat Name
                 <input type="text" name="chat_title" value="{escape(form_data.get('chat_title', ''))}" placeholder="Chat name">
             </label>
             <label>Link
@@ -5238,13 +5274,19 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     <form method="get" action="/caps">
                         <label>Period<select name="period_label">{period_options}</select></label>
                         <label>Cabinet<select name="buyer">{buyer_options}</select></label>
-                        <label>Manager<select name="owner_name">{owner_options}</select></label>
+                        <label>Code<select name="code">{code_options}</select></label>
                         <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="Search caps"></label>
                         <input type="hidden" name="sort_by" value="{escape(sort_by)}">
                         <input type="hidden" name="order" value="{escape(order)}">
                         <button type="submit" class="btn small-btn">Filter</button>
                         <a href="/caps" class="ghost-btn small-btn" data-reset-filters="caps">Reset</a>
                     </form>
+                </div>
+                <div class="caps-toolbar-stats">
+                    <div class="mini-stat"><div class="name">cap total</div><div class="value">{format_int_or_float(total_cap)}</div></div>
+                    <div class="mini-stat"><div class="name">ftd</div><div class="value">{format_int_or_float(total_current)}</div></div>
+                    <div class="mini-stat"><div class="name">remaining</div><div class="value">{format_int_or_float(total_remaining)}</div></div>
+                    <div class="mini-stat"><div class="name">fill avg</div><div class="value">{fill_avg:.0f}%</div></div>
                 </div>
                 <div class="column-menu-wrap">
                     <button type="button" class="ghost-btn small-btn" onclick="toggleCapsColumnMenu()">Columns</button>
@@ -5257,16 +5299,6 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     </div>
                 </div>
                 {create_panel}
-            </div>
-        </div>
-
-        <div class="panel compact-panel">
-            <div class="stats-grid">
-                <div class="stat-card"><div class="name">Caps</div><div class="value">{active_caps}</div></div>
-                <div class="stat-card"><div class="name">Cap Total</div><div class="value">{format_int_or_float(total_cap)}</div></div>
-                <div class="stat-card"><div class="name">Current FTD</div><div class="value">{format_int_or_float(total_current)}</div></div>
-                <div class="stat-card"><div class="name">Remaining</div><div class="value">{format_int_or_float(total_remaining)}</div></div>
-                <div class="stat-card"><div class="name">Fill Avg</div><div class="value">{fill_avg:.0f}%</div></div>
             </div>
         </div>
 
@@ -6347,7 +6379,7 @@ def chatterfy_page_html(
 
 
 def hold_wager_page_html(current_user, rows, cabinet_name="", period_view="current", period_label="", search="", success_text="", error_text=""):
-    all_cabinets = sorted(set(get_cabinet_names(active_only=True)))
+    all_cabinets = get_partner_cabinet_options(period_label if period_view == "period" else "")
     cabinet_options = make_options(all_cabinets, cabinet_name)
     period_view_options = "".join([
         f'<option value="{value}" {"selected" if period_view == value else ""}>{label}</option>'
@@ -6602,8 +6634,8 @@ def partner_report_page_html(
 ):
     upload_summaries = upload_summaries or []
     all_sources = get_partner_period_options()
-    all_cabinets = sorted(set(get_cabinet_names(active_only=True)))
-    upload_cabinets = get_cabinet_names(active_only=True) or all_cabinets
+    all_cabinets = get_partner_cabinet_options(period_label if period_view == "period" else "")
+    upload_cabinets = get_partner_cabinet_options() or all_cabinets
     all_countries = get_partner_country_options()
     period_view_options = "".join([
         f'<option value="{value}" {"selected" if period_view == value else ""}>{label}</option>'
@@ -7964,7 +7996,7 @@ def caps_page(
     sort_by: str = Query(default="cabinet"),
     order: str = Query(default="asc"),
     buyer: str = Query(default=""),
-    owner_name: str = Query(default=""),
+    code: str = Query(default=""),
     edit: str = Query(default=""),
     message: str = Query(default=""),
 ):
@@ -7978,13 +8010,13 @@ def caps_page(
     sort_by = safe_text(sort_by) or "cabinet"
     order = safe_text(order).lower() or "asc"
     buyer = safe_text(buyer)
-    owner_name = safe_text(owner_name)
+    code = safe_text(code)
     edit = safe_text(edit)
     message = safe_text(message)
     refresh_cap_current_ftd_from_partner()
     effective_period_label = resolve_period_label(period_view, period_label) or get_current_period_label()
 
-    rows = get_caps_rows(search=search, buyer=buyer, geo="", owner_name=owner_name, period_label=effective_period_label)
+    rows = get_caps_rows(search=search, buyer=buyer, code=code, owner_name="", period_label=effective_period_label)
     allowed_sort_fields = {
         "advertiser", "manager", "cabinet", "code", "rate", "baseline",
         "cap", "current_ftd", "remaining", "fill", "promo_code", "agent", "chat_title", "kpi",
@@ -8049,7 +8081,7 @@ def caps_page(
     return caps_page_html(
         user,
         rows,
-        filter_values={"search": search, "period_view": period_view, "period_label": effective_period_label, "sort_by": sort_by, "order": order, "buyer": buyer, "owner_name": owner_name},
+        filter_values={"search": search, "period_view": period_view, "period_label": effective_period_label, "sort_by": sort_by, "order": order, "buyer": buyer, "code": code},
         form_data=form_data,
         success_text=message,
     )
