@@ -1672,6 +1672,22 @@ def ensure_chatterfy_table():
             if "period_label" not in columns:
                 conn.execute(text("ALTER TABLE chatterfy_rows ADD COLUMN period_label VARCHAR DEFAULT ''"))
     ensure_table_once("chatterfy_rows", [ChatterfyRow.__table__], sqlite_migration)
+    if not DATABASE_URL.startswith("sqlite"):
+        inspector = inspect(engine)
+        columns = {item.get("name") for item in inspector.get_columns("chatterfy_rows")}
+        migration_statements = []
+        if "report_date" not in columns:
+            migration_statements.append(text("ALTER TABLE chatterfy_rows ADD COLUMN IF NOT EXISTS report_date VARCHAR DEFAULT ''"))
+        if "period_start" not in columns:
+            migration_statements.append(text("ALTER TABLE chatterfy_rows ADD COLUMN IF NOT EXISTS period_start VARCHAR DEFAULT ''"))
+        if "period_end" not in columns:
+            migration_statements.append(text("ALTER TABLE chatterfy_rows ADD COLUMN IF NOT EXISTS period_end VARCHAR DEFAULT ''"))
+        if "period_label" not in columns:
+            migration_statements.append(text("ALTER TABLE chatterfy_rows ADD COLUMN IF NOT EXISTS period_label VARCHAR DEFAULT ''"))
+        if migration_statements:
+            with engine.begin() as conn:
+                for statement in migration_statements:
+                    conn.execute(statement)
 
 
 def ensure_chatterfy_id_table():
@@ -1865,22 +1881,56 @@ def partner_row_platform(row, cabinet_platform_map=None):
     return normalize_partner_platform(source_name)
 
 
+def normalize_dataframe_header(value):
+    text_value = safe_text(value).strip().lower().replace("\n", " ").replace("\r", " ")
+    text_value = re.sub(r"\s+", " ", text_value)
+    return text_value
+
+
+def build_dataframe_column_alias_map(df):
+    return {
+        normalize_dataframe_header(column): column
+        for column in list(df.columns)
+    }
+
+
+def resolve_dataframe_column(alias_map, aliases):
+    for alias in aliases:
+        resolved = alias_map.get(normalize_dataframe_header(alias))
+        if resolved is not None:
+            return resolved
+    return None
+
+
 def parse_1xbet_partner_dataframe(df, source_name="", cabinet_name=""):
+    alias_map = build_dataframe_column_alias_map(df)
+    sub_id_col = resolve_dataframe_column(alias_map, ["SubId", "SubID", "Sub Id", "Sub ID"])
+    player_id_col = resolve_dataframe_column(alias_map, ["ID игрока", "Player ID", "ID Player", "PlayerId"])
+    country_col = resolve_dataframe_column(alias_map, ["Страна", "Country", "Geo"])
+    deposit_col = resolve_dataframe_column(alias_map, ["Сумма депозитов", "Deposit Sum", "Deposits", "First Time Deposit Amount"])
+    bet_col = resolve_dataframe_column(alias_map, ["Сумма ставок", "Bet Sum", "Betting Sum", "Bets"])
+    income_col = resolve_dataframe_column(alias_map, ["Доход компании (общий)", "NGR", "Income", "Commissions"])
+    cpa_col = resolve_dataframe_column(alias_map, ["CPA"])
+    registration_col = resolve_dataframe_column(alias_map, ["Дата регистрации", "Registration Date", "Reg Date"])
+    hold_col = resolve_dataframe_column(alias_map, ["Hold time", "Hold Time", "Activity Count"])
+    blocked_col = resolve_dataframe_column(alias_map, ["Заблокирован", "Blocked", "Status"])
+
     records = []
     for _, row in df.iterrows():
-        sub_id = safe_text(row.get("SubId"))
-        player_id = safe_text(row.get("ID игрока"))
-        country = normalize_geo_value(row.get("Страна"))
+        sub_id = safe_text(row.get(sub_id_col)) if sub_id_col else ""
+        player_id = safe_text(row.get(player_id_col)) if player_id_col else ""
+        country = normalize_geo_value(row.get(country_col)) if country_col else ""
         if not sub_id or sub_id in {"SUBID", "ID ПАРТНЕРА", "ПЕРИОД", "ВАЛЮТА", "КАМПАНИЯ", "ТОЛЬКО НОВЫЕ ИГРОКИ", "ТОЛЬКО ИГРОКИ БЕЗ ДЕПОЗИТОВ"}:
             continue
         if not player_id or player_id == "ID игрока":
             continue
         if not country or country in {"СТРАНА"}:
             continue
-        deposit_amount = safe_number(row.get("Сумма депозитов"))
-        company_income = safe_number(row.get("Доход компании (общий)"))
-        cpa_amount = safe_number(row.get("CPA"))
-        period_info = get_half_month_period_from_date(row.get("Дата регистрации"))
+        deposit_amount = safe_number(row.get(deposit_col)) if deposit_col else 0.0
+        company_income = safe_number(row.get(income_col)) if income_col else 0.0
+        cpa_amount = safe_number(row.get(cpa_col)) if cpa_col else 0.0
+        registration_value = row.get(registration_col) if registration_col else ""
+        period_info = get_half_month_period_from_date(registration_value)
         records.append(PartnerRow(
             source_name=source_name,
             cabinet_name=safe_text(cabinet_name),
@@ -1890,14 +1940,14 @@ def parse_1xbet_partner_dataframe(df, source_name="", cabinet_name=""):
             period_start=period_info["period_start"],
             period_end=period_info["period_end"],
             period_label=period_info["period_label"],
-            registration_date=safe_text(row.get("Дата регистрации")),
+            registration_date=safe_text(registration_value),
             country=country,
             deposit_amount=deposit_amount,
-            bet_amount=safe_number(row.get("Сумма ставок")),
+            bet_amount=safe_number(row.get(bet_col)) if bet_col else 0.0,
             company_income=company_income,
             cpa_amount=cpa_amount,
-            hold_time=safe_text(row.get("Hold time")),
-            blocked=safe_text(row.get("Заблокирован")),
+            hold_time=safe_text(row.get(hold_col)) if hold_col else "",
+            blocked=safe_text(row.get(blocked_col)) if blocked_col else "",
         ))
     return records
 
@@ -4113,8 +4163,12 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 align-items: flex-start;
             }}
             .players-toolbar .panel.compact-panel.filters {{
+                order: 1;
                 flex: 1 1 760px;
                 min-width: min(760px, 100%);
+            }}
+            .players-toolbar .caps-toolbar-stats {{
+                order: 2;
             }}
             .players-toolbar .players-filter-form {{
                 display: flex;
@@ -4138,9 +4192,13 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 flex: 1 1 190px;
             }}
             .players-toolbar .players-side-tools {{
+                order: 3;
                 display: grid;
                 gap: 8px;
                 align-items: start;
+                justify-items: end;
+                margin-left: auto;
+                flex: 0 0 auto;
             }}
             .players-toolbar .players-upload-filter {{
                 width: 170px;
@@ -4163,6 +4221,7 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 display: flex;
                 gap: 8px;
                 justify-content: flex-end;
+                width: 100%;
             }}
             .toolbar-actions .caps-toolbar-stats {{
                 order:2;
@@ -7849,6 +7908,10 @@ def chatterfy_page_html(
 ):
     status_values = sorted({safe_text(item["row"].status) for item in rows if safe_text(item["row"].status)})
     status_options = make_options(status_values, status)
+    period_view_options = "".join([
+        f'<option value="{value}" {"selected" if period_view == value else ""}>{label}</option>'
+        for value, label in [("all", "All Time"), ("current", "Current Period"), ("period", "Choose Period")]
+    ])
     period_options = make_options(build_period_options(), period_label)
     total_pages = max(1, (int(total_count or 0) + per_page - 1) // per_page)
 
@@ -8615,7 +8678,7 @@ def partner_report_page_html(
                         <th>{header_link('registration_date', 'Registration')}</th>
                         <th>{header_link('player_id', 'ID')}</th>
                         <th>{header_link('deposit_amount', 'Deposit Sum')}</th>
-                        <th>{header_link('bet_amount', 'Betting Sum')}</th>
+                        <th>{header_link('bet_amount', 'Bet Sum')}</th>
                         <th>{header_link('company_income', 'NGR')}</th>
                         <th>{header_link('sub_id', 'subid')}</th>
                         <th>{header_link('cpa_amount', 'CPA')}</th>
