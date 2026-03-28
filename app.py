@@ -256,6 +256,7 @@ class CabinetRow(Base):
     team_name = Column(String, default="")
     manager_name = Column(String, default="")
     manager_contact = Column(String, default="")
+    chat_name = Column(String, default="")
     wallet = Column(String, default="")
     comments = Column(String, default="")
     status = Column(String, default="Active")
@@ -1577,6 +1578,8 @@ def ensure_cabinet_table():
                 conn.execute(text("ALTER TABLE cabinet_rows ADD COLUMN manager_name VARCHAR DEFAULT ''"))
             if "manager_contact" not in columns:
                 conn.execute(text("ALTER TABLE cabinet_rows ADD COLUMN manager_contact VARCHAR DEFAULT ''"))
+            if "chat_name" not in columns:
+                conn.execute(text("ALTER TABLE cabinet_rows ADD COLUMN chat_name VARCHAR DEFAULT ''"))
             if "wallet" not in columns:
                 conn.execute(text("ALTER TABLE cabinet_rows ADD COLUMN wallet VARCHAR DEFAULT ''"))
                 if "wallets" in columns:
@@ -3915,10 +3918,12 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 flex: 1 1 620px;
                 min-width: min(620px, 100%);
                 margin:0;
+                align-self: flex-start;
             }}
             .toolbar-actions .upload-menu {{
                 order:4;
                 flex: 0 0 auto;
+                align-self: flex-start;
             }}
             .toolbar-actions .caps-toolbar-stats {{
                 order:2;
@@ -3928,6 +3933,7 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 gap: 8px;
                 flex-wrap: wrap;
                 justify-content: flex-end;
+                align-self: flex-start;
             }}
             .caps-toolbar-stats .mini-stat {{
                 min-width: 108px;
@@ -5893,7 +5899,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         ("advertiser", "Advertiser"),
         ("manager", "Manager"),
         ("cabinet", "Cabinet"),
-        ("code", "CODE"),
+        ("code", "GEO"),
         ("rate", "Rate"),
         ("baseline", "Baseline"),
         ("cap", "Cap"),
@@ -6164,7 +6170,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 <select name="cabinet_name" id="addCapCabinetSelect" required>{add_cabinet_options}</select>
             </label>
             <div class="caps-grid-2">
-                <label>CODE
+                <label>GEO
                     <input type="text" name="code" value="{escape(add_form_data.get('code', ''))}">
                 </label>
             </div>
@@ -6243,7 +6249,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     <select name="cabinet_name" id="editCapCabinetSelect" required>{edit_cabinet_options}</select>
                 </label>
                 <div class="caps-grid-2">
-                    <label>CODE
+                    <label>GEO
                         <input type="text" name="code" id="editCapCode" value="{escape(edit_form_data.get('code', ''))}">
                     </label>
                 </div>
@@ -6304,7 +6310,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                             <button type="button" class="ghost-btn small-btn period-jump-btn" data-period-jump="1" aria-label="Next period">›</button>
                         </div>
                         <label>Cabinet<select name="buyer">{buyer_options}</select></label>
-                        <label>Code<select name="code">{code_options}</select></label>
+                        <label>GEO<select name="code">{code_options}</select></label>
                         <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="Search caps"></label>
                         <input type="hidden" name="sort_by" value="{escape(sort_by)}">
                         <input type="hidden" name="order" value="{escape(order)}">
@@ -6332,7 +6338,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                             <th class="advertiser-col" data-col="advertiser" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("advertiser", "Advertiser")}<span class="resizer"></span></div></th>
                             <th class="owner-col" data-col="manager" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("manager", "Manager")}<span class="resizer"></span></div></th>
                             <th class="buyer-col" data-col="cabinet" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("cabinet", "Cabinet")}<span class="resizer"></span></div></th>
-                            <th class="code-col" data-col="code" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("code", "CODE")}<span class="resizer"></span></div></th>
+                            <th class="code-col" data-col="code" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("code", "GEO")}<span class="resizer"></span></div></th>
                             <th class="rate-col" data-col="rate" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("rate", "Rate")}<span class="resizer"></span></div></th>
                             <th class="baseline-col" data-col="baseline" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("baseline", "Baseline")}<span class="resizer"></span></div></th>
                             <th class="cap-col" data-col="cap" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("cap", "Cap")}<span class="resizer"></span></div></th>
@@ -6952,7 +6958,6 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
         year=year,
         period_label=effective_period_label if period_view != "all" else "",
     )
-    year_options = make_options(get_finance_year_options(manual_all), year)
     period_view_options = "".join([
         f'<option value="{value}" {"selected" if period_view == value else ""}>{label}</option>'
         for value, label in [("all", "All Time"), ("current", "Current Period"), ("period", "Choose Period")]
@@ -7217,9 +7222,6 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
                     <form method="get" action="/finance" style="justify-content:flex-end;" data-persist-filters="finance">
                         <label>View<select name="period_view">{period_view_options}</select></label>
                         <label>Period<select name="period_label">{period_options}</select></label>
-                        <label>Date From<input type="date" name="date_from" value="{escape(date_from)}"></label>
-                        <label>Date To<input type="date" name="date_to" value="{escape(date_to)}"></label>
-                        <label>Year<select name="year">{year_options}</select></label>
                         <button type="submit" class="btn small-btn">Filter</button>
                         <a href="/finance" class="ghost-btn small-btn" data-reset-filters="finance">Reset</a>
                     </form>
@@ -7902,12 +7904,13 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
             <td>{escape(row.platform or "")}</td>
             <td>{escape(row.name or "")}</td>
             <td style="white-space:normal; min-width:140px;">{escape(row.geo_list or "")}</td>
-            <td style="white-space:normal; min-width:160px;">{escape(row.brands or "")}</td>
+            <td style="white-space:normal; width:120px; min-width:120px; max-width:120px; overflow-wrap:anywhere; word-break:break-word;">{escape(row.brands or "")}</td>
             <td>{escape(row.team_name or "")}</td>
             <td>{escape(row.manager_name or "")}</td>
             <td>{escape(row.manager_contact or "")}</td>
+            <td style="white-space:normal; width:150px; min-width:150px; max-width:150px; overflow-wrap:anywhere; word-break:break-word;">{escape(getattr(row, 'chat_name', '') or "")}</td>
             <td style="white-space:normal; min-width:220px;">{escape(row.wallet or "")}</td>
-            <td style="white-space:normal; min-width:260px;">{escape(row.comments or "")}</td>
+            <td style="white-space:normal; width:160px; min-width:160px; max-width:160px; overflow-wrap:anywhere; word-break:break-word;">{escape(row.comments or "")}</td>
             <td>
                 <div style="display:flex; gap:8px;">
                     <form method="get" action="/cabinets">
@@ -7938,7 +7941,7 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
         <div class="toolbar-actions">
                 <div class="panel compact-panel filters">
                     <form method="get" action="/cabinets" style="justify-content:flex-end;" data-persist-filters="cabinets">
-                        <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="advertiser, platform, cabinet, geo, brands, team"></label>
+                        <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder=""></label>
                         <button type="submit" class="btn small-btn">Filter</button>
                         <a href="/cabinets" class="ghost-btn small-btn" data-reset-filters="cabinets">Reset</a>
                     </form>
@@ -7955,7 +7958,7 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
                             <label>Platform
                                 <input type="text" name="platform" value="{escape(form_data.get('platform', ''))}" placeholder="Example: Facebook / Google / Native">
                             </label>
-                            <label>Cabinet Name
+                            <label>Cabinet
                                 <input type="text" name="name" value="{escape(form_data.get('name', ''))}" required placeholder="Example: 1xBet Main 01">
                             </label>
                             <label>Geo
@@ -7964,7 +7967,7 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
                             <label>Brands
                                 <input type="text" name="brands" value="{escape(form_data.get('brands', ''))}" placeholder="Example: 1xBet, Mostbet">
                             </label>
-                            <label>Team
+                            <label>TG
                                 <input type="text" name="team_name" value="{escape(form_data.get('team_name', ''))}" placeholder="Example: Sales Team / Telegram Team">
                             </label>
                             <label>Manager
@@ -7972,6 +7975,9 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
                             </label>
                             <label>Manager Contact
                                 <input type="text" name="manager_contact" value="{escape(form_data.get('manager_contact', ''))}" placeholder="@manager or phone">
+                            </label>
+                            <label>Chat Name
+                                <input type="text" name="chat_name" value="{escape(form_data.get('chat_name', ''))}" placeholder="Example: 1x Main Chat">
                             </label>
                             <label>Wallet
                                 <textarea name="wallet" placeholder="TRC20 wallet, notes or several wallets">{escape(form_data.get('wallet', ''))}</textarea>
@@ -7991,20 +7997,21 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
             <table style="min-width:1200px;">
                 <thead>
                     <tr>
-                        <th>Advertiser</th>
-                        <th>Platform</th>
-                        <th>Cabinet Name</th>
-                        <th>Geo</th>
-                        <th>Brands</th>
-                        <th>Team</th>
-                        <th>Manager</th>
-                        <th>Manager Contact</th>
-                        <th>Wallet</th>
-                        <th>Comments</th>
-                        <th>Actions</th>
+                        <th style="text-align:center;">Advertiser</th>
+                        <th style="text-align:center;">Platform</th>
+                        <th style="text-align:center;">Cabinet</th>
+                        <th style="text-align:center;">Geo</th>
+                        <th style="width:120px; min-width:120px; max-width:120px; text-align:center;">Brands</th>
+                        <th style="text-align:center;">TG</th>
+                        <th style="text-align:center;">Manager</th>
+                        <th style="text-align:center;">Manager Contact</th>
+                        <th style="width:150px; min-width:150px; max-width:150px; text-align:center;">Chat Name</th>
+                        <th style="text-align:center;">Wallet</th>
+                        <th style="width:160px; min-width:160px; max-width:160px; text-align:center;">Comments</th>
+                        <th style="text-align:center;">Actions</th>
                     </tr>
                 </thead>
-                <tbody>{rows_html if rows_html else '<tr><td colspan="11">No partners yet</td></tr>'}</tbody>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="12">No partners yet</td></tr>'}</tbody>
             </table>
         </div>
     </div>
@@ -8145,7 +8152,7 @@ def partner_report_page_html(
                         <label>Period<select name="period_label">{period_options}</select></label>
                         <label>Cabinet<select name="cabinet_name">{cabinet_options}</select></label>
                         <label>Country<select name="country">{country_options}</select></label>
-                        <label>Search<input type="text" name="search" value="{escape(search)}" placeholder="subid, player, source"></label>
+                        <label>Search<input type="text" name="search" value="{escape(search)}" placeholder=""></label>
                         <button type="submit" class="btn small-btn">Filter</button>
                         <a href="/partner-report" class="ghost-btn small-btn" data-reset-filters="partner-report">Reset</a>
                     </form>
@@ -8167,8 +8174,15 @@ def partner_report_page_html(
                         </form>
                     </div>
                 </details>
+                <div class="caps-toolbar-stats">
+                    <div class="mini-stat"><div class="name">players</div><div class="value">{totals['players']}</div></div>
+                    <div class="mini-stat"><div class="name">ftd</div><div class="value">{totals['ftd_count']}</div></div>
+                    <div class="mini-stat"><div class="name">deposits</div><div class="value">${totals['deposits']:,.2f}</div></div>
+                    <div class="mini-stat"><div class="name">income</div><div class="value">${totals['income']:,.2f}</div></div>
+                    <div class="mini-stat"><div class="name">cpa</div><div class="value">${totals['cpa']:,.2f}</div></div>
+                </div>
                 <details class="upload-menu upload-menu-right" style="z-index:89;">
-                    <summary class="ghost-btn small-btn">Delete Upload</summary>
+                    <summary class="ghost-btn small-btn filter-reset-btn" aria-label="Delete upload" title="Delete upload">🗑</summary>
                     <div class="upload-menu-list" style="width:min(860px, calc(100vw - 48px));">
                         <div class="panel-subtitle">Choose the exact cabinet and period upload you want to remove.</div>
                         <div class="table-wrap" style="margin-top:8px;">
@@ -8191,14 +8205,6 @@ def partner_report_page_html(
                     </div>
                 </details>
         </div>
-    </div>
-
-    <div class="stats-grid" style="grid-template-columns:repeat(5, minmax(120px, 1fr)); margin-bottom:16px;">
-        <div class="stat-card"><div class="name">Players</div><div class="value">{totals['players']}</div></div>
-        <div class="stat-card"><div class="name">FTD</div><div class="value">{totals['ftd_count']}</div></div>
-        <div class="stat-card"><div class="name">Deposits</div><div class="value">${totals['deposits']:,.2f}</div></div>
-        <div class="stat-card"><div class="name">Income</div><div class="value">${totals['income']:,.2f}</div></div>
-        <div class="stat-card"><div class="name">CPA</div><div class="value">${totals['cpa']:,.2f}</div></div>
     </div>
 
     <div class="panel compact-panel">
@@ -9868,6 +9874,7 @@ def cabinets_page(
                     "team_name": item.team_name or "",
                     "manager_name": item.manager_name or "",
                     "manager_contact": item.manager_contact or "",
+                    "chat_name": getattr(item, "chat_name", "") or "",
                     "wallet": item.wallet or "",
                     "comments": item.comments or "",
                     "status": item.status or "Active",
@@ -9895,6 +9902,7 @@ def save_cabinet(
     team_name: str = Form(default=""),
     manager_name: str = Form(default=""),
     manager_contact: str = Form(default=""),
+    chat_name: str = Form(default=""),
     wallet: str = Form(default=""),
     comments: str = Form(default=""),
     status: str = Form(default="Active"),
@@ -9917,6 +9925,7 @@ def save_cabinet(
         "team_name": team_name,
         "manager_name": manager_name,
         "manager_contact": manager_contact,
+        "chat_name": chat_name,
         "wallet": wallet,
         "comments": comments,
     }
@@ -9943,6 +9952,7 @@ def save_cabinet(
         item.team_name = safe_text(team_name)
         item.manager_name = safe_text(manager_name)
         item.manager_contact = safe_text(manager_contact)
+        item.chat_name = safe_text(chat_name)
         item.wallet = safe_text(wallet)
         item.comments = safe_text(comments)
         item.status = safe_text(item.status) or "Active"
