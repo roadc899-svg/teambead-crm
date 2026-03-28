@@ -1087,6 +1087,20 @@ def resolve_period_label(period_view="", period_label=""):
     return ""
 
 
+def get_previous_period_label(period_label=""):
+    clean_label = safe_text(period_label)
+    if not clean_label:
+        return ""
+    options = build_period_options()
+    try:
+        index = options.index(clean_label)
+    except ValueError:
+        return ""
+    if index <= 0:
+        return ""
+    return options[index - 1]
+
+
 def fb_row_period_label(row):
     try:
         start_dt = datetime.strptime(safe_text(row.date_start), "%Y-%m-%d")
@@ -2539,6 +2553,35 @@ def refresh_cap_current_ftd_from_partner():
     ensure_caps_table()
     db = SessionLocal()
     try:
+        current_period_label = get_current_period_label()
+        current_caps_count = db.query(CapRow).filter(CapRow.period_label == current_period_label).count()
+        if current_caps_count == 0:
+            previous_period_label = get_previous_period_label(current_period_label)
+            if previous_period_label:
+                previous_caps = db.query(CapRow).filter(CapRow.period_label == previous_period_label).all()
+                for source_cap in previous_caps:
+                    db.add(CapRow(
+                        advertiser=source_cap.advertiser,
+                        owner_name=source_cap.owner_name,
+                        buyer=source_cap.buyer,
+                        cabinet_name=source_cap.cabinet_name,
+                        flow=source_cap.flow,
+                        code=source_cap.code,
+                        geo=source_cap.geo,
+                        rate=source_cap.rate,
+                        baseline=source_cap.baseline,
+                        cap_value=source_cap.cap_value,
+                        promo_code=source_cap.promo_code,
+                        kpi=source_cap.kpi,
+                        link=source_cap.link,
+                        comments=source_cap.comments,
+                        agent=source_cap.agent,
+                        chat_title=source_cap.chat_title,
+                        period_label=current_period_label,
+                        current_ftd=0,
+                    ))
+                if previous_caps:
+                    db.commit()
         caps = db.query(CapRow).all()
         partner_rows = db.query(PartnerRow).all()
         cabinet_platform_map = get_cabinet_platform_map()
@@ -3006,23 +3049,27 @@ def sidebar_html(active_page, current_user=None):
             </linearGradient>
         </defs>
         <rect x="6" y="6" width="52" height="52" rx="12" fill="url(#financeGrad)"/>
-        <g fill="none" stroke="#ffffff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M19 22h26"/>
-            <path d="M32 16v32"/>
-            <path d="M22 28c1.8-3 5.4-5 10-5s8.2 2 10 5c-1.8 3-5.4 5-10 5s-8.2 2-10 5c1.8 3 5.4 5 10 5s8.2-2 10-5"/>
+        <g fill="none" stroke="#ffffff" stroke-width="3.1" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 19.5h22"/>
+            <path d="M32 18.5v26"/>
+            <ellipse cx="32" cy="27.2" rx="12.5" ry="3.8"/>
+            <path d="M24 33.8c2.8 1.4 5.5 2 8 2s5.2-.6 8-2"/>
         </g>
     </svg>
     '''
     chatterfy_icon = '''
     <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false">
-        <g fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M17 13c4 0 6-5 6-7"/>
-            <path d="M43 13c4 0 6-5 6-7"/>
-            <path d="M14 18c0-6 5-11 11-11h14c11 0 20 9 20 20v8c0 11-9 20-20 20H29l-11 8 3-11c-8-2-14-10-14-19v-5c0-11 9-20 20-20h12"/>
-            <ellipse cx="24" cy="31" rx="3.5" ry="5"/>
-            <ellipse cx="40" cy="31" rx="3.5" ry="5"/>
-            <path d="M27 43c3 3 7 3 10 0"/>
+        <rect x="4" y="4" width="56" height="56" rx="12" fill="#16243f"/>
+        <g fill="none" stroke="#dfe9ff" stroke-width="3.1" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 17.5l2.8-4.6"/>
+            <path d="M42 17.5l2.8-4.6"/>
+            <circle cx="24.8" cy="12.9" r="2.3" fill="#dfe9ff" stroke="none"/>
+            <circle cx="44.8" cy="12.9" r="2.3" fill="#dfe9ff" stroke="none"/>
+            <path d="M20 18h23c10.7 0 17 6.9 17 16.6 0 8.7-5.6 14.8-14.4 16.5l4 7-10.5-6.5H29.5C19 51.6 12 44.1 12 34.6 12 24.4 18.7 18 29 18"/>
         </g>
+        <ellipse cx="25.5" cy="31.5" rx="3.2" ry="4.8" fill="#dfe9ff"/>
+        <ellipse cx="38.8" cy="31.5" rx="3.2" ry="4.8" fill="#dfe9ff"/>
+        <path d="M28.3 42.3c2.2 1.9 4.8 2.4 7.4 0" fill="none" stroke="#dfe9ff" stroke-width="3" stroke-linecap="round"/>
     </svg>
     '''
     items = [
@@ -3088,6 +3135,7 @@ def sidebar_html(active_page, current_user=None):
             <div class="sidebar-bottom-links">{bottom_links}</div>
             <div class="sidebar-user">
                 <div class="user-chip sidebar-user-chip">👤 {escape((current_user or {}).get("display_name", "Гость"))} · {escape(role_label((current_user or {}).get("role", "guest")))}</div>
+                <div class="sidebar-datetime" id="sidebarDateTime">28.03.2026 · 00:00 Kyiv GMT+2</div>
                 <div class="sidebar-mini-actions">
                     <a class="ghost-btn small-btn minimal-btn logout-btn" href="/logout">↩ Log Out</a>
                     <details class="theme-menu">
@@ -3117,6 +3165,17 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
         <link rel="icon" type="image/jpeg" href="/favicon.jpg?v=3">
         <link rel="shortcut icon" href="/favicon.ico?v=3">
         <title>{escape(title)}</title>
+        <script>
+            (function() {{
+                try {{
+                    var key = 'teambead:' + {storage_namespace} + ':theme';
+                    if (localStorage.getItem(key) === 'light') {{
+                        document.documentElement.classList.add('light');
+                    }}
+                }} catch (error) {{}}
+                document.documentElement.classList.add('theme-ready');
+            }})();
+        </script>
         <style>
             :root {{
                 --bg: #07101f;
@@ -3140,7 +3199,7 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 --soft: rgba(56,189,248,0.08);
                 --resize-line: rgba(56,189,248,0.75);
             }}
-            body.light {{
+            html.light {{
                 --bg: #edf4ff;
                 --panel: #ffffff;
                 --panel-2: #f7fbff;
@@ -3164,11 +3223,13 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             }}
             * {{ box-sizing: border-box; }}
             html {{ scroll-behavior: smooth; }}
+            html:not(.theme-ready) body {{ visibility: hidden; }}
             body {{
                 margin: 0;
                 background: radial-gradient(circle at top right, rgba(56,189,248,0.10), transparent 23%), var(--bg);
                 color: var(--text);
                 font-family: "Avenir Next", "Nunito", "Trebuchet MS", "Segoe UI", Arial, sans-serif;
+                color-scheme: light;
             }}
             .app {{ display: flex; min-height: 100vh; }}
             .sidebar {{
@@ -3183,7 +3244,7 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 display:flex;
                 flex-direction:column;
             }}
-            body.light .sidebar {{ background: linear-gradient(180deg, #ffffff, #f3f8ff); }}
+            html.light .sidebar {{ background: linear-gradient(180deg, #ffffff, #f3f8ff); }}
             .sidebar-brand {{
                 display: flex;
                 align-items: center;
@@ -3281,6 +3342,17 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 justify-content:center;
                 font-size:11px;
                 padding:8px 10px;
+            }}
+            .sidebar-datetime {{
+                border: 1px solid var(--border);
+                background: var(--panel-2);
+                border-radius: 14px;
+                padding: 10px 12px;
+                text-align: center;
+                font-size: 12px;
+                font-weight: 800;
+                color: var(--muted);
+                letter-spacing: 0.02em;
             }}
             .sidebar-bottom-links .sidebar-standalone {{
                 margin-bottom: 0;
@@ -3502,7 +3574,7 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 color: #12213d;
                 font-weight: 700;
             }}
-            body.light select option {{
+            html.light select option {{
                 background: #f5f8fc;
                 color: #12213d;
             }}
@@ -4037,6 +4109,35 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .caps-form textarea {{ min-height: 110px; resize: vertical; }}
             .caps-grid-2 {{ display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:10px; }}
             .caps-table {{ min-width: 1000px; table-layout: fixed; width: 100%; }}
+            .caps-table-wrap {{
+                overflow-x: auto;
+                overflow-y: visible;
+            }}
+            .caps-sticky-header {{
+                position: fixed;
+                top: 10px;
+                left: 0;
+                z-index: 70;
+                display: none;
+                pointer-events: none;
+            }}
+            .caps-sticky-header.open {{
+                display: block;
+            }}
+            .caps-sticky-header .table-wrap {{
+                overflow: hidden;
+                border-radius: 16px 16px 0 0;
+                box-shadow: var(--shadow);
+            }}
+            .caps-sticky-header table {{
+                min-width: 0;
+                margin: 0;
+            }}
+            .caps-sticky-header th {{
+                position: static !important;
+                top: auto !important;
+                box-shadow: none !important;
+            }}
             .caps-table th, .caps-table td {{
                 white-space: nowrap;
                 overflow: hidden;
@@ -4203,13 +4304,13 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 background: linear-gradient(90deg, var(--accent3), var(--accent1));
             }}
             .progress-shell.progress-free {{
-                color: #7f8da6;
+                color: #4e9b72;
             }}
             .progress-shell.progress-free .progress-bar {{
-                background: rgba(148, 163, 184, 0.12);
+                background: rgba(34, 197, 94, 0.12);
             }}
             .progress-shell.progress-free .progress-bar > span {{
-                background: linear-gradient(90deg, #a8b5c7, #ccd5e2);
+                background: linear-gradient(90deg, #9fe3b7, #ccefd8);
             }}
             .progress-shell.progress-filling {{
                 color: #b78a1b;
@@ -4333,13 +4434,52 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 return 'teambead:' + window.teambeadStorageNamespace + ':' + base;
             }};
             function setTheme(mode) {{
-                if (mode === 'light') document.body.classList.add('light');
-                else document.body.classList.remove('light');
+                if (mode === 'light') {{
+                    document.documentElement.classList.add('light');
+                    document.body.classList.add('light');
+                }} else {{
+                    document.documentElement.classList.remove('light');
+                    document.body.classList.remove('light');
+                }}
                 localStorage.setItem(window.teambeadStorageKey('theme'), mode === 'light' ? 'light' : 'dark');
+                document.documentElement.classList.add('theme-ready');
             }}
             (function initTheme() {{
                 const saved = localStorage.getItem(window.teambeadStorageKey('theme'));
-                if (saved === 'light') document.body.classList.add('light');
+                if (saved === 'light') {{
+                    document.documentElement.classList.add('light');
+                    document.body.classList.add('light');
+                }} else {{
+                    document.documentElement.classList.remove('light');
+                    document.body.classList.remove('light');
+                }}
+                document.documentElement.classList.add('theme-ready');
+            }})();
+            (function initSidebarDateTime() {{
+                const target = document.getElementById('sidebarDateTime');
+                if (!target) return;
+                function render() {{
+                    try {{
+                        const now = new Date();
+                        const parts = new Intl.DateTimeFormat('uk-UA', {{
+                            timeZone: 'Europe/Kiev',
+                            day: '2-digit',
+                            month: '2-digit',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            hour12: false,
+                        }}).formatToParts(now);
+                        const data = Object.fromEntries(parts.filter(function(part) {{
+                            return part.type !== 'literal';
+                        }}).map(function(part) {{
+                            return [part.type, part.value];
+                        }}));
+                        target.textContent = data.day + '.' + data.month + '.' + data.year + ' · ' + data.hour + ':' + data.minute + ' Kyiv GMT+2';
+                    }} catch (error) {{}}
+                }}
+                render();
+                setInterval(render, 30000);
             }})();
             (function initPersistentFilters() {{
                 function getFormKey(form) {{
@@ -5298,7 +5438,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         return "".join(f'<option value="{escape(value)}"></option>' for value in unique)
 
     def build_select_options(options, selected_value, placeholder="Choose"):
-        html = f'<option value="">{escape(placeholder)}</option>'
+        html = '<option value=""></option>'
         seen = set()
         for item in options:
             value = safe_text(item).strip()
@@ -5550,11 +5690,13 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     {message_html}
     {render_active_period_banner(selected_period)}
     {edit_panel}
+    <div class="caps-sticky-header" id="capsStickyHeader" aria-hidden="true"></div>
     <div>
         <div class="panel compact-panel">
             <div class="toolbar-actions">
                 <div class="panel compact-panel filters">
                     <form method="get" action="/caps">
+                        <input type="hidden" name="period_view" value="period">
                         <label>Period<select name="period_label">{period_options}</select></label>
                         <label>Cabinet<select name="buyer">{buyer_options}</select></label>
                         <label>Code<select name="code">{code_options}</select></label>
@@ -5576,7 +5718,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         </div>
 
         <div class="panel compact-panel">
-            <div class="table-wrap">
+            <div class="table-wrap caps-table-wrap">
                 <table class="caps-table" id="capsTable">
                     <thead>
                         <tr>
@@ -5722,7 +5864,8 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 select.innerHTML = '';
                 const emptyOption = document.createElement('option');
                 emptyOption.value = '';
-                emptyOption.textContent = placeholder;
+                emptyOption.textContent = '';
+                emptyOption.selected = !cleanSelected;
                 select.appendChild(emptyOption);
                 values.forEach(function(value) {
                     const option = document.createElement('option');
@@ -5854,6 +5997,84 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             document.addEventListener('keydown', function(event) {
                 if (event.key === 'Escape' && drawer.classList.contains('open')) closeDrawer();
             });
+        })();
+        (function initCapsStickyHeader() {
+            const wrap = document.querySelector('.caps-table-wrap');
+            const table = document.getElementById('capsTable');
+            const thead = table ? table.querySelector('thead') : null;
+            const stickyHost = document.getElementById('capsStickyHeader');
+            if (!wrap || !table || !thead || !stickyHost) return;
+
+            let stickyTable = null;
+            let stickyHeadCells = [];
+
+            function buildStickyHeader() {
+                stickyHost.innerHTML = '';
+                const shell = document.createElement('div');
+                shell.className = 'table-wrap';
+                stickyTable = document.createElement('table');
+                stickyTable.className = table.className;
+                const clonedHead = thead.cloneNode(true);
+                stickyTable.appendChild(clonedHead);
+                shell.appendChild(stickyTable);
+                stickyHost.appendChild(shell);
+                stickyHeadCells = Array.from(clonedHead.querySelectorAll('th'));
+                stickyHeadCells.forEach(function(cell) {
+                    cell.removeAttribute('draggable');
+                    const resizer = cell.querySelector('.resizer');
+                    if (resizer) resizer.remove();
+                });
+            }
+
+            function syncStickyHeader() {
+                if (!stickyTable || stickyHeadCells.length !== thead.querySelectorAll('th').length) {
+                    buildStickyHeader();
+                }
+                const sourceCells = Array.from(thead.querySelectorAll('th'));
+                const wrapRect = wrap.getBoundingClientRect();
+                stickyHost.style.left = wrapRect.left + 'px';
+                stickyHost.style.width = wrapRect.width + 'px';
+                stickyTable.style.width = table.getBoundingClientRect().width + 'px';
+                stickyTable.style.transform = 'translateX(' + (-wrap.scrollLeft) + 'px)';
+                sourceCells.forEach(function(cell, index) {
+                    const width = Math.round(cell.getBoundingClientRect().width);
+                    const clone = stickyHeadCells[index];
+                    if (!clone) return;
+                    clone.style.width = width + 'px';
+                    clone.style.minWidth = width + 'px';
+                    clone.style.maxWidth = width + 'px';
+                });
+            }
+
+            function updateStickyVisibility() {
+                const tableRect = table.getBoundingClientRect();
+                const headRect = thead.getBoundingClientRect();
+                const shouldShow = headRect.top < 10 && tableRect.bottom > 90;
+                stickyHost.classList.toggle('open', shouldShow);
+                if (shouldShow) syncStickyHeader();
+            }
+
+            buildStickyHeader();
+            syncStickyHeader();
+            updateStickyVisibility();
+
+            wrap.addEventListener('scroll', function() {
+                if (stickyHost.classList.contains('open')) syncStickyHeader();
+            }, { passive: true });
+            window.addEventListener('scroll', updateStickyVisibility, { passive: true });
+            window.addEventListener('resize', function() {
+                syncStickyHeader();
+                updateStickyVisibility();
+            });
+
+            if (window.ResizeObserver) {
+                const observer = new ResizeObserver(function() {
+                    syncStickyHeader();
+                    updateStickyVisibility();
+                });
+                observer.observe(table);
+                observer.observe(wrap);
+            }
         })();
         (function initCapsColumns() {
             const table = document.getElementById('capsTable');
