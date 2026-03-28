@@ -923,6 +923,25 @@ def safe_cap_number(value):
         return 0.0
 
 
+def split_list_tokens(value):
+    raw = safe_text(value)
+    if not raw:
+        return []
+    parts = re.split(r"[,;\n]+", raw)
+    result = []
+    seen = set()
+    for part in parts:
+        item = safe_text(part)
+        if not item:
+            continue
+        key = item.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return result
+
+
 def normalize_geo_value(value):
     raw = safe_text(value)
     if not raw:
@@ -4541,7 +4560,7 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .partners-toolbar {{
                 display: flex;
                 gap: 12px;
-                align-items: stretch;
+                align-items: flex-start;
                 flex-wrap: wrap;
                 margin-bottom: 14px;
             }}
@@ -4553,13 +4572,21 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             }}
             .partners-toolbar .upload-menu {{
                 flex: 0 0 auto;
-                align-self: stretch;
+                align-self: flex-start;
                 display: flex;
-                align-items: stretch;
+                align-items: flex-start;
             }}
             .partners-toolbar .upload-menu > summary.toggle-indicator {{
-                height: 100%;
-                min-height: 58px;
+                width: 58px !important;
+                min-width: 58px !important;
+                max-width: 58px !important;
+                height: 58px !important;
+                min-height: 58px !important;
+                padding: 0 !important;
+            }}
+            .caps-toolbar-panel {{
+                padding-top: 12px;
+                padding-bottom: 8px;
             }}
             .progress-shell {{
                 min-width: 0;
@@ -6042,10 +6069,10 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     total_remaining = sum(max(0.0, safe_number(row.cap_value) - safe_number(row.current_ftd)) for row in rows)
     fill_avg = cap_fill_percent(total_current, total_cap)
     caps_columns = [
-        ("advertiser", "Brand"),
+        ("advertiser", "Brands"),
         ("manager", "Manager"),
         ("cabinet", "Cabinet"),
-        ("code", "GEO"),
+        ("code", "Geo"),
         ("rate", "Rate"),
         ("baseline", "Baseline"),
         ("cap", "Cap"),
@@ -6159,7 +6186,6 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     db = SessionLocal()
     try:
         cabinet_rows = db.query(CabinetRow).order_by(CabinetRow.name.asc(), CabinetRow.id.asc()).all()
-        partner_rows = db.query(PartnerRow).order_by(PartnerRow.cabinet_name.asc(), PartnerRow.id.desc()).all()
         cap_rows = db.query(CapRow).order_by(CapRow.id.desc()).all()
     finally:
         db.close()
@@ -6194,26 +6220,27 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         return html
 
     cabinet_catalog = []
-    seen_cabinet_names = set()
+    seen_catalog_rows = set()
     for row in cabinet_rows:
         cabinet_name_value = safe_text(row.name).strip()
-        brand_value = safe_text(row.brands).strip()
         manager_value = safe_text(row.manager_name).strip()
-        if not cabinet_name_value or not brand_value or not manager_value:
+        brand_values = split_list_tokens(getattr(row, "brands", ""))
+        if not cabinet_name_value or not brand_values or not manager_value:
             continue
-        cabinet_key = cabinet_name_value.lower()
-        if cabinet_key in seen_cabinet_names:
-            continue
-        seen_cabinet_names.add(cabinet_key)
-        cabinet_catalog.append({
-            "cabinet": cabinet_name_value,
-            "advertiser": brand_value,
-            "manager": manager_value,
-        })
+        for brand_value in brand_values:
+            row_key = (cabinet_name_value.lower(), brand_value.lower(), manager_value.lower())
+            if row_key in seen_catalog_rows:
+                continue
+            seen_catalog_rows.add(row_key)
+            cabinet_catalog.append({
+                "cabinet": cabinet_name_value,
+                "advertiser": brand_value,
+                "manager": manager_value,
+            })
     advertiser_select_options = build_select_options(
         sorted({item["advertiser"] for item in cabinet_catalog}, key=lambda value: value.lower()),
         form_data.get("advertiser", ""),
-        "Brand",
+        "Brands",
     )
     manager_select_options = build_select_options(
         sorted({item["manager"] for item in cabinet_catalog}, key=lambda value: value.lower()),
@@ -6236,7 +6263,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     add_advertiser_options = build_select_options(
         sorted({item["advertiser"] for item in cabinet_catalog}, key=lambda value: value.lower()),
         add_form_data.get("advertiser", ""),
-        "Brand",
+        "Brands",
     )
     add_manager_options = build_select_options(
         sorted({item["manager"] for item in cabinet_catalog}, key=lambda value: value.lower()),
@@ -6251,7 +6278,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     edit_advertiser_options = build_select_options(
         sorted({item["advertiser"] for item in cabinet_catalog}, key=lambda value: value.lower()),
         edit_form_data.get("advertiser", ""),
-        "Brand",
+        "Brands",
     )
     edit_manager_options = build_select_options(
         sorted({item["manager"] for item in cabinet_catalog}, key=lambda value: value.lower()),
@@ -6288,7 +6315,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 <button type="button" class="ghost-btn small-btn period-jump-btn" data-period-jump="1" aria-label="Next period">›</button>
             </div>
             <div class="caps-grid-2">
-                <label>Brand
+                <label>Brands
                     <select name="advertiser" id="addCapAdvertiserSelect" required>{add_advertiser_options}</select>
                 </label>
                 <label>Manager
@@ -6299,7 +6326,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 <select name="cabinet_name" id="addCapCabinetSelect" required>{add_cabinet_options}</select>
             </label>
             <div class="caps-grid-2">
-                <label>GEO
+                <label>Geo
                     <input type="text" name="code" value="{escape(add_form_data.get('code', ''))}">
                 </label>
             </div>
@@ -6364,7 +6391,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     <button type="button" class="ghost-btn small-btn period-jump-btn" data-period-jump="1" aria-label="Next period">›</button>
                 </div>
                 <div class="caps-grid-2">
-                    <label>Brand
+                    <label>Brands
                         <select name="advertiser" id="editCapAdvertiserSelect" required>{edit_advertiser_options}</select>
                     </label>
                     <label>Manager
@@ -6375,7 +6402,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     <select name="cabinet_name" id="editCapCabinetSelect" required>{edit_cabinet_options}</select>
                 </label>
                 <div class="caps-grid-2">
-                    <label>GEO
+                    <label>Geo
                         <input type="text" name="code" id="editCapCode" value="{escape(edit_form_data.get('code', ''))}">
                     </label>
                 </div>
@@ -6422,7 +6449,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     {edit_panel}
     <div class="caps-sticky-header" id="capsStickyHeader" aria-hidden="true"></div>
     <div>
-        <div class="panel compact-panel">
+        <div class="panel compact-panel caps-toolbar-panel">
             <div class="toolbar-actions">
                 <div class="panel compact-panel filters">
                     <form method="get" action="/caps" id="capsFilterForm">
@@ -6433,7 +6460,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                             <button type="button" class="ghost-btn small-btn period-jump-btn" data-period-jump="1" aria-label="Next period">›</button>
                         </div>
                         <label>Cabinet<select name="buyer">{buyer_options}</select></label>
-                        <label>GEO<select name="code">{code_options}</select></label>
+                        <label>Geo<select name="code">{code_options}</select></label>
                         <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="Search caps"></label>
                         <input type="hidden" name="sort_by" value="{escape(sort_by)}">
                         <input type="hidden" name="order" value="{escape(order)}">
@@ -6458,10 +6485,10 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 <table class="caps-table" id="capsTable">
                     <thead>
                         <tr>
-                            <th class="advertiser-col" data-col="advertiser" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("advertiser", "Brand")}<span class="resizer"></span></div></th>
+                            <th class="advertiser-col" data-col="advertiser" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("advertiser", "Brands")}<span class="resizer"></span></div></th>
                             <th class="owner-col" data-col="manager" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("manager", "Manager")}<span class="resizer"></span></div></th>
                             <th class="buyer-col" data-col="cabinet" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("cabinet", "Cabinet")}<span class="resizer"></span></div></th>
-                            <th class="code-col" data-col="code" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("code", "GEO")}<span class="resizer"></span></div></th>
+                            <th class="code-col" data-col="code" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("code", "Geo")}<span class="resizer"></span></div></th>
                             <th class="rate-col" data-col="rate" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("rate", "Rate")}<span class="resizer"></span></div></th>
                             <th class="baseline-col" data-col="baseline" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("baseline", "Baseline")}<span class="resizer"></span></div></th>
                             <th class="cap-col" data-col="cap" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("cap", "Cap")}<span class="resizer"></span></div></th>
@@ -9766,9 +9793,9 @@ def save_cap(
                 period_label=clean_period_label,
             )
             return HTMLResponse(caps_page_html(user, rows, filter_values=current_filter_values, form_data=form_data, error_text="Cabinet must exist in Cabinets list."), status_code=400)
-        expected_brand = safe_text(cabinet_item.brands)
+        allowed_brands = split_list_tokens(getattr(cabinet_item, "brands", ""))
         expected_manager = safe_text(cabinet_item.manager_name)
-        if not expected_brand or not expected_manager:
+        if not allowed_brands or not expected_manager:
             rows = get_caps_rows(
                 search=current_filter_values["search"],
                 buyer=current_filter_values["buyer"],
@@ -9777,7 +9804,7 @@ def save_cap(
                 period_label=clean_period_label,
             )
             return HTMLResponse(caps_page_html(user, rows, filter_values=current_filter_values, form_data=form_data, error_text="Fill brand and manager in Cabinets first."), status_code=400)
-        if clean_advertiser != expected_brand or clean_owner_name != expected_manager:
+        if clean_advertiser not in allowed_brands or clean_owner_name != expected_manager:
             rows = get_caps_rows(
                 search=current_filter_values["search"],
                 buyer=current_filter_values["buyer"],
@@ -9792,7 +9819,7 @@ def save_cap(
             item = CapRow()
             db.add(item)
 
-        item.advertiser = expected_brand
+        item.advertiser = clean_advertiser
         item.owner_name = expected_manager
         item.period_label = clean_period_label
         item.buyer = clean_buyer
