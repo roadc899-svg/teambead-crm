@@ -3760,14 +3760,26 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 min-width: 200px !important;
             }}
             .filter-actions-stack {{
-                display: grid;
+                display: flex;
                 gap: 8px;
                 align-self: end;
+                align-items: center;
             }}
             .filter-actions-stack .btn,
             .filter-actions-stack .ghost-btn {{
                 width: 104px;
                 min-width: 104px;
+            }}
+            .filter-actions-stack .filter-reset-btn {{
+                width: 38px !important;
+                min-width: 38px !important;
+                max-width: 38px !important;
+                height: 38px !important;
+                min-height: 38px !important;
+                padding: 0 !important;
+                border-radius: 10px;
+                font-size: 18px !important;
+                line-height: 1 !important;
             }}
             .panel.compact-panel.filters input,
             .panel.compact-panel.filters select {{
@@ -5756,7 +5768,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                         <input type="hidden" name="order" value="{escape(order)}">
                         <div class="filter-actions-stack">
                             <button type="submit" class="btn small-btn">Filter</button>
-                            <a href="/caps" class="ghost-btn small-btn" data-reset-filters="caps">Reset</a>
+                            <a href="/caps" class="ghost-btn small-btn filter-reset-btn" data-reset-filters="caps" aria-label="Reset filters" title="Reset filters">×</a>
                         </div>
                     </form>
                 </div>
@@ -5938,42 +5950,58 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 const cabinetSelect = document.getElementById(prefix + 'CabinetSelect');
                 if (!advertiserSelect || !managerSelect || !cabinetSelect) return null;
 
+                function filterRecords(filters) {
+                    return records.filter(function(item) {
+                        return (!filters.advertiser || item.advertiser === filters.advertiser)
+                            && (!filters.manager || item.manager === filters.manager)
+                            && (!filters.cabinet || item.cabinet === filters.cabinet);
+                    });
+                }
+
                 function refresh(changedField) {
-                    const selectedAdvertiser = advertiserSelect.value;
-                    const selectedManager = managerSelect.value;
-                    const selectedCabinet = cabinetSelect.value;
+                    let advertiser = advertiserSelect.value;
+                    let manager = managerSelect.value;
+                    let cabinet = cabinetSelect.value;
 
-                    const advertiserScoped = records.filter(function(item) {
-                        return (!selectedManager || item.manager === selectedManager) && (!selectedCabinet || item.cabinet === selectedCabinet);
-                    });
-                    const managerScoped = records.filter(function(item) {
-                        return (!selectedAdvertiser || item.advertiser === selectedAdvertiser) && (!selectedCabinet || item.cabinet === selectedCabinet);
-                    });
-                    const cabinetScoped = records.filter(function(item) {
-                        return (!selectedAdvertiser || item.advertiser === selectedAdvertiser) && (!selectedManager || item.manager === selectedManager);
-                    });
-
-                    fillOptions(advertiserSelect, uniqueValues(advertiserScoped, 'advertiser'), 'Advertiser', selectedAdvertiser);
-                    fillOptions(managerSelect, uniqueValues(managerScoped, 'manager'), 'Manager', selectedManager);
-                    fillOptions(cabinetSelect, uniqueValues(cabinetScoped, 'cabinet'), 'Cabinet', selectedCabinet);
-
-                    if (changedField === 'cabinet' && cabinetSelect.value) {
-                        const match = records.find(function(item) { return item.cabinet === cabinetSelect.value; });
-                        if (match) {
-                            advertiserSelect.value = match.advertiser;
-                            managerSelect.value = match.manager;
-                        }
-                    } else {
-                        const filtered = records.filter(function(item) {
-                            return (!advertiserSelect.value || item.advertiser === advertiserSelect.value)
-                                && (!managerSelect.value || item.manager === managerSelect.value)
-                                && (!cabinetSelect.value || item.cabinet === cabinetSelect.value);
+                    if (changedField === 'cabinet') {
+                        const cabinetMatch = records.find(function(item) {
+                            return item.cabinet === cabinet;
                         });
-                        if (filtered.length === 1) {
-                            advertiserSelect.value = filtered[0].advertiser;
-                            managerSelect.value = filtered[0].manager;
-                            cabinetSelect.value = filtered[0].cabinet;
+                        if (cabinetMatch) {
+                            advertiser = cabinetMatch.advertiser;
+                            manager = cabinetMatch.manager;
                         }
+                    }
+
+                    const advertiserValues = uniqueValues(filterRecords({ manager: manager, cabinet: cabinet }), 'advertiser');
+                    if (advertiser && !advertiserValues.includes(advertiser)) {
+                        advertiser = '';
+                    }
+                    fillOptions(advertiserSelect, advertiserValues, 'Advertiser', advertiser);
+                    advertiserSelect.value = advertiser;
+
+                    const managerValues = uniqueValues(filterRecords({ advertiser: advertiser, cabinet: cabinet }), 'manager');
+                    if (manager && !managerValues.includes(manager)) {
+                        manager = '';
+                    }
+                    fillOptions(managerSelect, managerValues, 'Manager', manager);
+                    managerSelect.value = manager;
+
+                    const cabinetValues = uniqueValues(filterRecords({ advertiser: advertiser, manager: manager }), 'cabinet');
+                    if (cabinet && !cabinetValues.includes(cabinet)) {
+                        cabinet = '';
+                    }
+                    fillOptions(cabinetSelect, cabinetValues, 'Cabinet', cabinet);
+                    cabinetSelect.value = cabinet;
+
+                    const exactMatches = filterRecords({
+                        advertiser: advertiserSelect.value,
+                        manager: managerSelect.value,
+                        cabinet: cabinetSelect.value,
+                    });
+                    if (exactMatches.length === 1 && changedField === 'cabinet') {
+                        advertiserSelect.value = exactMatches[0].advertiser;
+                        managerSelect.value = exactMatches[0].manager;
                     }
                 }
 
