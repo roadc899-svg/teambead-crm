@@ -3598,7 +3598,7 @@ def sidebar_html(active_page, current_user=None):
         if children:
             open_attr = "open" if active_page in ["grouped", "partner", "chatterfy"] else ""
             html += f'''
-            <details class="sidebar-group" {open_attr}>
+            <details class="sidebar-group" data-sidebar-group="{escape(key)}" {open_attr}>
                 <summary><span class="side-emoji">{icon}</span><span class="side-label">{title}</span></summary>
                 <div class="sidebar-links">
             '''
@@ -4408,26 +4408,31 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .caps-toolbar-panel .toolbar-actions,
             .hold-toolbar {{
                 align-items: center;
-                justify-content: space-between;
+                justify-content: flex-start;
                 flex-wrap: nowrap;
             }}
             .caps-toolbar-panel .panel.compact-panel.filters,
             .hold-toolbar .panel.compact-panel.filters {{
-                flex: 1 1 auto;
+                order: 1;
+                flex: 1 1 760px;
                 min-width: 0;
             }}
             .caps-toolbar-panel .caps-toolbar-stats,
             .hold-toolbar .caps-toolbar-stats {{
+                order: 2;
                 flex: 0 0 auto;
                 display: flex;
                 align-items: stretch;
                 gap: 10px;
                 flex-wrap: nowrap;
-                justify-content: flex-end;
+                justify-content: flex-start;
+                margin-left: 10px;
             }}
             .caps-toolbar-panel .upload-menu {{
+                order: 3;
                 flex: 0 0 auto;
                 align-self: center;
+                margin-left: auto;
             }}
             .players-toolbar {{
                 align-items: flex-start;
@@ -4505,7 +4510,7 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 align-items: center;
                 justify-content: flex-end;
                 flex: 0 0 auto;
-                min-height: 74px;
+                min-height: 66px;
             }}
             .players-toolbar .players-export-form {{
                 margin: 0;
@@ -4519,15 +4524,15 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             }}
             .players-toolbar .players-icon-stack .upload-menu > summary,
             .players-toolbar .players-export-button {{
-                width: 54px;
-                min-width: 54px;
-                height: 54px;
+                width: 46px;
+                min-width: 46px;
+                height: 46px;
                 align-self: center;
             }}
             .players-toolbar .players-export-button {{
-                min-height: 54px;
-                padding: 0 10px;
-                font-size: 13px;
+                min-height: 46px;
+                padding: 0 8px;
+                font-size: 11px;
                 font-weight: 900;
                 transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
             }}
@@ -4569,16 +4574,16 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 line-height: 1.05;
             }}
             .players-stats-controls .caps-toolbar-stats .mini-stat {{
-                min-width: 92px;
-                padding: 6px 10px;
-                gap: 2px;
-                border-radius: 12px;
+                min-width: 78px;
+                padding: 5px 9px;
+                gap: 1px;
+                border-radius: 10px;
             }}
             .players-stats-controls .caps-toolbar-stats .mini-stat .name {{
-                font-size: 10px;
+                font-size: 9px;
             }}
             .players-stats-controls .caps-toolbar-stats .mini-stat .value {{
-                font-size: 16px;
+                font-size: 14px;
                 line-height: 1;
             }}
             .toolbar-actions .column-menu-wrap {{
@@ -5436,6 +5441,25 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                         localStorage.setItem(storageKey, collapsed ? '1' : '0');
                     }} catch (error) {{}}
                     window.dispatchEvent(new Event('resize'));
+                }});
+            }})();
+            (function initSidebarGroups() {{
+                const groups = Array.from(document.querySelectorAll('.sidebar-group[data-sidebar-group]'));
+                if (!groups.length) return;
+                groups.forEach(function(group) {{
+                    const groupKey = group.getAttribute('data-sidebar-group');
+                    if (!groupKey) return;
+                    const storageKey = window.teambeadStorageKey('sidebar-group:' + groupKey);
+                    try {{
+                        const saved = localStorage.getItem(storageKey);
+                        if (saved === '1') group.setAttribute('open', 'open');
+                        else if (saved === '0') group.removeAttribute('open');
+                    }} catch (error) {{}}
+                    group.addEventListener('toggle', function() {{
+                        try {{
+                            localStorage.setItem(storageKey, group.open ? '1' : '0');
+                        }} catch (error) {{}}
+                    }});
                 }});
             }})();
             (function initTheme() {{
