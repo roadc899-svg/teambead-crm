@@ -3734,24 +3734,29 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .period-picker {{
                 display: flex;
                 align-items: end;
-                gap: 6px;
+                gap: 4px;
                 min-width: 0;
+                flex: 0 1 auto;
             }}
             .period-picker label {{
                 min-width: 0 !important;
                 flex: 1 1 auto;
             }}
             .period-jump-btn {{
-                width: 38px;
-                min-width: 38px;
-                height: 38px;
+                width: 28px;
+                min-width: 28px;
+                height: 28px;
                 padding: 0 !important;
                 display: inline-flex;
                 align-items: center;
                 justify-content: center;
-                border-radius: 12px;
-                font-size: 16px;
+                border-radius: 10px;
+                font-size: 13px;
                 line-height: 1;
+                margin-bottom: 5px;
+            }}
+            .period-picker select {{
+                min-width: 200px !important;
             }}
             .panel.compact-panel.filters input,
             .panel.compact-panel.filters select {{
