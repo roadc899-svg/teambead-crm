@@ -4456,6 +4456,31 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .partners-table th {{
                 text-align: center;
             }}
+            .partners-table {{
+                min-width: 0;
+                table-layout: fixed;
+                width: 100%;
+            }}
+            .partners-table th,
+            .partners-table td {{
+                vertical-align: middle;
+                padding: 9px 8px;
+                font-size: 12px;
+                line-height: 1.2;
+                box-sizing: border-box;
+            }}
+            .partners-table thead th {{
+                font-size: 11px;
+                padding: 8px 8px;
+                position: sticky;
+                top: 0;
+                z-index: 6;
+                background: var(--table-head);
+                box-shadow: 0 1px 0 var(--border);
+            }}
+            .partners-table tbody tr {{
+                height: 46px;
+            }}
             .partners-table th .th-inner {{
                 justify-content: center;
                 gap: 0;
@@ -4468,6 +4493,73 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             }}
             .partners-table th .resizer {{
                 right: 0;
+            }}
+            .partners-table .advertiser-col {{ width: 76px; min-width: 76px; }}
+            .partners-table .platform-col {{ width: 74px; min-width: 74px; }}
+            .partners-table .cabinet-col {{ width: 108px; min-width: 108px; }}
+            .partners-table .geo-col {{ width: 110px; min-width: 110px; }}
+            .partners-table .brands-col {{ width: 84px; min-width: 84px; }}
+            .partners-table .tg-col {{ width: 62px; min-width: 62px; }}
+            .partners-table .manager-col {{ width: 78px; min-width: 78px; }}
+            .partners-table .manager-contact-col {{ width: 108px; min-width: 108px; }}
+            .partners-table .chat-name-col {{ width: 104px; min-width: 104px; }}
+            .partners-table .wallet-col {{ width: 150px; min-width: 150px; }}
+            .partners-table .comments-col {{ width: 112px; min-width: 112px; }}
+            .partners-table .actions-col {{ width: 78px; min-width: 78px; text-align: center; }}
+            .partners-table .wallet-col,
+            .partners-table .comments-col,
+            .partners-table .geo-col,
+            .partners-table .brands-col,
+            .partners-table .chat-name-col {{
+                white-space: normal;
+                overflow-wrap: anywhere;
+                word-break: break-word;
+            }}
+            .table-icon-actions {{
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                gap: 8px;
+                flex-wrap: nowrap;
+            }}
+            .table-icon-actions form {{
+                margin: 0;
+            }}
+            .action-icon-btn {{
+                width: 34px;
+                min-width: 34px;
+                max-width: 34px;
+                height: 34px;
+                padding: 0 !important;
+                border-radius: 10px !important;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 16px !important;
+                line-height: 1;
+            }}
+            .partners-toolbar {{
+                display: flex;
+                gap: 12px;
+                align-items: stretch;
+                flex-wrap: wrap;
+                margin-bottom: 14px;
+            }}
+            .partners-toolbar .panel.compact-panel.filters {{
+                flex: 1 1 620px;
+                min-width: min(620px, 100%);
+                margin: 0;
+                align-self: flex-start;
+            }}
+            .partners-toolbar .upload-menu {{
+                flex: 0 0 auto;
+                align-self: stretch;
+                display: flex;
+                align-items: stretch;
+            }}
+            .partners-toolbar .upload-menu > summary.toggle-indicator {{
+                height: 100%;
+                min-height: 58px;
             }}
             .progress-shell {{
                 min-width: 0;
@@ -5950,7 +6042,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     total_remaining = sum(max(0.0, safe_number(row.cap_value) - safe_number(row.current_ftd)) for row in rows)
     fill_avg = cap_fill_percent(total_current, total_cap)
     caps_columns = [
-        ("advertiser", "Advertiser"),
+        ("advertiser", "Brand"),
         ("manager", "Manager"),
         ("cabinet", "Cabinet"),
         ("code", "GEO"),
@@ -6038,8 +6130,8 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             <td class="promo-col" data-col="promo_code" title="{escape(row.promo_code or '')}">{escape(row.promo_code or "")}</td>
             <td class="link-col" data-col="link">{link_button}</td>
             <td class="action-col" data-col="action">
-                <div class="caps-actions">
-                    <button type="button" class="ghost-btn small-btn cap-edit-trigger" data-cap="{edit_payload}">Edit</button>
+                <div class="table-icon-actions">
+                    <button type="button" class="ghost-btn small-btn action-icon-btn cap-edit-trigger" data-cap="{edit_payload}" aria-label="Edit" title="Edit">✏</button>
                     <form method="post" action="/caps/delete" class="cap-delete-form">
                         <input type="hidden" name="cap_id" value="{row.id}">
                         <input type="hidden" name="period_view" value="{escape(selected_period_view)}">
@@ -6049,7 +6141,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                         <input type="hidden" name="search" value="{escape(filter_values.get('search', ''))}">
                         <input type="hidden" name="sort_by" value="{escape(sort_by)}">
                         <input type="hidden" name="order" value="{escape(order)}">
-                        <button type="button" class="ghost-btn small-btn cap-delete-trigger" data-cap-id="{row.id}">Delete</button>
+                        <button type="button" class="ghost-btn small-btn action-icon-btn cap-delete-trigger" data-cap-id="{row.id}" aria-label="Delete" title="Delete">🗑</button>
                     </form>
                 </div>
             </td>
@@ -6105,9 +6197,9 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     seen_cabinet_names = set()
     for row in cabinet_rows:
         cabinet_name_value = safe_text(row.name).strip()
-        advertiser_value = safe_text(row.advertiser).strip()
+        brand_value = safe_text(row.brands).strip()
         manager_value = safe_text(row.manager_name).strip()
-        if not cabinet_name_value or not advertiser_value or not manager_value:
+        if not cabinet_name_value or not brand_value or not manager_value:
             continue
         cabinet_key = cabinet_name_value.lower()
         if cabinet_key in seen_cabinet_names:
@@ -6115,13 +6207,13 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         seen_cabinet_names.add(cabinet_key)
         cabinet_catalog.append({
             "cabinet": cabinet_name_value,
-            "advertiser": advertiser_value,
+            "advertiser": brand_value,
             "manager": manager_value,
         })
     advertiser_select_options = build_select_options(
         sorted({item["advertiser"] for item in cabinet_catalog}, key=lambda value: value.lower()),
         form_data.get("advertiser", ""),
-        "Advertiser",
+        "Brand",
     )
     manager_select_options = build_select_options(
         sorted({item["manager"] for item in cabinet_catalog}, key=lambda value: value.lower()),
@@ -6144,7 +6236,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     add_advertiser_options = build_select_options(
         sorted({item["advertiser"] for item in cabinet_catalog}, key=lambda value: value.lower()),
         add_form_data.get("advertiser", ""),
-        "Advertiser",
+        "Brand",
     )
     add_manager_options = build_select_options(
         sorted({item["manager"] for item in cabinet_catalog}, key=lambda value: value.lower()),
@@ -6159,7 +6251,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     edit_advertiser_options = build_select_options(
         sorted({item["advertiser"] for item in cabinet_catalog}, key=lambda value: value.lower()),
         edit_form_data.get("advertiser", ""),
-        "Advertiser",
+        "Brand",
     )
     edit_manager_options = build_select_options(
         sorted({item["manager"] for item in cabinet_catalog}, key=lambda value: value.lower()),
@@ -6196,7 +6288,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 <button type="button" class="ghost-btn small-btn period-jump-btn" data-period-jump="1" aria-label="Next period">›</button>
             </div>
             <div class="caps-grid-2">
-                <label>Advertiser
+                <label>Brand
                     <select name="advertiser" id="addCapAdvertiserSelect" required>{add_advertiser_options}</select>
                 </label>
                 <label>Manager
@@ -6230,9 +6322,6 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     <input type="text" name="agent" list="capAgentOptions" value="{escape(add_form_data.get('agent', ''))}">
                 </label>
             </div>
-            <label>Chat Name
-                <input type="text" name="chat_title" value="{escape(add_form_data.get('chat_title', ''))}" placeholder="Chat name">
-            </label>
             <label>Link
                 <input type="text" name="link" value="{escape(add_form_data.get('link', ''))}">
             </label>
@@ -6275,7 +6364,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     <button type="button" class="ghost-btn small-btn period-jump-btn" data-period-jump="1" aria-label="Next period">›</button>
                 </div>
                 <div class="caps-grid-2">
-                    <label>Advertiser
+                    <label>Brand
                         <select name="advertiser" id="editCapAdvertiserSelect" required>{edit_advertiser_options}</select>
                     </label>
                     <label>Manager
@@ -6309,9 +6398,6 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                         <input type="text" name="agent" list="editCapAgentOptions" id="editCapAgent" value="{escape(edit_form_data.get('agent', ''))}">
                     </label>
                 </div>
-                <label>Chat Name
-                    <input type="text" name="chat_title" id="editCapChatName" value="{escape(edit_form_data.get('chat_title', ''))}">
-                </label>
                 <label>Link
                     <input type="text" name="link" id="editCapLink" value="{escape(edit_form_data.get('link', ''))}">
                 </label>
@@ -6372,7 +6458,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 <table class="caps-table" id="capsTable">
                     <thead>
                         <tr>
-                            <th class="advertiser-col" data-col="advertiser" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("advertiser", "Advertiser")}<span class="resizer"></span></div></th>
+                            <th class="advertiser-col" data-col="advertiser" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("advertiser", "Brand")}<span class="resizer"></span></div></th>
                             <th class="owner-col" data-col="manager" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("manager", "Manager")}<span class="resizer"></span></div></th>
                             <th class="buyer-col" data-col="cabinet" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("cabinet", "Cabinet")}<span class="resizer"></span></div></th>
                             <th class="code-col" data-col="code" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("code", "GEO")}<span class="resizer"></span></div></th>
@@ -6639,7 +6725,6 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 setValue('editCapValue', payload.cap_value);
                 setValue('editCapPromocode', payload.promo_code);
                 setValue('editCapAgent', payload.agent);
-                setValue('editCapChatName', payload.chat_title);
                 setValue('editCapLink', payload.link);
                 setValue('editCapKpi', payload.kpi);
                 setValue('editCapComments', payload.comments);
@@ -7923,28 +8008,28 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
     for row in rows:
         rows_html += f"""
         <tr>
-            <td>{escape(row.advertiser or "")}</td>
-            <td>{escape(row.platform or "")}</td>
-            <td>{escape(row.name or "")}</td>
-            <td style="white-space:normal; min-width:140px;">{escape(row.geo_list or "")}</td>
-            <td style="white-space:normal; width:120px; min-width:120px; max-width:120px; overflow-wrap:anywhere; word-break:break-word;">{escape(row.brands or "")}</td>
-            <td>{escape(row.team_name or "")}</td>
-            <td>{escape(row.manager_name or "")}</td>
-            <td>{escape(row.manager_contact or "")}</td>
-            <td style="white-space:normal; width:150px; min-width:150px; max-width:150px; overflow-wrap:anywhere; word-break:break-word;">{escape(getattr(row, 'chat_name', '') or "")}</td>
-            <td style="white-space:normal; min-width:220px;">{escape(row.wallet or "")}</td>
-            <td style="white-space:normal; width:160px; min-width:160px; max-width:160px; overflow-wrap:anywhere; word-break:break-word;">{escape(row.comments or "")}</td>
-            <td>
-                <div style="display:flex; gap:8px;">
+            <td class="advertiser-col">{escape(row.advertiser or "")}</td>
+            <td class="platform-col">{escape(row.platform or "")}</td>
+            <td class="cabinet-col">{escape(row.name or "")}</td>
+            <td class="geo-col">{escape(row.geo_list or "")}</td>
+            <td class="brands-col">{escape(row.brands or "")}</td>
+            <td class="tg-col">{escape(row.team_name or "")}</td>
+            <td class="manager-col">{escape(row.manager_name or "")}</td>
+            <td class="manager-contact-col">{escape(row.manager_contact or "")}</td>
+            <td class="chat-name-col">{escape(getattr(row, 'chat_name', '') or "")}</td>
+            <td class="wallet-col">{escape(row.wallet or "")}</td>
+            <td class="comments-col">{escape(row.comments or "")}</td>
+            <td class="actions-col">
+                <div class="table-icon-actions">
                     <form method="get" action="/cabinets">
                         <input type="hidden" name="edit" value="{row.id}">
                         <input type="hidden" name="search" value="{escape(filter_values.get('search', ''))}">
-                        <button type="submit" class="ghost-btn small-btn">Edit</button>
+                        <button type="submit" class="ghost-btn small-btn action-icon-btn" aria-label="Edit" title="Edit">✏</button>
                     </form>
                     <form method="post" action="/cabinets/delete" onsubmit="return confirm('Delete this cabinet?');">
                         <input type="hidden" name="cabinet_id" value="{row.id}">
                         <input type="hidden" name="search" value="{escape(filter_values.get('search', ''))}">
-                        <button type="submit" class="ghost-btn small-btn">Delete</button>
+                        <button type="submit" class="ghost-btn small-btn action-icon-btn" aria-label="Delete" title="Delete">🗑</button>
                     </form>
                 </div>
             </td>
@@ -7961,12 +8046,14 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
     {message_html}
 
     <div class="panel compact-panel">
-        <div class="toolbar-actions">
+        <div class="partners-toolbar">
                 <div class="panel compact-panel filters">
-                    <form method="get" action="/cabinets" style="justify-content:flex-end;" data-persist-filters="cabinets">
+                    <form method="get" action="/cabinets" data-persist-filters="cabinets">
                         <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder=""></label>
-                        <button type="submit" class="btn small-btn">Filter</button>
-                        <a href="/cabinets" class="ghost-btn small-btn" data-reset-filters="cabinets">Reset</a>
+                        <div class="filter-actions-stack">
+                            <button type="submit" class="btn small-btn">Filter</button>
+                            <a href="/cabinets" class="ghost-btn small-btn filter-reset-btn" data-reset-filters="cabinets" aria-label="Reset filters" title="Reset filters">×</a>
+                        </div>
                     </form>
                 </div>
                 <details class="upload-menu" {open_attr}>
@@ -8017,21 +8104,21 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
                 </details>
         </div>
         <div class="table-wrap">
-            <table class="partners-table" style="min-width:1200px;">
+            <table class="partners-table">
                 <thead>
                     <tr>
-                        <th style="text-align:center;">Advertiser</th>
-                        <th style="text-align:center;">Platform</th>
-                        <th style="text-align:center;">Cabinet</th>
-                        <th style="text-align:center;">Geo</th>
-                        <th style="width:120px; min-width:120px; max-width:120px; text-align:center;">Brands</th>
-                        <th style="text-align:center;">TG</th>
-                        <th style="text-align:center;">Manager</th>
-                        <th style="text-align:center;">Manager Contact</th>
-                        <th style="width:150px; min-width:150px; max-width:150px; text-align:center;">Chat Name</th>
-                        <th style="text-align:center;">Wallet</th>
-                        <th style="width:160px; min-width:160px; max-width:160px; text-align:center;">Comments</th>
-                        <th style="text-align:center;">Actions</th>
+                        <th class="advertiser-col" style="text-align:center;">Advertiser</th>
+                        <th class="platform-col" style="text-align:center;">Platform</th>
+                        <th class="cabinet-col" style="text-align:center;">Cabinet</th>
+                        <th class="geo-col" style="text-align:center;">Geo</th>
+                        <th class="brands-col" style="text-align:center;">Brands</th>
+                        <th class="tg-col" style="text-align:center;">TG</th>
+                        <th class="manager-col" style="text-align:center;">Manager</th>
+                        <th class="manager-contact-col" style="text-align:center;">Manager Contact</th>
+                        <th class="chat-name-col" style="text-align:center;">Chat Name</th>
+                        <th class="wallet-col" style="text-align:center;">Wallet</th>
+                        <th class="comments-col" style="text-align:center;">Comments</th>
+                        <th class="actions-col" style="text-align:center;">Actions</th>
                     </tr>
                 </thead>
                 <tbody>{rows_html if rows_html else '<tr><td colspan="12">No partners yet</td></tr>'}</tbody>
@@ -9618,7 +9705,6 @@ def save_cap(
     cap_value: str = Form(...),
     current_ftd: str = Form(default="0"),
     promo_code: str = Form(default=""),
-    chat_title: str = Form(default=""),
     kpi: str = Form(default=""),
     link: str = Form(default=""),
     comments: str = Form(default=""),
@@ -9650,7 +9736,6 @@ def save_cap(
         "cap_value": cap_value,
         "current_ftd": current_ftd,
         "promo_code": promo_code,
-        "chat_title": chat_title,
         "kpi": kpi,
         "link": link,
         "comments": comments,
@@ -9681,9 +9766,9 @@ def save_cap(
                 period_label=clean_period_label,
             )
             return HTMLResponse(caps_page_html(user, rows, filter_values=current_filter_values, form_data=form_data, error_text="Cabinet must exist in Cabinets list."), status_code=400)
-        expected_advertiser = safe_text(cabinet_item.advertiser)
+        expected_brand = safe_text(cabinet_item.brands)
         expected_manager = safe_text(cabinet_item.manager_name)
-        if not expected_advertiser or not expected_manager:
+        if not expected_brand or not expected_manager:
             rows = get_caps_rows(
                 search=current_filter_values["search"],
                 buyer=current_filter_values["buyer"],
@@ -9691,8 +9776,8 @@ def save_cap(
                 owner_name="",
                 period_label=clean_period_label,
             )
-            return HTMLResponse(caps_page_html(user, rows, filter_values=current_filter_values, form_data=form_data, error_text="Fill advertiser and manager in Cabinets first."), status_code=400)
-        if clean_advertiser != expected_advertiser or clean_owner_name != expected_manager:
+            return HTMLResponse(caps_page_html(user, rows, filter_values=current_filter_values, form_data=form_data, error_text="Fill brand and manager in Cabinets first."), status_code=400)
+        if clean_advertiser != expected_brand or clean_owner_name != expected_manager:
             rows = get_caps_rows(
                 search=current_filter_values["search"],
                 buyer=current_filter_values["buyer"],
@@ -9700,14 +9785,14 @@ def save_cap(
                 owner_name="",
                 period_label=clean_period_label,
             )
-            return HTMLResponse(caps_page_html(user, rows, filter_values=current_filter_values, form_data=form_data, error_text="Advertiser, manager and cabinet must match Cabinets list."), status_code=400)
+            return HTMLResponse(caps_page_html(user, rows, filter_values=current_filter_values, form_data=form_data, error_text="Brand, manager and cabinet must match Cabinets list."), status_code=400)
 
         item = db.query(CapRow).filter(CapRow.id == safe_number(edit_id)).first() if edit_id else None
         if not item:
             item = CapRow()
             db.add(item)
 
-        item.advertiser = expected_advertiser
+        item.advertiser = expected_brand
         item.owner_name = expected_manager
         item.period_label = clean_period_label
         item.buyer = clean_buyer
@@ -9722,7 +9807,7 @@ def save_cap(
         item.cap_value = clean_cap_value
         item.current_ftd = safe_cap_number(current_ftd)
         item.promo_code = safe_text(promo_code)
-        item.chat_title = safe_text(chat_title)
+        item.chat_title = safe_text(getattr(cabinet_item, "chat_name", ""))
         item.kpi = safe_text(kpi)
         item.link = safe_text(link)
         item.comments = safe_text(comments)
