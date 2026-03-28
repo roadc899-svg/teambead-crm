@@ -606,6 +606,7 @@ def can_access_page(user, page_key: str) -> bool:
         "cabinets": {"superadmin", "admin"},
         "chatterfy": {"superadmin", "admin"},
         "holdwager": {"superadmin", "admin"},
+        "chatterfyparser": {"superadmin", "admin"},
     }
     return role in page_rules.get(page_key, set())
 
@@ -1088,6 +1089,53 @@ def parse_chatterfy_datetime(value):
         except Exception:
             continue
     return None
+
+
+def read_chatterfy_uploaded_dataframe(filename, ext):
+    ext = (ext or "").lower()
+    if ext in [".xlsx", ".xls"]:
+        return pd.read_excel(filename)
+    return read_csv_with_auto_separator(filename)
+
+
+def normalize_dataframe_columns(df):
+    if df is None:
+        return {}
+    normalized = {}
+    columns = getattr(df, "columns", None)
+    if columns is None:
+        return normalized
+    for column in list(columns):
+        key = safe_text(column).strip().lower()
+        if key and key not in normalized:
+            normalized[key] = column
+    return normalized
+
+
+def resolve_normalized_dataframe_column(normalized_map, aliases):
+    for alias in aliases:
+        key = safe_text(alias).strip().lower()
+        if key and key in normalized_map:
+            return normalized_map[key]
+    return ""
+
+
+def detect_chatterfy_upload_kind(df):
+    normalized_columns = normalize_dataframe_columns(df)
+    has_main = all([
+        resolve_normalized_dataframe_column(normalized_columns, ["Name"]),
+        resolve_normalized_dataframe_column(normalized_columns, ["Telegram ID", "TelegramID", "Telegram Id"]),
+        resolve_normalized_dataframe_column(normalized_columns, ["Tags", "Tag"]),
+        resolve_normalized_dataframe_column(normalized_columns, ["Started", "Start", "Started At"]),
+        resolve_normalized_dataframe_column(normalized_columns, ["Status"]),
+    ])
+    has_ids = bool(resolve_normalized_dataframe_column(normalized_columns, ["TELEGRAM ID", "Telegram ID", "telegram_id"]))
+    has_linkage = bool(resolve_normalized_dataframe_column(normalized_columns, ["1xbet_id", "pp_id", "ID игрока", "chatlink", "chat_link", "link"]))
+    if has_main:
+        return "main"
+    if has_ids and has_linkage:
+        return "ids"
+    return ""
 
 
 def parse_datetime_flexible(value):
@@ -2657,23 +2705,39 @@ def replace_partner_rows(source_name, rows_to_insert):
 
 def import_chatterfy_dataframe(df, source_name=""):
     ensure_chatterfy_table()
+    normalized_columns = normalize_dataframe_columns(df)
+    name_col = resolve_normalized_dataframe_column(normalized_columns, ["Name"])
+    telegram_col = resolve_normalized_dataframe_column(normalized_columns, ["Telegram ID", "TelegramID", "Telegram Id"])
+    username_col = resolve_normalized_dataframe_column(normalized_columns, ["Username", "User Name"])
+    tags_col = resolve_normalized_dataframe_column(normalized_columns, ["Tags", "Tag"])
+    started_col = resolve_normalized_dataframe_column(normalized_columns, ["Started", "Start", "Started At"])
+    last_user_col = resolve_normalized_dataframe_column(normalized_columns, ["Last User Message", "Last user message"])
+    last_bot_col = resolve_normalized_dataframe_column(normalized_columns, ["Last Bot Message", "Last bot message"])
+    status_col = resolve_normalized_dataframe_column(normalized_columns, ["Status"])
+    step_col = resolve_normalized_dataframe_column(normalized_columns, ["Step"])
+    external_id_col = resolve_normalized_dataframe_column(normalized_columns, ["ID", "Id", "External ID", "External Id"])
+
+    required_columns = [name_col, telegram_col, tags_col, started_col, status_col]
+    if any(not item for item in required_columns):
+        return 0
+
     records = []
     for _, row in df.iterrows():
-        tags = safe_text(row.get("Tags"))
+        tags = safe_text(row.get(tags_col))
         parsed = parse_chatterfy_tags(tags)
-        period_info = get_half_month_period_from_date(row.get("Started"))
+        period_info = get_half_month_period_from_date(row.get(started_col))
         records.append(ChatterfyRow(
             source_name=source_name,
-            name=safe_text(row.get("Name")),
-            telegram_id=safe_text(row.get("Telegram ID")),
-            username=safe_text(row.get("Username")),
+            name=safe_text(row.get(name_col)),
+            telegram_id=safe_text(row.get(telegram_col)),
+            username=safe_text(row.get(username_col)) if username_col else "",
             tags=tags,
-            started=safe_text(row.get("Started")),
-            last_user_message=safe_text(row.get("Last User Message")),
-            last_bot_message=safe_text(row.get("Last Bot Message")),
-            status=safe_text(row.get("Status")),
-            step=safe_text(row.get("Step")),
-            external_id=safe_text(row.get("ID")),
+            started=safe_text(row.get(started_col)),
+            last_user_message=safe_text(row.get(last_user_col)) if last_user_col else "",
+            last_bot_message=safe_text(row.get(last_bot_col)) if last_bot_col else "",
+            status=safe_text(row.get(status_col)),
+            step=safe_text(row.get(step_col)) if step_col else "",
+            external_id=safe_text(row.get(external_id_col)) if external_id_col else "",
             report_date=period_info["report_date"],
             period_start=period_info["period_start"],
             period_end=period_info["period_end"],
@@ -2702,12 +2766,21 @@ def import_chatterfy_dataframe(df, source_name=""):
 
 def import_chatterfy_ids_dataframe(df):
     ensure_chatterfy_id_table()
+    normalized_columns = normalize_dataframe_columns(df)
+    telegram_col = resolve_normalized_dataframe_column(normalized_columns, ["TELEGRAM ID", "Telegram ID", "telegram_id", "TelegramID"])
+    pp_player_id_col = resolve_normalized_dataframe_column(normalized_columns, ["1xbet_id", "pp_id", "ID игрока", "Player ID", "PP ID"])
+    chat_link_col = resolve_normalized_dataframe_column(normalized_columns, ["chatlink", "chat_link", "link", "Chat Link"])
+    source_date_col = resolve_normalized_dataframe_column(normalized_columns, ["date", "Date", "Created At"])
+
+    if not telegram_col:
+        return 0
+
     records = []
     for _, row in df.iterrows():
-        telegram_id = safe_text(row.get("TELEGRAM ID") or row.get("Telegram ID") or row.get("telegram_id"))
-        pp_player_id = safe_text(row.get("1xbet_id") or row.get("pp_id") or row.get("ID игрока"))
-        chat_link = safe_text(row.get("chatlink") or row.get("chat_link") or row.get("link"))
-        source_date = safe_text(row.get("date") or row.get("Date"))
+        telegram_id = safe_text(row.get(telegram_col))
+        pp_player_id = safe_text(row.get(pp_player_id_col)) if pp_player_id_col else ""
+        chat_link = safe_text(row.get(chat_link_col)) if chat_link_col else ""
+        source_date = safe_text(row.get(source_date_col)) if source_date_col else ""
         if not telegram_id and not pp_player_id and not chat_link:
             continue
         records.append(ChatterfyIdRow(
@@ -2726,6 +2799,17 @@ def import_chatterfy_ids_dataframe(df):
     finally:
         db.close()
     return len(records)
+
+
+def import_chatterfy_upload_dataframe(df, source_name="", upload_kind="auto"):
+    kind = safe_text(upload_kind).lower() or "auto"
+    if kind == "auto":
+        kind = detect_chatterfy_upload_kind(df)
+    if kind == "main":
+        return {"kind": "main", "count": import_chatterfy_dataframe(df, source_name)}
+    if kind == "ids":
+        return {"kind": "ids", "count": import_chatterfy_ids_dataframe(df)}
+    return {"kind": "", "count": 0}
 
 
 def get_chatterfy_rows(status="", search="", date_filter="", time_filter="", telegram_id="", pp_player_id="", period_label=""):
@@ -3554,6 +3638,7 @@ def sidebar_html(active_page, current_user=None):
         ("caps", "/caps", "📌", "Caps", []),
         ("cabinets", "/cabinets", "🛠", "Partners", []),
         ("holdwager", "/hold-wager", "✏️", "Hold", []),
+        ("chatterfyparser", "/chatterfy-parser", "🧩", "Chatterfy Parser", []),
     ]
 
     html = '''
@@ -4439,7 +4524,7 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .chatterfy-toolbar .upload-menu {{
                 order: 2;
                 flex: 0 0 auto;
-                align-self: center;
+                align-self: flex-start;
                 margin-left: auto;
             }}
             .players-toolbar {{
@@ -8309,6 +8394,15 @@ def render_dev_page(title, emoji, active_page, current_user=None):
     return page_shell(title, content, active_page=active_page, current_user=current_user)
 
 
+@app.get("/chatterfy-parser", response_class=HTMLResponse)
+def chatterfy_parser_page(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "chatterfyparser")
+    return render_dev_page("Chatterfy Parser", "🧩", "chatterfyparser", current_user=user)
+
+
 def chatterfy_page_html(
     current_user,
     rows,
@@ -8591,14 +8685,14 @@ def chatterfy_page_html(
         <div class="toolbar-actions chatterfy-toolbar">
                 <div class="panel compact-panel filters">
                     <form method="get" action="/chatterfy" data-persist-filters="chatterfy">
-                        <label>Date<input type="text" name="date_filter" value="{escape(date_filter)}" placeholder="27.03.2026"></label>
-                        <label>Time<input type="text" name="time_filter" value="{escape(time_filter)}" placeholder="09:3"></label>
+                        <label>Date<input type="text" name="date_filter" value="{escape(date_filter)}" placeholder=""></label>
+                        <label>Time<input type="text" name="time_filter" value="{escape(time_filter)}" placeholder=""></label>
                         <label>View<select name="period_view">{period_view_options}</select></label>
                         <label>Period<select name="period_label">{period_options}</select></label>
-                        <label>Telegram ID<input type="text" name="telegram_id" value="{escape(telegram_id)}" placeholder="5065148172"></label>
-                        <label>ID in PP<input type="text" name="pp_player_id" value="{escape(pp_player_id)}" placeholder="1601157577"></label>
+                        <label>Telegram ID<input type="text" name="telegram_id" value="{escape(telegram_id)}" placeholder=""></label>
+                        <label>ID in PP<input type="text" name="pp_player_id" value="{escape(pp_player_id)}" placeholder=""></label>
                         <label>Status<select name="status">{status_options}</select></label>
-                        <label>Search<input type="text" name="search" value="{escape(search)}" placeholder="tags, manager, geo, offer"></label>
+                        <label>Search<input type="text" name="search" value="{escape(search)}" placeholder=""></label>
                         <input type="hidden" name="page" value="1">
                         <button type="submit" class="btn small-btn">Filter</button>
                         <a href="/chatterfy" class="ghost-btn small-btn" data-reset-filters="chatterfy">Reset</a>
@@ -11437,15 +11531,13 @@ async def upload_chatterfy_file(request: Request, file: UploadFile = File(...)):
     try:
         with open(filename, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-        if ext in [".xlsx", ".xls"]:
-            df = pd.read_excel(filename)
-        else:
-            try:
-                df = pd.read_csv(filename)
-            except Exception:
-                df = pd.read_csv(filename, sep=";")
-        import_chatterfy_dataframe(df, original_name)
-        return RedirectResponse(url="/chatterfy?message=Chatterfy загружен", status_code=303)
+        df = read_chatterfy_uploaded_dataframe(filename, ext)
+        result = import_chatterfy_upload_dataframe(df, original_name, upload_kind="auto")
+        if result["count"] <= 0:
+            return RedirectResponse(url="/chatterfy?message=Chatterfy+file+has+invalid+columns", status_code=303)
+        if result["kind"] == "ids":
+            return RedirectResponse(url="/chatterfy?message=ID+file+загружен", status_code=303)
+        return RedirectResponse(url="/chatterfy?message=Chatterfy+загружен", status_code=303)
     finally:
         if os.path.exists(filename):
             os.remove(filename)
@@ -11463,14 +11555,10 @@ async def upload_chatterfy_ids_file(request: Request, file: UploadFile = File(..
     try:
         with open(filename, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-        if ext in [".xlsx", ".xls"]:
-            df = pd.read_excel(filename)
-        else:
-            try:
-                df = pd.read_csv(filename)
-            except Exception:
-                df = pd.read_csv(filename, sep=";")
-        import_chatterfy_ids_dataframe(df)
+        df = read_chatterfy_uploaded_dataframe(filename, ext)
+        result = import_chatterfy_upload_dataframe(df, original_name, upload_kind="ids")
+        if result["count"] <= 0:
+            return RedirectResponse(url="/chatterfy?message=ID+file+has+invalid+columns", status_code=303)
         return RedirectResponse(url="/chatterfy?message=ID file загружен", status_code=303)
     finally:
         if os.path.exists(filename):
