@@ -1770,7 +1770,11 @@ def detect_half_month_period_from_dataframe_dates(df, column_name: str):
             if not label or label in seen_labels:
                 continue
             seen_labels.add(label)
-            unique_periods.append(period_info)
+            unique_periods.append({
+                "date_start": safe_text(period_info.get("period_start")),
+                "date_end": safe_text(period_info.get("period_end")),
+                "period_label": label,
+            })
         if len(unique_periods) == 1:
             return unique_periods[0]
     except Exception:
@@ -2626,6 +2630,7 @@ def get_partner_upload_summaries():
 
 def get_partner_rows_by_period(period_value="", period_label="", cabinet_name="", country="", search=""):
     ensure_partner_table()
+    ensure_caps_table()
     active_cabinets = get_active_cabinet_name_set()
     cabinet_platform_map = get_cabinet_platform_map()
     cabinet_rows = get_cabinet_rows()
@@ -2637,10 +2642,12 @@ def get_partner_rows_by_period(period_value="", period_label="", cabinet_name=""
     db = SessionLocal()
     try:
         query = db.query(PartnerRow)
+        caps_query = db.query(CapRow)
         if period_value:
             query = query.filter(PartnerRow.source_name == period_value)
         if period_label:
             query = query.filter(PartnerRow.period_label == period_label)
+            caps_query = caps_query.filter(CapRow.period_label == period_label)
         if cabinet_name:
             query = query.filter(PartnerRow.cabinet_name == cabinet_name)
         if country:
@@ -2656,11 +2663,20 @@ def get_partner_rows_by_period(period_value="", period_label="", cabinet_name=""
                 PartnerRow.registration_date.ilike(search_pattern),
             ))
         rows = query.order_by(PartnerRow.id.desc()).all()
+        caps = caps_query.order_by(CapRow.id.desc()).all()
     finally:
         db.close()
 
     if active_cabinets:
         rows = [row for row in rows if safe_text(getattr(row, "cabinet_name", "")) in active_cabinets]
+
+    caps_by_scope_period = {}
+    for cap in caps:
+        period_key = safe_text(getattr(cap, "period_label", ""))
+        scope_key = build_cap_scope_key(getattr(cap, "cabinet_name", "") or getattr(cap, "buyer", ""), getattr(cap, "geo", "") or getattr(cap, "code", ""))
+        if not period_key or not all(scope_key):
+            continue
+        caps_by_scope_period.setdefault((period_key, scope_key[0], scope_key[1]), []).append(cap)
 
     id_by_player, chatter_by_telegram_period, chatter_by_telegram = get_chatterfy_linkage_maps(period_label=period_label)
     for row in rows:
@@ -2681,6 +2697,12 @@ def get_partner_rows_by_period(period_value="", period_label="", cabinet_name=""
         cabinet_item = cabinet_meta_map.get(safe_text(getattr(row, "cabinet_name", "")))
         row.brand_name = safe_text(getattr(cabinet_item, "brands", "")) if cabinet_item else ""
         row.geo_name = geo_display_name(getattr(row, "country", "") or "")
+        row_period_label = partner_row_period_label(row)
+        scope_key = build_cap_scope_key(getattr(row, "cabinet_name", ""), getattr(row, "country", ""))
+        matched_caps = caps_by_scope_period.get((row_period_label, scope_key[0], scope_key[1]), [])
+        matched_cap = matched_caps[0] if matched_caps else None
+        row.is_qualified_ftd = bool(matched_cap and is_partner_row_qualified_for_cap(row, matched_cap, cabinet_platform_map))
+        row.cpa_amount = safe_cap_number(getattr(matched_cap, "rate", 0)) if row.is_qualified_ftd else 0.0
     return rows
 
 
@@ -2692,6 +2714,7 @@ def aggregate_partner_totals(rows):
         "income": sum(safe_number(r.company_income) for r in rows),
         "cpa": sum(safe_number(r.cpa_amount) for r in rows),
         "ftd_count": sum(1 for r in rows if safe_number(r.deposit_amount) > 0),
+        "qualified_ftd_count": sum(1 for r in rows if bool(getattr(r, "is_qualified_ftd", False))),
     }
 def refresh_cap_current_ftd_from_partner():
     ensure_partner_table()
@@ -4639,6 +4662,10 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 white-space: normal;
                 overflow-wrap: anywhere;
                 word-break: break-word;
+            }}
+            .players-report-table thead th,
+            .players-report-table thead th a {{
+                text-align: center !important;
             }}
             .table-icon-actions {{
                 display: flex;
@@ -7102,9 +7129,9 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         (function initCapsColumns() {
             const table = document.getElementById('capsTable');
             if (!table) return;
-            const ORDER_KEY = window.teambeadStorageKey('capsColumnsOrder:v3');
-            const WIDTH_KEY = window.teambeadStorageKey('capsColumnsWidth:v3');
-            const HIDDEN_KEY = window.teambeadStorageKey('capsColumnsHidden:v3');
+            const ORDER_KEY = window.teambeadStorageKey('capsColumnsOrder:v4');
+            const WIDTH_KEY = window.teambeadStorageKey('capsColumnsWidth:v4');
+            const HIDDEN_KEY = window.teambeadStorageKey('capsColumnsHidden:v4');
 
             function getCurrentOrder() {
                 return Array.from(table.querySelectorAll('thead th[data-col]')).map(th => th.dataset.col);
@@ -8387,8 +8414,8 @@ def partner_report_page_html(
             <td>{escape(row.player_id or "")}</td>
             <td>${safe_number(row.deposit_amount):,.2f}</td>
             <td>${safe_number(row.bet_amount):,.2f}</td>
-            <td>{escape(row.sub_id or "")}</td>
             <td>${safe_number(row.company_income):,.2f}</td>
+            <td>{escape(row.sub_id or "")}</td>
             <td>${safe_number(row.cpa_amount):,.2f}</td>
         </tr>
         """
@@ -8483,11 +8510,10 @@ def partner_report_page_html(
                     </div>
                 </details>
                 <div class="caps-toolbar-stats">
-                    <div class="mini-stat"><div class="name">players</div><div class="value">{totals['players']}</div></div>
-                    <div class="mini-stat"><div class="name">ftd</div><div class="value">{totals['ftd_count']}</div></div>
-                    <div class="mini-stat"><div class="name">deposits</div><div class="value">${totals['deposits']:,.2f}</div></div>
-                    <div class="mini-stat"><div class="name">income</div><div class="value">${totals['income']:,.2f}</div></div>
-                    <div class="mini-stat"><div class="name">cpa</div><div class="value">${totals['cpa']:,.2f}</div></div>
+                    <div class="mini-stat"><div class="name">ftd</div><div class="value">{totals['players']}</div></div>
+                    <div class="mini-stat"><div class="name">qftd</div><div class="value">{totals['qualified_ftd_count']}</div></div>
+                    <div class="mini-stat"><div class="name">deposit sum</div><div class="value">${totals['deposits']:,.2f}</div></div>
+                    <div class="mini-stat"><div class="name">ngr</div><div class="value">${totals['income']:,.2f}</div></div>
                 </div>
                 <details class="upload-menu upload-menu-right" style="z-index:89;">
                     <summary class="ghost-btn small-btn toolbar-square-icon-btn" aria-label="Delete upload" title="Delete upload">🗑</summary>
@@ -8517,7 +8543,7 @@ def partner_report_page_html(
 
     <div class="panel compact-panel">
         <div class="table-wrap">
-            <table style="min-width:1500px;">
+            <table class="players-report-table" style="min-width:1500px;">
                 <thead>
                     <tr>
                         <th>{header_link('brand_name', 'Brands')}</th>
@@ -8525,10 +8551,10 @@ def partner_report_page_html(
                         <th>{header_link('geo_name', 'Geo')}</th>
                         <th>{header_link('registration_date', 'Registration')}</th>
                         <th>{header_link('player_id', 'ID')}</th>
-                        <th>{header_link('deposit_amount', 'Deposit')}</th>
-                        <th>{header_link('bet_amount', 'Bet')}</th>
-                        <th>{header_link('sub_id', 'Promo/Link')}</th>
+                        <th>{header_link('deposit_amount', 'Deposit Sum')}</th>
+                        <th>{header_link('bet_amount', 'Betting Sum')}</th>
                         <th>{header_link('company_income', 'NGR')}</th>
+                        <th>{header_link('sub_id', 'subid')}</th>
                         <th>{header_link('cpa_amount', 'CPA')}</th>
                     </tr>
                 </thead>
