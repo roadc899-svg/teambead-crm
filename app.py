@@ -3302,6 +3302,118 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 min-height: 96px;
                 resize: vertical;
             }}
+            .select-shell {{
+                position: relative;
+                width: 100%;
+                min-width: 0;
+            }}
+            .select-shell select {{
+                position: absolute;
+                inset: 0;
+                opacity: 0;
+                pointer-events: none;
+            }}
+            .select-shell.is-open {{
+                z-index: 140;
+            }}
+            .select-display {{
+                width: 100%;
+                min-width: 0;
+                min-height: 38px;
+                border-radius: 14px;
+                border: 1px solid var(--border);
+                background:
+                    linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)),
+                    var(--panel-3);
+                color: var(--text);
+                padding: 10px 42px 10px 12px;
+                outline: none;
+                font: inherit;
+                font-size: 14px;
+                font-weight: 800;
+                line-height: 1.2;
+                text-align: left;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+                cursor: pointer;
+                box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+                appearance: none;
+                -webkit-appearance: none;
+            }}
+            .select-display:hover {{
+                border-color: rgba(56,189,248,0.34);
+                background:
+                    linear-gradient(180deg, rgba(56,189,248,0.04), rgba(37,99,235,0.03)),
+                    var(--panel-3);
+            }}
+            .select-display:focus-visible {{
+                border-color: rgba(56,189,248,0.6);
+                box-shadow: 0 0 0 3px rgba(56,189,248,0.16);
+            }}
+            .select-label {{
+                min-width: 0;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }}
+            .select-caret {{
+                position: absolute;
+                right: 12px;
+                top: 50%;
+                transform: translateY(-50%);
+                pointer-events: none;
+                color: var(--muted);
+                font-size: 12px;
+                transition: transform 0.16s ease, color 0.16s ease;
+            }}
+            .select-shell.is-open .select-caret {{
+                transform: translateY(-50%) rotate(180deg);
+                color: var(--text);
+            }}
+            .select-options {{
+                display: none;
+                position: absolute;
+                top: calc(100% + 8px);
+                left: 0;
+                right: 0;
+                max-height: min(360px, 55vh);
+                overflow: auto;
+                padding: 8px;
+                border-radius: 16px;
+                border: 1px solid var(--border);
+                background: linear-gradient(180deg, var(--panel), var(--panel-2));
+                box-shadow: var(--shadow);
+                gap: 4px;
+            }}
+            .select-shell.is-open .select-options {{
+                display: grid;
+            }}
+            .select-option {{
+                width: 100%;
+                border: 0;
+                background: transparent;
+                color: var(--text);
+                padding: 11px 12px;
+                border-radius: 12px;
+                text-align: left;
+                font: inherit;
+                font-size: 14px;
+                font-weight: 800;
+                line-height: 1.2;
+                cursor: pointer;
+            }}
+            .select-option:hover {{
+                background: var(--soft);
+            }}
+            .select-option.is-selected {{
+                background: linear-gradient(90deg, rgba(56,189,248,0.18), rgba(37,99,235,0.16));
+                outline: 1px solid rgba(56,189,248,0.26);
+            }}
+            .select-option.is-empty {{
+                color: var(--muted);
+            }}
             input[type="file"]::file-selector-button {{
                 border: 1px solid var(--border);
                 background: var(--panel-2);
@@ -4002,6 +4114,98 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             </main>
         </div>
         <script>
+            function closeCustomSelects(exceptShell) {{
+                document.querySelectorAll('.select-shell.is-open').forEach(function(shell) {{
+                    if (!exceptShell || shell !== exceptShell) {{
+                        shell.classList.remove('is-open');
+                    }}
+                }});
+            }}
+            function enhanceSelect(select) {{
+                if (!select || select.dataset.customized === '1') return;
+                select.dataset.customized = '1';
+
+                const shell = document.createElement('div');
+                shell.className = 'select-shell';
+                select.parentNode.insertBefore(shell, select);
+                shell.appendChild(select);
+
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = 'select-display';
+
+                const label = document.createElement('span');
+                label.className = 'select-label';
+
+                const caret = document.createElement('span');
+                caret.className = 'select-caret';
+                caret.textContent = '▾';
+
+                button.appendChild(label);
+                button.appendChild(caret);
+                shell.appendChild(button);
+
+                const options = document.createElement('div');
+                options.className = 'select-options';
+                shell.appendChild(options);
+
+                function syncLabel() {{
+                    const selectedOption = select.options[select.selectedIndex];
+                    label.textContent = selectedOption ? selectedOption.textContent : '';
+                }}
+
+                function rebuildOptions() {{
+                    options.innerHTML = '';
+                    Array.from(select.options).forEach(function(option) {{
+                        const item = document.createElement('button');
+                        item.type = 'button';
+                        item.className = 'select-option';
+                        if (!option.value) item.classList.add('is-empty');
+                        if (option.selected) item.classList.add('is-selected');
+                        item.textContent = option.textContent;
+                        item.disabled = !!option.disabled;
+                        item.addEventListener('click', function() {{
+                            if (option.disabled) return;
+                            select.value = option.value;
+                            Array.from(select.options).forEach(function(opt) {{
+                                opt.selected = opt.value === option.value;
+                            }});
+                            syncLabel();
+                            rebuildOptions();
+                            shell.classList.remove('is-open');
+                            select.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                        }});
+                        options.appendChild(item);
+                    }});
+                }}
+
+                button.addEventListener('click', function() {{
+                    const willOpen = !shell.classList.contains('is-open');
+                    closeCustomSelects(shell);
+                    shell.classList.toggle('is-open', willOpen);
+                }});
+
+                select.addEventListener('change', function() {{
+                    syncLabel();
+                    rebuildOptions();
+                }});
+
+                const form = select.closest('form');
+                if (form) {{
+                    form.addEventListener('reset', function() {{
+                        setTimeout(function() {{
+                            syncLabel();
+                            rebuildOptions();
+                        }}, 0);
+                    }});
+                }}
+
+                syncLabel();
+                rebuildOptions();
+            }}
+            function enhanceSelects(root) {{
+                (root || document).querySelectorAll('select').forEach(enhanceSelect);
+            }}
             function setTheme(mode) {{
                 if (mode === 'light') document.body.classList.add('light');
                 else document.body.classList.remove('light');
@@ -4011,6 +4215,7 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 const saved = localStorage.getItem('teambead-theme');
                 if (saved === 'light') document.body.classList.add('light');
             }})();
+            enhanceSelects(document);
             document.addEventListener('click', function(e) {{
                 const wrap = document.querySelector('.column-menu-wrap');
                 const menu = document.getElementById('columnMenu');
@@ -4023,6 +4228,9 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 document.querySelectorAll('.upload-menu').forEach(function(item) {{
                     if (!item.contains(e.target)) item.removeAttribute('open');
                 }});
+                if (!e.target.closest('.select-shell')) {{
+                    closeCustomSelects();
+                }}
             }});
         </script>
         {extra_scripts}
@@ -4738,6 +4946,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     filter_values = filter_values or {}
     form_data = form_data or {}
     selected_period = safe_text(filter_values.get("period_label") or form_data.get("period_label") or get_current_period_label())
+    selected_period_view = safe_text(filter_values.get("period_view") or "period")
     buyers, geos, owners = get_caps_filter_options(period_label=selected_period)
     period_options = make_options(build_period_options(), selected_period)
     buyer_options = make_options(buyers, filter_values.get("buyer", ""))
@@ -4787,10 +4996,14 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 <div class="caps-actions">
                     <form method="get" action="/caps">
                         <input type="hidden" name="edit" value="{row.id}">
+                        <input type="hidden" name="period_view" value="{escape(selected_period_view)}">
+                        <input type="hidden" name="period_label" value="{escape(selected_period)}">
                         <button type="submit" class="ghost-btn small-btn">Edit</button>
                     </form>
                     <form method="post" action="/caps/delete" class="cap-delete-form">
                         <input type="hidden" name="cap_id" value="{row.id}">
+                        <input type="hidden" name="period_view" value="{escape(selected_period_view)}">
+                        <input type="hidden" name="period_label" value="{escape(selected_period)}">
                         <button type="button" class="ghost-btn small-btn cap-delete-trigger" data-cap-id="{row.id}">Delete</button>
                     </form>
                 </div>
@@ -4862,6 +5075,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         <div class="upload-menu-list cap-menu-list">
             <form method="post" action="/caps/save" class="caps-form">
             <input type="hidden" name="edit_id" value="{escape(current_edit_id)}">
+            <input type="hidden" name="period_view" value="{escape(selected_period_view)}">
             <datalist id="capAdvertiserOptions">{advertiser_list}</datalist>
             <datalist id="capOwnerOptions">{owner_list}</datalist>
             <datalist id="capCabinetOptions">{cabinet_list}</datalist>
@@ -5775,7 +5989,6 @@ def chatterfy_page_html(
 
     content = f"""
     {message_html}
-    {render_active_period_banner(period_label)}
 
     <div class="panel compact-panel">
         <div class="toolbar-actions">
@@ -6014,7 +6227,6 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
 
     content = f"""
     {message_html}
-    {render_active_period_banner(period_label)}
 
     <div class="panel compact-panel">
         <div class="toolbar-actions">
@@ -7514,7 +7726,7 @@ def caps_page(
     return caps_page_html(
         user,
         rows,
-        filter_values={"search": search, "period_label": effective_period_label, "buyer": buyer, "geo": geo, "owner_name": owner_name},
+        filter_values={"search": search, "period_view": period_view, "period_label": effective_period_label, "buyer": buyer, "geo": geo, "owner_name": owner_name},
         form_data=form_data,
         success_text=message,
     )
@@ -7526,6 +7738,7 @@ def save_cap(
     edit_id: str = Form(default=""),
     advertiser: str = Form(default=""),
     owner_name: str = Form(default=""),
+    period_view: str = Form(default="period"),
     period_label: str = Form(default=""),
     buyer: str = Form(...),
     flow: str = Form(default=""),
@@ -7603,14 +7816,22 @@ def save_cap(
         db.close()
     refresh_cap_current_ftd_from_partner()
     clear_runtime_cache("stat_support::")
-    return RedirectResponse(url=f"/caps?period_view=period&period_label={quote_plus(clean_period_label)}&message=Cap+saved", status_code=303)
+    final_period_view = safe_text(period_view) or "period"
+    return RedirectResponse(url=f"/caps?period_view={quote_plus(final_period_view)}&period_label={quote_plus(clean_period_label)}&message=Cap+saved", status_code=303)
 
 @app.post("/caps/delete")
-def delete_cap(request: Request, cap_id: str = Form(...)):
+def delete_cap(
+    request: Request,
+    cap_id: str = Form(...),
+    period_view: str = Form(default="period"),
+    period_label: str = Form(default=""),
+):
     user = get_current_user(request)
     if not user:
         return auth_redirect_response()
     enforce_page_access(user, "caps")
+    clean_period_label = safe_text(period_label) or get_current_period_label()
+    clean_period_view = safe_text(period_view) or "period"
     db = SessionLocal()
     try:
         db.query(CapRow).filter(CapRow.id == safe_number(cap_id)).delete()
@@ -7618,7 +7839,8 @@ def delete_cap(request: Request, cap_id: str = Form(...)):
     finally:
         db.close()
     clear_runtime_cache("stat_support::")
-    return RedirectResponse(url="/caps?message=Cap+deleted", status_code=303)
+    refresh_cap_current_ftd_from_partner()
+    return RedirectResponse(url=f"/caps?period_view={quote_plus(clean_period_view)}&period_label={quote_plus(clean_period_label)}&message=Cap+deleted", status_code=303)
 
 @app.get("/api/partner/current-period")
 def api_partner_current_period(request: Request):
