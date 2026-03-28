@@ -990,6 +990,14 @@ def geo_display_name(value):
     return display_map.get(normalized, safe_text(value).strip() or normalized)
 
 
+def format_geo_list_codes(value):
+    return ", ".join(split_geo_tokens(value))
+
+
+def format_geo_list_names(value):
+    return ", ".join(geo_display_name(token) for token in split_geo_tokens(value))
+
+
 def parse_chatterfy_tags(value):
     tags = [safe_text(item) for item in safe_text(value).split(",") if safe_text(item)]
     result = {
@@ -2116,7 +2124,7 @@ def build_cap_match_maps(caps):
         promo_key = safe_text(cap.promo_code).upper()
         if promo_key:
             caps_by_promo.setdefault(promo_key, []).append(cap)
-        scope_key = build_cap_scope_key(getattr(cap, "buyer", ""), getattr(cap, "geo", "") or getattr(cap, "code", ""))
+        scope_key = build_cap_scope_key(getattr(cap, "cabinet_name", "") or getattr(cap, "buyer", ""), getattr(cap, "geo", "") or getattr(cap, "code", ""))
         if all(scope_key):
             caps_by_scope.setdefault(scope_key, []).append(cap)
     return caps_by_promo, caps_by_scope
@@ -2190,7 +2198,7 @@ def get_hold_wager_rows(period_label="", cabinet_name="", search=""):
         bet_amount = safe_number(row.bet_amount)
         baseline = safe_cap_number(cap.baseline)
         fail_baseline = baseline > 0 and deposit_amount < baseline
-        fail_wager = partner_row_platform(row, cabinet_platform_map) == "1xbet" and baseline > 0 and bet_amount < baseline
+        fail_wager = baseline > 0 and bet_amount < baseline
         if not fail_baseline and not fail_wager:
             continue
 
@@ -2632,7 +2640,7 @@ def refresh_cap_current_ftd_from_partner():
                     db.add(CapRow(
                         advertiser=source_cap.advertiser,
                         owner_name=source_cap.owner_name,
-                        buyer=source_cap.buyer,
+                        buyer=source_cap.cabinet_name or source_cap.buyer,
                         cabinet_name=source_cap.cabinet_name,
                         flow=source_cap.flow,
                         code=source_cap.code,
@@ -2672,12 +2680,11 @@ def is_partner_row_qualified_for_cap(row, cap, cabinet_platform_map=None):
     deposit_amount = safe_number(getattr(row, "deposit_amount", 0))
     bet_amount = safe_number(getattr(row, "bet_amount", 0))
     baseline = safe_cap_number(getattr(cap, "baseline", 0))
-    platform_key = partner_row_platform(row, cabinet_platform_map)
     if deposit_amount <= 0:
         return False
     if baseline > 0 and deposit_amount < baseline:
         return False
-    if platform_key == "1xbet" and baseline > 0 and bet_amount < baseline:
+    if baseline > 0 and bet_amount < baseline:
         return False
     return True
 
@@ -3152,9 +3159,9 @@ def sidebar_html(active_page, current_user=None):
         ("dashboard", "/dashboard", "📊", "Dashboard", []),
         ("fb", "/fb", fb_icon, "FB", []),
         ("export", "/partner-report", "📩", "Export", [
-            ("/chatterfy", "Chatterfy", active_page == "chatterfy"),
-            ("/partner-report", "Players", active_page == "partner"),
-            ("/grouped", "📈 Export FB", active_page == "grouped"),
+            ("/chatterfy", "Chatterfy", active_page == "chatterfy", chatterfy_icon),
+            ("/partner-report", "Players", active_page == "partner", "👤"),
+            ("/grouped", "Export FB", active_page == "grouped", "📈"),
         ]),
         ("finance", "/finance", finance_icon, "Finance", []),
         ("caps", "/caps", "📌", "Caps", []),
@@ -3177,11 +3184,11 @@ def sidebar_html(active_page, current_user=None):
         if key == "export":
             export_children = []
             if can_access_page(current_user, "chatterfy"):
-                export_children.append(("/chatterfy", "Chatterfy", active_page == "chatterfy"))
+                export_children.append(("/chatterfy", "Chatterfy", active_page == "chatterfy", chatterfy_icon))
             if can_access_page(current_user, "partner"):
-                export_children.append(("/partner-report", "Players", active_page == "partner"))
+                export_children.append(("/partner-report", "Players", active_page == "partner", "👤"))
             if can_access_page(current_user, "grouped"):
-                export_children.append(("/grouped", "📈 Export FB", active_page == "grouped"))
+                export_children.append(("/grouped", "Export FB", active_page == "grouped", "📈"))
             if not export_children:
                 continue
             children = export_children
@@ -3208,9 +3215,10 @@ def sidebar_html(active_page, current_user=None):
                 <summary><span class="side-emoji">{icon}</span><span class="side-label">{title}</span></summary>
                 <div class="sidebar-links">
             '''
-            for child_href, child_title, active in children:
+            for child_href, child_title, active, child_icon in children:
                 active_class = "active-link" if active else ""
-                html += f'<a href="{child_href}" class="{active_class}">{child_title}</a>'
+                icon_html = child_icon if safe_text(child_icon).startswith("<") else escape(safe_text(child_icon))
+                html += f'<a href="{child_href}" class="{active_class}"><span class="side-emoji side-sub-emoji">{icon_html}</span><span class="side-label">{child_title}</span></a>'
             html += '</div></details>'
         else:
             active_class = "sidebar-standalone active-link" if active_page == key else "sidebar-standalone"
@@ -3432,6 +3440,15 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 height: 22px;
                 display: block;
             }}
+            .side-sub-emoji {{
+                width: 20px;
+                height: 20px;
+                font-size: 16px;
+            }}
+            .side-sub-emoji svg {{
+                width: 20px;
+                height: 20px;
+            }}
             .sidebar-links {{ display: flex; flex-direction: column; gap: 8px; padding: 0 10px 10px; }}
             .sidebar-links a {{
                 text-decoration: none;
@@ -3439,6 +3456,9 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 padding: 10px 12px;
                 border-radius: 12px;
                 font-weight: 800;
+                display: flex;
+                align-items: center;
+                gap: 10px;
             }}
             .sidebar-links a:hover, .sidebar-standalone:hover {{ background: var(--soft); }}
             .active-link {{
@@ -4436,6 +4456,7 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .caps-table .owner-col {{ width: 82px; min-width: 82px; }}
             .caps-table .buyer-col {{ width: 92px; min-width: 92px; }}
             .caps-table .code-col {{ width: 54px; min-width: 54px; }}
+            .caps-table .geo-col {{ width: 84px; min-width: 84px; }}
             .caps-table .rate-col {{ width: 56px; min-width: 56px; }}
             .caps-table .baseline-col {{ width: 62px; min-width: 62px; }}
             .caps-table .cap-col {{ width: 56px; min-width: 56px; }}
@@ -4532,7 +4553,8 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .partners-table .advertiser-col {{ width: 76px; min-width: 76px; }}
             .partners-table .platform-col {{ width: 74px; min-width: 74px; }}
             .partners-table .cabinet-col {{ width: 108px; min-width: 108px; }}
-            .partners-table .geo-col {{ width: 110px; min-width: 110px; }}
+            .partners-table .code-col {{ width: 78px; min-width: 78px; }}
+            .partners-table .geo-col {{ width: 118px; min-width: 118px; }}
             .partners-table .brands-col {{ width: 84px; min-width: 84px; }}
             .partners-table .tg-col {{ width: 62px; min-width: 62px; }}
             .partners-table .manager-col {{ width: 78px; min-width: 78px; }}
@@ -6131,7 +6153,8 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         ("advertiser", "Brands"),
         ("manager", "Manager"),
         ("cabinet", "Cabinet"),
-        ("code", "Geo"),
+        ("code", "Code"),
+        ("geo", "Geo"),
         ("rate", "Rate"),
         ("baseline", "Baseline"),
         ("cap", "Cap"),
@@ -6173,6 +6196,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             "owner_name": safe_text(row.owner_name),
             "cabinet_name": safe_text(row.cabinet_name),
             "code": safe_text(normalize_geo_value(row.code or "")),
+            "geo": safe_text(geo_display_name(row.code or row.geo or "")),
             "rate": safe_text(format_plain_number_text(row.rate)),
             "baseline": safe_text(format_plain_number_text(row.baseline)),
             "cap_value": safe_text(format_int_or_float(row.cap_value)),
@@ -6198,6 +6222,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             <td class="owner-col" data-col="manager" title="{escape(row.owner_name or '')}">{escape(row.owner_name or "")}</td>
             <td class="buyer-col" data-col="cabinet" title="{escape(row.cabinet_name or '')}">{escape(row.cabinet_name or "")}</td>
             <td class="code-col" data-col="code" title="{escape(normalize_geo_value(row.code or ''))}">{escape(normalize_geo_value(row.code or ""))}</td>
+            <td class="geo-col" data-col="geo" title="{escape(geo_display_name(row.code or row.geo or ''))}">{escape(geo_display_name(row.code or row.geo or ""))}</td>
             <td class="rate-col" data-col="rate" title="{escape(row.rate or '')}">{escape(format_plain_number_text(row.rate))}</td>
             <td class="baseline-col" data-col="baseline" title="{escape(row.baseline or '')}">{escape(format_plain_number_text(row.baseline))}</td>
             <td class="cap-col" data-col="cap">{format_int_or_float(row.cap_value)}</td>
@@ -6382,8 +6407,11 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 <select name="cabinet_name" id="addCapCabinetSelect" required>{add_cabinet_options}</select>
             </label>
             <div class="caps-grid-2">
+                <label>Code
+                    <input type="text" name="code" id="addCapCode" value="{escape(add_form_data.get('code', ''))}">
+                </label>
                 <label>Geo
-                    <input type="text" name="code" value="{escape(add_form_data.get('code', ''))}">
+                    <input type="text" id="addCapGeo" value="{escape(geo_display_name(add_form_data.get('code', '')))}" readonly>
                 </label>
             </div>
             <div class="caps-grid-2">
@@ -6458,8 +6486,11 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     <select name="cabinet_name" id="editCapCabinetSelect" required>{edit_cabinet_options}</select>
                 </label>
                 <div class="caps-grid-2">
-                    <label>Geo
+                    <label>Code
                         <input type="text" name="code" id="editCapCode" value="{escape(edit_form_data.get('code', ''))}">
+                    </label>
+                    <label>Geo
+                        <input type="text" id="editCapGeo" value="{escape(geo_display_name(edit_form_data.get('code', '')))}" readonly>
                     </label>
                 </div>
                 <div class="caps-grid-2">
@@ -6516,7 +6547,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                             <button type="button" class="ghost-btn small-btn period-jump-btn" data-period-jump="1" aria-label="Next period">›</button>
                         </div>
                         <label>Cabinet<select name="buyer">{buyer_options}</select></label>
-                        <label>Geo<select name="code">{code_options}</select></label>
+                        <label>Code<select name="code">{code_options}</select></label>
                         <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="Search caps"></label>
                         <input type="hidden" name="sort_by" value="{escape(sort_by)}">
                         <input type="hidden" name="order" value="{escape(order)}">
@@ -6544,7 +6575,8 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                             <th class="advertiser-col" data-col="advertiser" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("advertiser", "Brands")}<span class="resizer"></span></div></th>
                             <th class="owner-col" data-col="manager" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("manager", "Manager")}<span class="resizer"></span></div></th>
                             <th class="buyer-col" data-col="cabinet" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("cabinet", "Cabinet")}<span class="resizer"></span></div></th>
-                            <th class="code-col" data-col="code" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("code", "Geo")}<span class="resizer"></span></div></th>
+                            <th class="code-col" data-col="code" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("code", "Code")}<span class="resizer"></span></div></th>
+                            <th class="geo-col" data-col="geo" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("geo", "Geo")}<span class="resizer"></span></div></th>
                             <th class="rate-col" data-col="rate" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("rate", "Rate")}<span class="resizer"></span></div></th>
                             <th class="baseline-col" data-col="baseline" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("baseline", "Baseline")}<span class="resizer"></span></div></th>
                             <th class="cap-col" data-col="cap" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("cap", "Cap")}<span class="resizer"></span></div></th>
@@ -6560,7 +6592,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                             <th class="action-col" data-col="action" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("action", "Action")}<span class="resizer"></span></div></th>
                         </tr>
                     </thead>
-                        <tbody>{rows_html if rows_html else '<tr><td colspan="17">No caps yet</td></tr>'}</tbody>
+                        <tbody>{rows_html if rows_html else '<tr><td colspan="18">No caps yet</td></tr>'}</tbody>
                 </table>
             </div>
         </div>
@@ -8113,7 +8145,8 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
             <td class="advertiser-col">{escape(row.advertiser or "")}</td>
             <td class="platform-col">{escape(row.platform or "")}</td>
             <td class="cabinet-col">{escape(row.name or "")}</td>
-            <td class="geo-col">{escape(row.geo_list or "")}</td>
+            <td class="code-col">{escape(format_geo_list_codes(row.geo_list or ""))}</td>
+            <td class="geo-col">{escape(format_geo_list_names(row.geo_list or ""))}</td>
             <td class="brands-col">{escape(row.brands or "")}</td>
             <td class="tg-col">{escape(row.team_name or "")}</td>
             <td class="manager-col">{escape(row.manager_name or "")}</td>
@@ -8173,8 +8206,11 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
                             <label>Cabinet
                                 <input type="text" name="name" value="{escape(form_data.get('name', ''))}" required placeholder="Example: 1xBet Main 01">
                             </label>
-                            <label>Geo
+                            <label>Code
                                 <input type="text" name="geo_list" value="{escape(form_data.get('geo_list', ''))}" placeholder="Example: PE, CO, CL">
+                            </label>
+                            <label>Geo
+                                <input type="text" value="{escape(format_geo_list_names(form_data.get('geo_list', '')))}" readonly>
                             </label>
                             <label>Brands
                                 <input type="text" name="brands" value="{escape(form_data.get('brands', ''))}" placeholder="Example: 1xBet, Mostbet">
@@ -8212,6 +8248,7 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
                         <th class="advertiser-col" style="text-align:center;">Advertiser</th>
                         <th class="platform-col" style="text-align:center;">Platform</th>
                         <th class="cabinet-col" style="text-align:center;">Cabinet</th>
+                        <th class="code-col" style="text-align:center;">Code</th>
                         <th class="geo-col" style="text-align:center;">Geo</th>
                         <th class="brands-col" style="text-align:center;">Brands</th>
                         <th class="tg-col" style="text-align:center;">TG</th>
@@ -8223,7 +8260,7 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
                         <th class="actions-col" style="text-align:center;">Actions</th>
                     </tr>
                 </thead>
-                <tbody>{rows_html if rows_html else '<tr><td colspan="12">No partners yet</td></tr>'}</tbody>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="13">No partners yet</td></tr>'}</tbody>
             </table>
         </div>
     </div>
@@ -8448,7 +8485,7 @@ def partner_report_page_html(
         </div>
     </div>
     """
-    return page_shell("1xBet Report", content, active_page="partner", current_user=current_user)
+    return page_shell("Report Players", content, active_page="partner", current_user=current_user)
 
 
 # =========================================
@@ -9897,11 +9934,11 @@ def save_cap(
         item.advertiser = clean_advertiser
         item.owner_name = expected_manager
         item.period_label = clean_period_label
-        item.buyer = clean_buyer
+        item.buyer = clean_cabinet_name
         item.cabinet_name = clean_cabinet_name
         item.flow = safe_text(flow)
         item.code = normalize_geo_value(code)
-        item.geo = normalize_geo_value(geo)
+        item.geo = geo_display_name(code)
         if safe_text(rate) or not edit_id:
             item.rate = safe_text(rate)
         if safe_text(baseline) or not edit_id:
