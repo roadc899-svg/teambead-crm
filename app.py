@@ -4932,9 +4932,6 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     <input type="text" name="owner_name" list="capOwnerOptions" value="{escape(form_data.get('owner_name', ''))}" placeholder="Manager">
                 </label>
             </div>
-            <label>Cabinet
-                <input type="text" name="buyer" list="capCabinetOptions" value="{escape(form_data.get('buyer', ''))}" required placeholder="Choose or type cabinet">
-            </label>
             <div class="caps-grid-2">
                 <label>CODE
                     <input type="text" name="code" value="{escape(form_data.get('code', ''))}">
@@ -4955,8 +4952,8 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 <label>Cap
                     <input type="number" step="0.01" name="cap_value" value="{escape(form_data.get('cap_value', ''))}" required>
                 </label>
-                <label>Current FTD
-                    <input type="number" step="0.01" name="current_ftd" value="{escape(form_data.get('current_ftd', '0'))}">
+                <label>Buyer
+                    <input type="text" name="buyer" list="capCabinetOptions" value="{escape(form_data.get('buyer', ''))}" required placeholder="Who took this cap">
                 </label>
             </div>
             <div class="caps-grid-2">
