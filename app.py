@@ -18,6 +18,7 @@ import hashlib
 import calendar
 import re
 import sys
+import time
 from functools import lru_cache
 from datetime import datetime, timedelta, date
 
@@ -68,6 +69,7 @@ ENSURED_TABLES = set()
 RUNTIME_INDEXES_READY = False
 AUTO_IMPORT_CHECKS = set()
 RUNTIME_CACHE = {}
+LIVE_DATA_VERSION = int(time.time() * 1000)
 
 
 # =========================================
@@ -356,6 +358,11 @@ def clear_runtime_cache(*prefixes):
                 break
 
 
+def bump_live_data_version():
+    global LIVE_DATA_VERSION
+    LIVE_DATA_VERSION = int(time.time() * 1000)
+
+
 def sync_postgres_sequence(table_name: str, pk_column: str = "id"):
     if DATABASE_URL.startswith("sqlite"):
         return
@@ -405,6 +412,14 @@ app = FastAPI(title="TEAMbead CRM")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
+@app.middleware("http")
+async def live_data_version_middleware(request: Request, call_next):
+    response = await call_next(request)
+    if request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"} and response.status_code < 400:
+        bump_live_data_version()
+    return response
+
+
 @app.get("/favicon.jpg", include_in_schema=False)
 def favicon_jpg():
     candidates = [
@@ -415,6 +430,14 @@ def favicon_jpg():
         if os.path.exists(path):
             return FileResponse(path, media_type="image/jpeg")
     raise HTTPException(status_code=404)
+
+
+@app.get("/api/live-version")
+def api_live_version(request: Request, response: Response):
+    if not get_current_user(request):
+        raise HTTPException(status_code=401)
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    return {"version": LIVE_DATA_VERSION}
 
 
 @app.get("/favicon.ico", include_in_schema=False)
@@ -662,7 +685,7 @@ def login_page_html(error_text: str = ""):
             @media (max-width: 860px) {{ .brand{{font-size:22px;}} }}
         </style>
     </head>
-    <body>
+    <body data-active-page="{escape(active_page)}">
         <div class="login-shell">
             <div class="card">
                 <div class="brand"><span class="brand-mark"></span><span>TEAMbead CRM</span></div>
@@ -5368,6 +5391,68 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                         if (!scope) return;
                         localStorage.removeItem(window.teambeadStorageKey('filters:' + scope));
                     }});
+                }});
+            }})();
+            (function initLiveDataRefresh() {{
+                const activePage = document.body.getAttribute('data-active-page') || '';
+                if (!activePage) return;
+                let lastInteractionAt = Date.now();
+                let knownVersion = '';
+                let isChecking = false;
+
+                function markInteraction() {{
+                    lastInteractionAt = Date.now();
+                }}
+
+                ['pointerdown', 'keydown', 'input', 'change', 'focusin'].forEach(function(eventName) {{
+                    document.addEventListener(eventName, markInteraction, true);
+                }});
+
+                function isUserBusy() {{
+                    if (document.hidden) return true;
+                    if (Date.now() - lastInteractionAt < 12000) return true;
+                    if (document.querySelector('input:focus, textarea:focus, select:focus, [contenteditable=\"true\"]:focus')) return true;
+                    if (document.querySelector('details[open].upload-menu, details[open].theme-menu')) return true;
+                    return false;
+                }}
+
+                async function checkVersion(force) {{
+                    if (isChecking) return;
+                    if (!force && isUserBusy()) return;
+                    isChecking = true;
+                    try {{
+                        const response = await fetch('/api/live-version', {{
+                            method: 'GET',
+                            credentials: 'same-origin',
+                            cache: 'no-store',
+                            headers: {{ 'Accept': 'application/json' }},
+                        }});
+                        if (!response.ok) return;
+                        const payload = await response.json();
+                        const nextVersion = String((payload || {{}}).version || '');
+                        if (!nextVersion) return;
+                        if (!knownVersion) {{
+                            knownVersion = nextVersion;
+                            return;
+                        }}
+                        if (knownVersion !== nextVersion) {{
+                            if (force || !isUserBusy()) {{
+                                window.location.reload();
+                            }}
+                            return;
+                        }}
+                    }} catch (error) {{
+                    }} finally {{
+                        isChecking = false;
+                    }}
+                }}
+
+                checkVersion(true);
+                setInterval(function() {{
+                    checkVersion(false);
+                }}, 15000);
+                document.addEventListener('visibilitychange', function() {{
+                    if (!document.hidden) checkVersion(true);
                 }});
             }})();
             (function initUnifiedFilterUi() {{
