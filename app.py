@@ -4109,6 +4109,61 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 flex: 0 0 auto;
                 align-self: flex-start;
             }}
+            .players-toolbar {{
+                align-items: flex-start;
+            }}
+            .players-toolbar .panel.compact-panel.filters {{
+                flex: 1 1 760px;
+                min-width: min(760px, 100%);
+            }}
+            .players-toolbar .players-filter-form {{
+                display: flex;
+                gap: 8px;
+                align-items: end;
+                flex-wrap: nowrap;
+            }}
+            .players-toolbar .players-filter-form label {{
+                min-width: 0;
+            }}
+            .players-toolbar .players-filter-form label.period-label {{
+                flex: 1 1 260px;
+            }}
+            .players-toolbar .players-filter-form label.cabinet-label {{
+                flex: 1 1 200px;
+            }}
+            .players-toolbar .players-filter-form label.country-label {{
+                flex: 0 0 150px;
+            }}
+            .players-toolbar .players-filter-form label.search-label {{
+                flex: 1 1 190px;
+            }}
+            .players-toolbar .players-side-tools {{
+                display: grid;
+                gap: 8px;
+                align-items: start;
+            }}
+            .players-toolbar .players-upload-filter {{
+                width: 170px;
+                padding: 8px 10px;
+                border-radius: 14px;
+                border: 1px solid var(--border);
+                background: linear-gradient(180deg, var(--panel), var(--panel-3));
+                box-shadow: var(--shadow);
+            }}
+            .players-toolbar .players-upload-filter label {{
+                display: grid;
+                gap: 5px;
+                font-size: 12px;
+                font-weight: 800;
+            }}
+            .players-toolbar .players-upload-filter select {{
+                width: 100%;
+            }}
+            .players-toolbar .players-icon-stack {{
+                display: flex;
+                gap: 8px;
+                justify-content: flex-end;
+            }}
             .toolbar-actions .caps-toolbar-stats {{
                 order:2;
                 flex: 0 1 auto;
@@ -7794,10 +7849,6 @@ def chatterfy_page_html(
 ):
     status_values = sorted({safe_text(item["row"].status) for item in rows if safe_text(item["row"].status)})
     status_options = make_options(status_values, status)
-    period_view_options = "".join([
-        f'<option value="{value}" {"selected" if period_view == value else ""}>{label}</option>'
-        for value, label in [("all", "All Time"), ("current", "Current Period"), ("period", "Choose Period")]
-    ])
     period_options = make_options(build_period_options(), period_label)
     total_pages = max(1, (int(total_count or 0) + per_page - 1) // per_page)
 
@@ -8438,7 +8489,7 @@ def partner_report_page_html(
             <td>{format_int_or_float(item.get('rows_count', 0))}</td>
             <td>{format_int_or_float(item.get('ftd_count', 0))}</td>
             <td style="white-space:nowrap;">
-                <form method="post" action="/partner-report/delete-upload" onsubmit="return confirm('Delete this upload? This action will remove this cabinet period data.');">
+                <form method="post" action="/partner-report/delete-upload">
                     <input type="hidden" name="source_name" value="{escape(item.get('source_name', ''))}">
                     <input type="hidden" name="period_view" value="{escape(period_view)}">
                     <input type="hidden" name="period_label" value="{escape(period_label)}">
@@ -8447,7 +8498,7 @@ def partner_report_page_html(
                     <input type="hidden" name="search" value="{escape(search)}">
                     <input type="hidden" name="sort_by" value="{escape(sort_by)}">
                     <input type="hidden" name="order" value="{escape(order)}">
-                    <button type="submit" class="ghost-btn small-btn">Delete</button>
+                    <button type="button" class="ghost-btn small-btn players-delete-upload-trigger">Delete</button>
                 </form>
             </td>
         </tr>
@@ -8479,19 +8530,27 @@ def partner_report_page_html(
     {render_active_period_banner(period_label)}
 
     <div class="panel compact-panel">
-        <div class="toolbar-actions">
+        <div class="toolbar-actions players-toolbar">
                 <div class="panel compact-panel filters">
-                    <form method="get" action="/partner-report" style="justify-content:flex-end;" data-persist-filters="partner-report">
-                        <label>Upload<select name="source_name">{source_options}</select></label>
-                        <label>View<select name="period_view">{period_view_options}</select></label>
-                        <label>Period<select name="period_label">{period_options}</select></label>
-                        <label>Cabinet<select name="cabinet_name">{cabinet_options}</select></label>
-                        <label>Country<select name="country">{country_options}</select></label>
-                        <label>Search<input type="text" name="search" value="{escape(search)}" placeholder=""></label>
+                    <form method="get" action="/partner-report" class="players-filter-form" data-persist-filters="partner-report">
+                        <input type="hidden" name="period_view" value="period">
+                        <input type="hidden" name="source_name" value="{escape(source_name)}">
+                        <label class="period-label">Period<select name="period_label">{period_options}</select></label>
+                        <label class="cabinet-label">Cabinet<select name="cabinet_name">{cabinet_options}</select></label>
+                        <label class="country-label">Country<select name="country">{country_options}</select></label>
+                        <label class="search-label">Search<input type="text" name="search" value="{escape(search)}" placeholder=""></label>
                         <button type="submit" class="btn small-btn">Filter</button>
-                        <a href="/partner-report" class="ghost-btn small-btn" data-reset-filters="partner-report">Reset</a>
+                        <a href="/partner-report" class="ghost-btn small-btn" data-reset-filters="partner-report">×</a>
                     </form>
                 </div>
+                <div class="caps-toolbar-stats">
+                    <div class="mini-stat"><div class="name">ftd</div><div class="value">{totals['players']}</div></div>
+                    <div class="mini-stat"><div class="name">qftd</div><div class="value">{totals['qualified_ftd_count']}</div></div>
+                    <div class="mini-stat"><div class="name">deposit sum</div><div class="value">${totals['deposits']:,.2f}</div></div>
+                    <div class="mini-stat"><div class="name">ngr</div><div class="value">${totals['income']:,.2f}</div></div>
+                </div>
+                <div class="players-side-tools">
+                <div class="players-icon-stack">
                 <details class="upload-menu upload-menu-right" style="z-index:90;">
                     <summary class="btn toggle-indicator toolbar-square-trigger" aria-label="Upload players" title="Upload players"></summary>
                     <div class="upload-menu-list" style="width:380px; max-width:min(380px, calc(100vw - 48px));">
@@ -8509,12 +8568,6 @@ def partner_report_page_html(
                         </form>
                     </div>
                 </details>
-                <div class="caps-toolbar-stats">
-                    <div class="mini-stat"><div class="name">ftd</div><div class="value">{totals['players']}</div></div>
-                    <div class="mini-stat"><div class="name">qftd</div><div class="value">{totals['qualified_ftd_count']}</div></div>
-                    <div class="mini-stat"><div class="name">deposit sum</div><div class="value">${totals['deposits']:,.2f}</div></div>
-                    <div class="mini-stat"><div class="name">ngr</div><div class="value">${totals['income']:,.2f}</div></div>
-                </div>
                 <details class="upload-menu upload-menu-right" style="z-index:89;">
                     <summary class="ghost-btn small-btn toolbar-square-icon-btn" aria-label="Delete upload" title="Delete upload">🗑</summary>
                     <div class="upload-menu-list" style="width:min(860px, calc(100vw - 48px));">
@@ -8538,6 +8591,16 @@ def partner_report_page_html(
                         </div>
                     </div>
                 </details>
+                </div>
+                <form method="get" action="/partner-report" class="players-upload-filter">
+                    <input type="hidden" name="period_view" value="period">
+                    <input type="hidden" name="period_label" value="{escape(period_label)}">
+                    <input type="hidden" name="cabinet_name" value="{escape(cabinet_name)}">
+                    <input type="hidden" name="country" value="{escape(country)}">
+                    <input type="hidden" name="search" value="{escape(search)}">
+                    <label>Upload<select name="source_name" onchange="this.form.submit()">{source_options}</select></label>
+                </form>
+                </div>
         </div>
     </div>
 
@@ -8562,9 +8625,48 @@ def partner_report_page_html(
             </table>
         </div>
     </div>
+    <div class="confirm-overlay" id="playersDeleteUploadOverlay" aria-hidden="true">
+        <div class="confirm-card">
+            <div class="confirm-title">Delete upload?</div>
+            <div class="confirm-text">This action will remove the selected cabinet period upload from Players. You can cancel if you opened it by mistake.</div>
+            <div class="confirm-actions">
+                <button type="button" class="ghost-btn" id="playersDeleteUploadCancel">Cancel</button>
+                <button type="button" class="btn danger-btn" id="playersDeleteUploadConfirm">Delete</button>
+            </div>
+        </div>
+    </div>
 
     <script>
     (() => {{
+        const deleteOverlay = document.getElementById("playersDeleteUploadOverlay");
+        const deleteCancel = document.getElementById("playersDeleteUploadCancel");
+        const deleteConfirm = document.getElementById("playersDeleteUploadConfirm");
+        let activeDeleteForm = null;
+        function closeDeleteModal() {{
+            if (!deleteOverlay) return;
+            deleteOverlay.classList.remove("open");
+            deleteOverlay.setAttribute("aria-hidden", "true");
+            activeDeleteForm = null;
+        }}
+        document.querySelectorAll(".players-delete-upload-trigger").forEach((button) => {{
+            button.addEventListener("click", () => {{
+                activeDeleteForm = button.closest("form");
+                if (!deleteOverlay) return;
+                deleteOverlay.classList.add("open");
+                deleteOverlay.setAttribute("aria-hidden", "false");
+            }});
+        }});
+        deleteCancel?.addEventListener("click", closeDeleteModal);
+        deleteConfirm?.addEventListener("click", () => {{
+            if (activeDeleteForm) activeDeleteForm.submit();
+        }});
+        deleteOverlay?.addEventListener("click", (event) => {{
+            if (event.target === deleteOverlay) closeDeleteModal();
+        }});
+        document.addEventListener("keydown", (event) => {{
+            if (event.key === "Escape" && deleteOverlay?.classList.contains("open")) closeDeleteModal();
+        }});
+
         const platformSelect = document.getElementById("partner-upload-platform");
         const cabinetSelect = document.getElementById("partner-upload-cabinet");
         if (!platformSelect || !cabinetSelect) return;
