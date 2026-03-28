@@ -4584,6 +4584,29 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 min-height: 58px !important;
                 padding: 0 !important;
             }}
+            .toolbar-square-trigger {{
+                width: 58px !important;
+                min-width: 58px !important;
+                max-width: 58px !important;
+                height: 58px !important;
+                min-height: 58px !important;
+                padding: 0 !important;
+                border-radius: 14px !important;
+            }}
+            .toolbar-square-icon-btn {{
+                width: 58px !important;
+                min-width: 58px !important;
+                max-width: 58px !important;
+                height: 58px !important;
+                min-height: 58px !important;
+                padding: 0 !important;
+                border-radius: 14px !important;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 24px !important;
+                line-height: 1 !important;
+            }}
             .caps-toolbar-panel {{
                 padding-top: 12px;
                 padding-bottom: 8px;
@@ -6292,10 +6315,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     )
     create_panel = f"""
     <details class="upload-menu upload-menu-right" {'open' if add_form_data and not is_edit_mode else ''}>
-        <summary class="btn small-btn" style="min-width:136px;">
-            <span>Add Cap</span>
-            <span class="toggle-indicator" style="width:18px; height:18px; min-width:18px;"></span>
-        </summary>
+        <summary class="btn toggle-indicator toolbar-square-trigger" aria-label="Add cap" title="Add cap"></summary>
         <div class="upload-menu-list cap-menu-list">
             <form method="post" action="/caps/save" class="caps-form">
             <input type="hidden" name="edit_id" value="">
@@ -6662,6 +6682,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     let cabinet = cabinetSelect.value;
                     const allAdvertisers = uniqueValues(records, 'advertiser');
                     const allManagers = uniqueValues(records, 'manager');
+                    const allCabinets = uniqueValues(records, 'cabinet');
 
                     if (changedField === 'cabinet') {
                         const cabinetMatch = records.find(function(item) {
@@ -6676,20 +6697,28 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     if (advertiser && !allAdvertisers.includes(advertiser)) {
                         advertiser = '';
                     }
-                    fillOptions(advertiserSelect, allAdvertisers, 'Advertiser', advertiser);
+                    const advertiserValues = uniqueValues(filterRecords({
+                        manager: changedField === 'advertiser' ? '' : manager,
+                        cabinet: changedField === 'advertiser' ? '' : cabinet,
+                    }), 'advertiser');
+                    fillOptions(advertiserSelect, advertiserValues.length ? advertiserValues : allAdvertisers, 'Advertiser', advertiser);
                     advertiserSelect.value = advertiser;
 
-                    if (manager && !allManagers.includes(manager)) {
+                    const managerValues = uniqueValues(filterRecords({
+                        advertiser: advertiser,
+                        cabinet: changedField === 'manager' ? '' : cabinet,
+                    }), 'manager');
+                    if (manager && !managerValues.includes(manager)) {
                         manager = '';
                     }
-                    fillOptions(managerSelect, allManagers, 'Manager', manager);
+                    fillOptions(managerSelect, managerValues.length ? managerValues : allManagers, 'Manager', manager);
                     managerSelect.value = manager;
 
                     const cabinetValues = uniqueValues(filterRecords({ advertiser: advertiser, manager: manager }), 'cabinet');
                     if (cabinet && !cabinetValues.includes(cabinet)) {
                         cabinet = '';
                     }
-                    fillOptions(cabinetSelect, cabinetValues, 'Cabinet', cabinet);
+                    fillOptions(cabinetSelect, cabinetValues.length ? cabinetValues : allCabinets, 'Cabinet', cabinet);
                     cabinetSelect.value = cabinet;
 
                     if (changedField !== 'cabinet' && cabinetSelect.value) {
@@ -6700,6 +6729,16 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                         });
                         if (!exactMatches.length) {
                             cabinetSelect.value = '';
+                        }
+                    }
+
+                    if (changedField === 'manager' && managerSelect.value) {
+                        const advertiserForManager = uniqueValues(filterRecords({
+                            manager: managerSelect.value,
+                            cabinet: cabinetSelect.value,
+                        }), 'advertiser');
+                        if (advertiserForManager.length === 1) {
+                            advertiserSelect.value = advertiserForManager[0];
                         }
                     }
                 }
@@ -8295,7 +8334,7 @@ def partner_report_page_html(
                     </form>
                 </div>
                 <details class="upload-menu upload-menu-right" style="z-index:90;">
-                    <summary class="btn toggle-indicator"></summary>
+                    <summary class="btn toggle-indicator toolbar-square-trigger" aria-label="Upload players" title="Upload players"></summary>
                     <div class="upload-menu-list" style="width:380px; max-width:min(380px, calc(100vw - 48px));">
                         <form method="post" action="/partner-report/upload" enctype="multipart/form-data">
                             <label>Platform
@@ -8319,7 +8358,7 @@ def partner_report_page_html(
                     <div class="mini-stat"><div class="name">cpa</div><div class="value">${totals['cpa']:,.2f}</div></div>
                 </div>
                 <details class="upload-menu upload-menu-right" style="z-index:89;">
-                    <summary class="ghost-btn small-btn filter-reset-btn" aria-label="Delete upload" title="Delete upload">🗑</summary>
+                    <summary class="ghost-btn small-btn toolbar-square-icon-btn" aria-label="Delete upload" title="Delete upload">🗑</summary>
                     <div class="upload-menu-list" style="width:min(860px, calc(100vw - 48px));">
                         <div class="panel-subtitle">Choose the exact cabinet and period upload you want to remove.</div>
                         <div class="table-wrap" style="margin-top:8px;">
