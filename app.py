@@ -686,7 +686,7 @@ ensure_default_users()
 @app.get("/login", response_class=HTMLResponse)
 def login_page(request: Request):
     if get_current_user(request):
-        return RedirectResponse(url="/grouped", status_code=302)
+        return RedirectResponse(url="/dashboard", status_code=302)
     return HTMLResponse(login_page_html())
 
 
@@ -701,7 +701,7 @@ def login_submit(username: str = Form(...), password: str = Form(...)):
         db.close()
 
     token = create_user_session(username.strip())
-    response = RedirectResponse(url="/grouped", status_code=302)
+    response = RedirectResponse(url="/dashboard", status_code=302)
     response.set_cookie(SESSION_COOKIE_NAME, token, httponly=True, samesite="lax", max_age=SESSION_DURATION_DAYS * 24 * 60 * 60)
     return response
 
@@ -719,7 +719,7 @@ def logout(request: Request):
 def home(request: Request):
     if request.method == "HEAD":
         return Response(status_code=200)
-    return RedirectResponse(url="/grouped" if get_current_user(request) else "/login", status_code=302)
+    return RedirectResponse(url="/dashboard" if get_current_user(request) else "/login", status_code=302)
 
 
 # =========================================
@@ -1140,7 +1140,19 @@ def fb_row_period_label(row):
 
 
 def partner_row_period_label(row):
-    return safe_text(getattr(row, "period_label", "")) or get_half_month_period_from_date(getattr(row, "registration_date", "")).get("period_label", "")
+    stored_label = safe_text(getattr(row, "period_label", ""))
+    if stored_label:
+        return stored_label
+    period_start = safe_text(getattr(row, "period_start", ""))
+    period_end = safe_text(getattr(row, "period_end", ""))
+    if period_start and period_end:
+        try:
+            start_dt = datetime.strptime(period_start, "%Y-%m-%d")
+            end_dt = datetime.strptime(period_end, "%Y-%m-%d")
+            return f"{start_dt.strftime('%d.%m.%Y')} - {end_dt.strftime('%d.%m.%Y')}"
+        except Exception:
+            return ""
+    return ""
 
 
 def chatterfy_row_period_label(row):
@@ -1730,27 +1742,81 @@ def build_partner_source_name(date_start: str, date_end: str, prefix: str = "par
         return prefix
 
 
+def detect_partner_period_from_text(value):
+    text_value = safe_text(value)
+    if not text_value:
+        return None
+    dotted_pattern = re.compile(r"(\d{2}\.\d{2}\.\d{4})\s*-\s*(\d{2}\.\d{2}\.\d{4})")
+    dotted_match = dotted_pattern.search(text_value)
+    if dotted_match:
+        try:
+            start_dt = datetime.strptime(dotted_match.group(1), "%d.%m.%Y")
+            end_dt = datetime.strptime(dotted_match.group(2), "%d.%m.%Y")
+            return {
+                "date_start": start_dt.strftime("%Y-%m-%d"),
+                "date_end": end_dt.strftime("%Y-%m-%d"),
+                "period_label": f"{start_dt.strftime('%d')}-{end_dt.strftime('%d.%m.%Y')}",
+            }
+        except Exception:
+            pass
+
+    mdy_pattern = re.compile(
+        r"(?<!\d)"
+        r"(\d{1,2})-(\d{1,2})-(\d{2,4})"
+        r"(?:\D+)"
+        r"(\d{1,2})-(\d{1,2})-(\d{2,4})"
+        r"(?!\d)"
+    )
+    mdy_match = mdy_pattern.search(text_value)
+    if mdy_match:
+        try:
+            start_month, start_day, start_year, end_month, end_day, end_year = mdy_match.groups()
+            start_year = int(start_year)
+            end_year = int(end_year)
+            if start_year < 100:
+                start_year += 2000
+            if end_year < 100:
+                end_year += 2000
+            start_dt = date(start_year, int(start_month), int(start_day))
+            end_dt = date(end_year, int(end_month), int(end_day))
+            return {
+                "date_start": start_dt.strftime("%Y-%m-%d"),
+                "date_end": end_dt.strftime("%Y-%m-%d"),
+                "period_label": f"{start_dt.strftime('%d')}-{end_dt.strftime('%d.%m.%Y')}",
+            }
+        except Exception:
+            pass
+    return None
+
+
 def detect_partner_period_from_dataframe(df):
-    pattern = re.compile(r"(\\d{2}\\.\\d{2}\\.\\d{4})\\s*-\\s*(\\d{2}\\.\\d{2}\\.\\d{4})")
     try:
         for row in df.itertuples(index=False):
             for value in row:
-                text_value = safe_text(value)
-                if not text_value:
-                    continue
-                match = pattern.search(text_value)
-                if not match:
-                    continue
-                start_dt = datetime.strptime(match.group(1), "%d.%m.%Y")
-                end_dt = datetime.strptime(match.group(2), "%d.%m.%Y")
-                return {
-                    "date_start": start_dt.strftime("%Y-%m-%d"),
-                    "date_end": end_dt.strftime("%Y-%m-%d"),
-                    "period_label": f"{start_dt.strftime('%d')}-{end_dt.strftime('%d.%m.%Y')}",
-                }
+                period_data = detect_partner_period_from_text(value)
+                if period_data:
+                    return period_data
     except Exception:
         pass
     return None
+
+
+def detect_partner_period_from_raw_dataframe(df, preview_limit=12):
+    try:
+        for idx in range(min(len(df.index), preview_limit)):
+            row_values = [safe_text(value) for value in df.iloc[idx].tolist()]
+            normalized_values = [normalize_dataframe_header(value) for value in row_values]
+            for col_idx, label in enumerate(normalized_values):
+                if label not in {"период", "period"}:
+                    continue
+                candidate_values = row_values[col_idx + 1 :]
+                for candidate in candidate_values:
+                    period_data = detect_partner_period_from_text(candidate)
+                    if period_data:
+                        return period_data
+    except Exception:
+        pass
+    return detect_partner_period_from_dataframe(df)
 
 
 def detect_period_from_dataframe_dates(df, column_name: str):
@@ -1813,6 +1879,20 @@ def normalize_partner_period(date_start: str = "", date_end: str = ""):
         except Exception:
             pass
     return get_half_month_period()
+
+
+def detect_partner_upload_period(df, partner_platform="1xbet", fallback_text=""):
+    period_data = get_dataframe_detected_period(df) or detect_partner_period_from_text(fallback_text)
+    if period_data:
+        return period_data
+    if normalize_partner_platform(partner_platform) == "cellxpert":
+        return (
+            detect_half_month_period_from_dataframe_dates(df, "Registration Date")
+            or detect_period_from_dataframe_dates(df, "Registration Date")
+            or detect_period_from_dataframe_dates(df, "Дата регистрации")
+            or get_half_month_period()
+        )
+    return None
 
 
 def get_partner_platform_options():
@@ -1902,7 +1982,54 @@ def resolve_dataframe_column(alias_map, aliases):
     return None
 
 
-def parse_1xbet_partner_dataframe(df, source_name="", cabinet_name=""):
+def get_dataframe_detected_period(df):
+    attrs = getattr(df, "attrs", {}) or {}
+    period_data = attrs.get("detected_period")
+    if not isinstance(period_data, dict):
+        return None
+    if not safe_text(period_data.get("date_start")) or not safe_text(period_data.get("date_end")):
+        return None
+    return {
+        "date_start": safe_text(period_data.get("date_start")),
+        "date_end": safe_text(period_data.get("date_end")),
+        "period_label": safe_text(period_data.get("period_label")),
+    }
+
+
+def build_partner_storage_period(period_data=None, fallback_value=""):
+    if isinstance(period_data, dict):
+        end_value = safe_text(period_data.get("date_end"))
+        if end_value:
+            return get_half_month_period_from_date(end_value)
+    if fallback_value:
+        return get_half_month_period_from_date(fallback_value)
+    return {"report_date": "", "period_start": "", "period_end": "", "period_label": ""}
+
+
+def read_csv_with_auto_separator(path: str, header="infer"):
+    read_kwargs = {
+        "sep": None,
+        "engine": "python",
+        "encoding": "utf-8-sig",
+    }
+    if header != "infer":
+        read_kwargs["header"] = header
+    try:
+        return pd.read_csv(path, **read_kwargs)
+    except Exception as first_exc:
+        last_exc = first_exc
+    for separator in (",", ";", "\t"):
+        try:
+            fallback_kwargs = {"sep": separator, "encoding": "utf-8-sig"}
+            if header != "infer":
+                fallback_kwargs["header"] = header
+            return pd.read_csv(path, **fallback_kwargs)
+        except Exception as fallback_exc:
+            last_exc = fallback_exc
+    raise last_exc
+
+
+def parse_1xbet_partner_dataframe(df, source_name="", cabinet_name="", upload_period_data=None):
     alias_map = build_dataframe_column_alias_map(df)
     sub_id_col = resolve_dataframe_column(alias_map, ["SubId", "SubID", "Sub Id", "Sub ID"])
     player_id_col = resolve_dataframe_column(alias_map, ["ID игрока", "Player ID", "ID Player", "PlayerId"])
@@ -1914,6 +2041,7 @@ def parse_1xbet_partner_dataframe(df, source_name="", cabinet_name=""):
     registration_col = resolve_dataframe_column(alias_map, ["Дата регистрации", "Registration Date", "Reg Date"])
     hold_col = resolve_dataframe_column(alias_map, ["Hold time", "Hold Time", "Activity Count"])
     blocked_col = resolve_dataframe_column(alias_map, ["Заблокирован", "Blocked", "Status"])
+    upload_period = build_partner_storage_period(upload_period_data or get_dataframe_detected_period(df))
 
     records = []
     for _, row in df.iterrows():
@@ -1930,7 +2058,7 @@ def parse_1xbet_partner_dataframe(df, source_name="", cabinet_name=""):
         company_income = safe_number(row.get(income_col)) if income_col else 0.0
         cpa_amount = safe_number(row.get(cpa_col)) if cpa_col else 0.0
         registration_value = row.get(registration_col) if registration_col else ""
-        period_info = get_half_month_period_from_date(registration_value)
+        period_info = upload_period if safe_text(upload_period.get("period_label")) else {"report_date": "", "period_start": "", "period_end": "", "period_label": ""}
         records.append(PartnerRow(
             source_name=source_name,
             cabinet_name=safe_text(cabinet_name),
@@ -1952,43 +2080,55 @@ def parse_1xbet_partner_dataframe(df, source_name="", cabinet_name=""):
     return records
 
 
-def parse_cellxpert_partner_dataframe(df, source_name="", cabinet_name=""):
+def parse_cellxpert_partner_dataframe(df, source_name="", cabinet_name="", upload_period_data=None):
+    alias_map = build_dataframe_column_alias_map(df)
+    player_id_col = resolve_dataframe_column(alias_map, ["User ID", "Player ID", "UserID"])
+    country_col = resolve_dataframe_column(alias_map, ["Country", "Geo"])
+    registration_col = resolve_dataframe_column(alias_map, ["Registration Date", "Reg Date"])
+    ftd_amount_col = resolve_dataframe_column(alias_map, ["First Time Deposit Amount", "FTD Amount", "Deposit Sum"])
+    deposits_col = resolve_dataframe_column(alias_map, ["Deposits", "Net Deposits", "Deposit Amount"])
+    commissions_col = resolve_dataframe_column(alias_map, ["Commissions", "NGR", "Income"])
+    activity_count_col = resolve_dataframe_column(alias_map, ["Activity Count", "Hold Time", "Hold time"])
+    status_col = resolve_dataframe_column(alias_map, ["Status", "Blocked"])
+    upload_period = build_partner_storage_period(upload_period_data)
+
     records = []
     for _, row in df.iterrows():
-        player_id = safe_text(row.get("User ID"))
-        country = normalize_geo_value(row.get("Country"))
+        player_id = safe_text(row.get(player_id_col)) if player_id_col else ""
+        country = normalize_geo_value(row.get(country_col)) if country_col else ""
         if not player_id or not country:
             continue
-        ftd_amount = safe_number(row.get("First Time Deposit Amount"))
-        total_deposits = safe_number(row.get("Deposits"))
+        ftd_amount = safe_number(row.get(ftd_amount_col)) if ftd_amount_col else 0.0
+        total_deposits = safe_number(row.get(deposits_col)) if deposits_col else 0.0
         deposit_amount = ftd_amount if ftd_amount > 0 else total_deposits
-        period_info = get_half_month_period_from_date(row.get("Registration Date"))
+        registration_value = row.get(registration_col) if registration_col else ""
+        period_info = upload_period if safe_text(upload_period.get("period_label")) else {"report_date": "", "period_start": "", "period_end": "", "period_label": ""}
         records.append(PartnerRow(
             source_name=source_name,
             cabinet_name=safe_text(cabinet_name),
-            sub_id=safe_text(row.get("User ID")),
+            sub_id=player_id,
             player_id=player_id,
             report_date=period_info["report_date"],
             period_start=period_info["period_start"],
             period_end=period_info["period_end"],
             period_label=period_info["period_label"],
-            registration_date=safe_text(row.get("Registration Date")),
+            registration_date=safe_text(registration_value),
             country=country,
             deposit_amount=deposit_amount,
             bet_amount=0.0,
-            company_income=safe_number(row.get("Commissions")),
+            company_income=safe_number(row.get(commissions_col)) if commissions_col else 0.0,
             cpa_amount=0.0,
-            hold_time=safe_text(row.get("Activity Count")),
-            blocked=safe_text(row.get("Status")),
+            hold_time=safe_text(row.get(activity_count_col)) if activity_count_col else "",
+            blocked=safe_text(row.get(status_col)) if status_col else "",
         ))
     return records
 
 
-def parse_partner_dataframe(df, source_name="", cabinet_name="", partner_platform="1xbet"):
+def parse_partner_dataframe(df, source_name="", cabinet_name="", partner_platform="1xbet", upload_period_data=None):
     platform_key = normalize_partner_platform(partner_platform)
     if platform_key == "cellxpert":
-        return parse_cellxpert_partner_dataframe(df, source_name=source_name, cabinet_name=cabinet_name)
-    return parse_1xbet_partner_dataframe(df, source_name=source_name, cabinet_name=cabinet_name)
+        return parse_cellxpert_partner_dataframe(df, source_name=source_name, cabinet_name=cabinet_name, upload_period_data=upload_period_data)
+    return parse_1xbet_partner_dataframe(df, source_name=source_name, cabinet_name=cabinet_name, upload_period_data=upload_period_data)
 
 
 def build_partner_row_identity(row):
@@ -2001,21 +2141,32 @@ def build_partner_row_identity(row):
 
 
 def build_partner_row_merge_identity(row):
+    cabinet_key = safe_text(getattr(row, "cabinet_name", "")).strip().lower()
     player_key = normalize_id_value(getattr(row, "player_id", "")) or safe_text(getattr(row, "player_id", "")).strip().upper()
     sub_key = safe_text(getattr(row, "sub_id", "")).strip().upper()
     registration_key = safe_text(getattr(row, "registration_date", "")).strip()
-    period_key = safe_text(getattr(row, "period_label", "")).strip()
-    return (period_key, player_key, sub_key, registration_key)
+    return (cabinet_key, player_key, sub_key, registration_key)
 
 
 def cleanup_partner_duplicates(period_label="", preferred_source_name="", preferred_cabinet=""):
     ensure_partner_table()
     clean_period = safe_text(period_label)
+    clean_cabinet = safe_text(preferred_cabinet)
     if not clean_period:
         return
     db = SessionLocal()
     try:
-        rows = db.query(PartnerRow).filter(PartnerRow.period_label == clean_period).order_by(PartnerRow.id.desc()).all()
+        query = db.query(PartnerRow)
+        if clean_cabinet and clean_period:
+            query = query.filter(
+                PartnerRow.cabinet_name == clean_cabinet,
+                PartnerRow.period_label == clean_period,
+            )
+        elif clean_cabinet:
+            query = query.filter(PartnerRow.cabinet_name == clean_cabinet)
+        else:
+            query = query.filter(PartnerRow.period_label == clean_period)
+        rows = query.order_by(PartnerRow.id.desc()).all()
         buckets = {}
         for row in rows:
             merge_key = build_partner_row_merge_identity(row)
@@ -2055,8 +2206,8 @@ def cleanup_partner_duplicates(period_label="", preferred_source_name="", prefer
 def detect_partner_header_index(df) -> int:
     preview_limit = min(len(df.index), 15)
     for idx in range(preview_limit):
-        row_values = [safe_text(value).strip().lower() for value in df.iloc[idx].tolist()]
-        if "subid" in row_values and any("игрок" in value for value in row_values):
+        row_values = [normalize_dataframe_header(value) for value in df.iloc[idx].tolist()]
+        if "subid" in row_values and any(("игрок" in value) or ("player" in value) for value in row_values):
             return idx
     return 0
 
@@ -2065,26 +2216,22 @@ def read_partner_uploaded_dataframe(path: str, ext: str):
     if ext in [".xlsx", ".xls"]:
         raw_df = pd.read_excel(path, header=None)
     else:
-        try:
-            raw_df = pd.read_csv(path, header=None)
-        except Exception:
-            raw_df = pd.read_csv(path, header=None, sep=";")
+        raw_df = read_csv_with_auto_separator(path, header=None)
+    detected_period = detect_partner_period_from_raw_dataframe(raw_df)
 
     header_index = detect_partner_header_index(raw_df)
     headers = [safe_text(value) for value in raw_df.iloc[header_index].tolist()]
     data_df = raw_df.iloc[header_index + 1 :].copy()
     data_df.columns = headers
     data_df = data_df.reset_index(drop=True)
+    data_df.attrs["detected_period"] = detected_period or {}
     return data_df
 
 
 def read_cellxpert_uploaded_dataframe(path: str, ext: str):
     if ext in [".xlsx", ".xls"]:
         return pd.read_excel(path)
-    try:
-        return pd.read_csv(path)
-    except Exception:
-        return pd.read_csv(path, sep=";")
+    return read_csv_with_auto_separator(path)
 
 
 def get_cabinet_rows(search="", status=""):
@@ -2333,7 +2480,7 @@ def get_hold_wager_rows(period_label="", cabinet_name="", search=""):
         )
         item = {
             "row_id": row.id,
-            "report_date": safe_text(getattr(row, "report_date", "")) or get_half_month_period_from_date(row.registration_date).get("report_date", ""),
+            "report_date": safe_text(getattr(row, "report_date", "")) or safe_text(getattr(row, "period_end", "")),
             "period_label": partner_row_period_label(row),
             "registration_date": safe_text(row.registration_date),
             "cabinet_name": safe_text(row.cabinet_name),
@@ -2384,13 +2531,13 @@ def replace_partner_rows(source_name, rows_to_insert):
     db = SessionLocal()
     try:
         scope_query = db.query(PartnerRow)
-        if target_cabinet and target_period_label:
+        if source_name:
+            scope_query = scope_query.filter(PartnerRow.source_name == source_name)
+        elif target_cabinet and target_period_label:
             scope_query = scope_query.filter(
                 PartnerRow.cabinet_name == target_cabinet,
                 PartnerRow.period_label == target_period_label,
             )
-        elif source_name:
-            scope_query = scope_query.filter(PartnerRow.source_name == source_name)
         existing_rows = scope_query.all()
         manual_flags = {
             build_partner_row_identity(item): {
@@ -2403,13 +2550,13 @@ def replace_partner_rows(source_name, rows_to_insert):
             flags = manual_flags.get(build_partner_row_identity(item), {})
             item.manual_hold = int(flags.get("manual_hold", 0))
             item.manual_blocked = int(flags.get("manual_blocked", 0))
-        if target_cabinet and target_period_label:
+        if source_name:
+            db.query(PartnerRow).filter(PartnerRow.source_name == source_name).delete()
+        elif target_cabinet and target_period_label:
             db.query(PartnerRow).filter(
                 PartnerRow.cabinet_name == target_cabinet,
                 PartnerRow.period_label == target_period_label,
             ).delete()
-        elif source_name:
-            db.query(PartnerRow).filter(PartnerRow.source_name == source_name).delete()
         else:
             db.query(PartnerRow).delete()
         db.commit()
@@ -2659,19 +2806,13 @@ def get_partner_upload_summaries():
             "rows_count": 0,
             "players_count": 0,
             "ftd_count": 0,
-            "date_start": "",
-            "date_end": "",
+            "date_start": safe_text((detect_partner_period_from_text(source_key) or {}).get("date_start")) or safe_text(getattr(row, "period_start", "")),
+            "date_end": safe_text((detect_partner_period_from_text(source_key) or {}).get("date_end")) or safe_text(getattr(row, "period_end", "")),
         })
         item["rows_count"] += 1
         item["players_count"] += 1
         if safe_number(getattr(row, "deposit_amount", 0)) > 0:
             item["ftd_count"] += 1
-        registration_date = safe_text(getattr(row, "registration_date", ""))
-        if registration_date:
-            if not item["date_start"] or registration_date < item["date_start"]:
-                item["date_start"] = registration_date
-            if not item["date_end"] or registration_date > item["date_end"]:
-                item["date_end"] = registration_date
 
     result = list(grouped.values())
     result.sort(key=lambda item: (safe_text(item.get("period_label")), safe_text(item.get("cabinet_name")), safe_text(item.get("source_name"))), reverse=True)
@@ -9152,12 +9293,23 @@ async def upload_partner_file(request: Request, file: UploadFile = File(...), ca
             shutil.copyfileobj(file.file, buffer)
         df = read_partner_uploaded_dataframe(filename, ext)
         clean_cabinet_name = safe_text(cabinet_name)
+        detected_period = detect_partner_upload_period(df, partner_platform="1xbet", fallback_text=original_name)
+        if not detected_period:
+            return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), error_text="Could not determine upload period from the file header or filename."), status_code=400)
         source_name = original_name if not clean_cabinet_name else build_partner_source_name(
-            (detect_partner_period_from_dataframe(df) or get_half_month_period())["date_start"],
-            (detect_partner_period_from_dataframe(df) or get_half_month_period())["date_end"],
+            detected_period["date_start"],
+            detected_period["date_end"],
             prefix=clean_cabinet_name.replace("|", "/"),
         )
-        replace_partner_rows(source_name, parse_partner_dataframe(df, source_name=source_name, cabinet_name=clean_cabinet_name))
+        replace_partner_rows(
+            source_name,
+            parse_partner_dataframe(
+                df,
+                source_name=source_name,
+                cabinet_name=clean_cabinet_name,
+                upload_period_data=detected_period,
+            ),
+        )
         return RedirectResponse(url="/partner-report?message=Upload+saved", status_code=303)
     finally:
         if os.path.exists(filename):
@@ -10335,15 +10487,11 @@ async def api_partner_import(
         with open(temp_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        if ext in [".xlsx", ".xls"]:
-            df = pd.read_excel(temp_path)
-        else:
-            try:
-                df = pd.read_csv(temp_path)
-            except Exception:
-                df = pd.read_csv(temp_path, sep=";")
+        df = read_partner_uploaded_dataframe(temp_path, ext)
 
-        detected_period = detect_partner_period_from_dataframe(df)
+        detected_period = detect_partner_upload_period(df, partner_platform="1xbet", fallback_text=original_name)
+        if period_mode != "half_month" and not detected_period:
+            raise HTTPException(status_code=400, detail="Не удалось определить период выгрузки из шапки или имени файла.")
         if period_mode == "half_month":
             period = normalize_partner_period(date_start, date_end)
         else:
@@ -10355,7 +10503,7 @@ async def api_partner_import(
             prefix=safe_text(source_name) or "partner_players",
         )
 
-        rows = parse_partner_dataframe(df, source_name=final_source_name, cabinet_name=cabinet_name)
+        rows = parse_partner_dataframe(df, source_name=final_source_name, cabinet_name=cabinet_name, upload_period_data=period)
         replace_partner_rows(final_source_name, rows)
 
         return {
@@ -10611,13 +10759,9 @@ async def upload_partner_report_file(
             df = read_partner_uploaded_dataframe(filename, ext)
         if df is None or getattr(df, "empty", False):
             return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=clean_platform, error_text="Partner file is empty."), status_code=400)
-        detected_period = (
-            detect_partner_period_from_dataframe(df)
-            or (detect_half_month_period_from_dataframe_dates(df, "Registration Date") if clean_platform == "cellxpert" else None)
-            or detect_period_from_dataframe_dates(df, "Registration Date")
-            or detect_period_from_dataframe_dates(df, "Дата регистрации")
-            or get_half_month_period()
-        )
+        detected_period = detect_partner_upload_period(df, partner_platform=clean_platform, fallback_text=original_name)
+        if not detected_period:
+            return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=clean_platform, error_text="Could not determine upload period from the file header or filename."), status_code=400)
         source_prefix = clean_cabinet_name.replace("|", "/")
         if clean_platform == "cellxpert":
             source_prefix = f"cellxpert/{source_prefix}"
@@ -10626,7 +10770,13 @@ async def upload_partner_report_file(
             detected_period["date_end"],
             prefix=source_prefix,
         )
-        rows = parse_partner_dataframe(df, source_name=final_source_name, cabinet_name=clean_cabinet_name, partner_platform=clean_platform)
+        rows = parse_partner_dataframe(
+            df,
+            source_name=final_source_name,
+            cabinet_name=clean_cabinet_name,
+            partner_platform=clean_platform,
+            upload_period_data=detected_period,
+        )
         if not rows:
             return HTMLResponse(partner_report_page_html(user, get_partner_rows_by_period(""), upload_platform=clean_platform, error_text="No valid player rows found in this file."), status_code=400)
         replace_partner_rows(final_source_name, rows)
