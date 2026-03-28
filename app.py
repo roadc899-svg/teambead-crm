@@ -3731,6 +3731,28 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .panel.compact-panel.filters label {{
                 min-width: 112px;
             }}
+            .period-picker {{
+                display: flex;
+                align-items: end;
+                gap: 6px;
+                min-width: 0;
+            }}
+            .period-picker label {{
+                min-width: 0 !important;
+                flex: 1 1 auto;
+            }}
+            .period-jump-btn {{
+                width: 38px;
+                min-width: 38px;
+                height: 38px;
+                padding: 0 !important;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: 12px;
+                font-size: 16px;
+                line-height: 1;
+            }}
             .panel.compact-panel.filters input,
             .panel.compact-panel.filters select {{
                 min-width: 128px;
@@ -5704,9 +5726,13 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         <div class="panel compact-panel">
             <div class="toolbar-actions">
                 <div class="panel compact-panel filters">
-                    <form method="get" action="/caps">
+                    <form method="get" action="/caps" id="capsFilterForm">
                         <input type="hidden" name="period_view" value="period">
-                        <label>Period<select name="period_label">{period_options}</select></label>
+                        <div class="period-picker">
+                            <button type="button" class="ghost-btn small-btn period-jump-btn" data-period-jump="-1" aria-label="Previous period">‹</button>
+                            <label>Period<select name="period_label" id="capsPeriodSelect">{period_options}</select></label>
+                            <button type="button" class="ghost-btn small-btn period-jump-btn" data-period-jump="1" aria-label="Next period">›</button>
+                        </div>
                         <label>Cabinet<select name="buyer">{buyer_options}</select></label>
                         <label>Code<select name="code">{code_options}</select></label>
                         <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="Search caps"></label>
@@ -6006,6 +6032,41 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             document.addEventListener('keydown', function(event) {
                 if (event.key === 'Escape' && drawer.classList.contains('open')) closeDrawer();
             });
+        })();
+        (function initCapsPeriodJump() {
+            const form = document.getElementById('capsFilterForm');
+            const select = document.getElementById('capsPeriodSelect');
+            if (!form || !select) return;
+
+            function updateButtons() {
+                const options = Array.from(select.options || []);
+                const currentIndex = options.findIndex(function(option) {
+                    return option.value === select.value;
+                });
+                document.querySelectorAll('[data-period-jump]').forEach(function(button) {
+                    const step = Number(button.getAttribute('data-period-jump') || '0');
+                    const nextIndex = currentIndex + step;
+                    button.disabled = nextIndex < 0 || nextIndex >= options.length;
+                    button.style.opacity = button.disabled ? '0.45' : '1';
+                });
+            }
+
+            document.querySelectorAll('[data-period-jump]').forEach(function(button) {
+                button.addEventListener('click', function() {
+                    const options = Array.from(select.options || []);
+                    const currentIndex = options.findIndex(function(option) {
+                        return option.value === select.value;
+                    });
+                    const step = Number(button.getAttribute('data-period-jump') || '0');
+                    const nextIndex = currentIndex + step;
+                    if (nextIndex < 0 || nextIndex >= options.length) return;
+                    select.value = options[nextIndex].value;
+                    form.requestSubmit();
+                });
+            });
+
+            select.addEventListener('change', updateButtons);
+            updateButtons();
         })();
         (function initCapsStickyHeader() {
             const wrap = document.querySelector('.caps-table-wrap');
