@@ -44,7 +44,7 @@ DEFAULT_USERS = [
     {
         "username": os.getenv("TEAMBEAD_ADMIN2_LOGIN", "Dmytro"),
         "password": os.getenv("TEAMBEAD_ADMIN2_PASSWORD", "12345"),
-        "role": "admin",
+        "role": "superadmin",
         "display_name": os.getenv("TEAMBEAD_ADMIN2_NAME", "Dmytro"),
         "legacy_usernames": ["admin2"],
     },
@@ -571,6 +571,7 @@ def is_admin_role(user) -> bool:
 def can_access_page(user, page_key: str) -> bool:
     role = (user or {}).get("role")
     page_rules = {
+        "fb": {"superadmin", "admin", "buyer", "operator"},
         "grouped": {"superadmin", "admin", "buyer", "operator"},
         "hierarchy": {"superadmin", "admin", "buyer", "operator"},
         "tasks": {"superadmin", "admin", "buyer", "operator", "finance"},
@@ -3149,14 +3150,15 @@ def sidebar_html(active_page, current_user=None):
     '''
     items = [
         ("dashboard", "/dashboard", "📊", "Dashboard", []),
-        ("grouped", "/grouped", fb_icon, "FB", [
-            ("/grouped", "Export", active_page == "grouped"),
+        ("fb", "/fb", fb_icon, "FB", []),
+        ("export", "/partner-report", "📩", "Export", [
+            ("/chatterfy", "Chatterfy", active_page == "chatterfy"),
+            ("/partner-report", "Players", active_page == "partner"),
+            ("/grouped", "📈 Export FB", active_page == "grouped"),
         ]),
         ("finance", "/finance", finance_icon, "Finance", []),
         ("caps", "/caps", "📌", "Caps", []),
-        ("partner", "/partner-report", "👤", "Players", []),
         ("cabinets", "/cabinets", "🛠", "Partners", []),
-        ("chatterfy", "/chatterfy", chatterfy_icon, "Chatterfy", []),
         ("holdwager", "/hold-wager", "✏️", "Hold", []),
     ]
 
@@ -3172,7 +3174,25 @@ def sidebar_html(active_page, current_user=None):
     '''
 
     for key, href, icon, title, children in items:
-        if key == "grouped":
+        if key == "export":
+            if not any([
+                can_access_page(current_user, "chatterfy"),
+                can_access_page(current_user, "partner"),
+                can_access_page(current_user, "grouped"),
+            ]):
+                continue
+            children = [
+                child for child in children
+                if (
+                    (child[1] == "/chatterfy" and can_access_page(current_user, "chatterfy"))
+                    or (child[1] == "/partner-report" and can_access_page(current_user, "partner"))
+                    or (child[1] == "/grouped" and can_access_page(current_user, "grouped"))
+                )
+            ]
+        elif key == "fb":
+            if not can_access_page(current_user, "fb"):
+                continue
+        elif key == "grouped":
             if not can_access_page(current_user, "grouped"):
                 continue
             children = [
@@ -3186,7 +3206,7 @@ def sidebar_html(active_page, current_user=None):
             continue
 
         if children:
-            open_attr = "open" if active_page in ["grouped"] else ""
+            open_attr = "open" if active_page in ["grouped", "partner", "chatterfy"] else ""
             html += f'''
             <details class="sidebar-group" {open_attr}>
                 <summary><span class="side-emoji">{icon}</span><span class="side-label">{title}</span></summary>
@@ -6073,6 +6093,26 @@ def users_page_html(current_user, error_text="", success_text="", form_data=None
     </div>
     """
     return page_shell("Users", content, active_page="users", current_user=current_user)
+
+
+@app.get("/fb", response_class=HTMLResponse)
+def fb_page(request: Request):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "fb")
+
+    content = """
+    <div class="panel compact-panel">
+        <div class="empty-dev" style="min-height:34vh;">
+            <div class="empty-dev-card">
+                <div class="big">FB</div>
+                <div class="muted">This section is empty for now.</div>
+            </div>
+        </div>
+    </div>
+    """
+    return page_shell("FB", content, active_page="fb", current_user=user)
 
 
 def caps_page_html(current_user, rows, filter_values=None, form_data=None, success_text="", error_text=""):
