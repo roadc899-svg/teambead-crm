@@ -19,6 +19,7 @@ import calendar
 import re
 import sys
 import time
+import threading
 import ssl
 import urllib.request
 import urllib.error
@@ -42,6 +43,7 @@ CHATTERFY_API_BASE_URL = "https://api.chatterfy.ai/api"
 CHATTERFY_SIGNIN_URL = "https://new.chatterfy.ai/signin"
 CHATTERFY_PARSER_DEFAULT_START = "2026-03-16"
 CHATTERFY_PARSER_DEFAULT_END = "2026-03-31"
+CHATTERFY_PARSER_CONFIG_PATH = os.path.join(DATA_UPLOAD_DIR, "chatterfy_parser_config.json")
 DEFAULT_USERS = [
     {
         "username": os.getenv("TEAMBEAD_ADMIN1_LOGIN", "Ivan"),
@@ -78,6 +80,9 @@ RUNTIME_INDEXES_READY = False
 AUTO_IMPORT_CHECKS = set()
 RUNTIME_CACHE = {}
 LIVE_DATA_VERSION = int(time.time() * 1000)
+CHATTERFY_SYNC_LOCK = threading.Lock()
+CHATTERFY_SYNC_THREAD_STARTED = False
+CHATTERFY_CONFIG_LOCK = threading.Lock()
 
 
 # =========================================
@@ -303,6 +308,36 @@ class ChatterfyRow(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class ChatterfyParserRow(Base):
+    __tablename__ = "chatterfy_parser_rows"
+
+    id = Column(Integer, primary_key=True, index=True)
+    source_name = Column(String, default="")
+    name = Column(String, default="")
+    telegram_id = Column(String, default="")
+    username = Column(String, default="")
+    tags = Column(String, default="")
+    started = Column(String, default="")
+    last_user_message = Column(String, default="")
+    last_bot_message = Column(String, default="")
+    status = Column(String, default="")
+    step = Column(String, default="")
+    external_id = Column(String, default="")
+    report_date = Column(String, default="")
+    period_start = Column(String, default="")
+    period_end = Column(String, default="")
+    period_label = Column(String, default="")
+    launch_date = Column(String, default="")
+    platform = Column(String, default="")
+    manager = Column(String, default="")
+    geo = Column(String, default="")
+    offer = Column(String, default="")
+    flow_platform = Column(String, default="")
+    flow_manager = Column(String, default="")
+    flow_geo = Column(String, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class ChatterfyIdRow(Base):
     __tablename__ = "chatterfy_id_rows"
 
@@ -341,6 +376,8 @@ def ensure_runtime_indexes():
             "CREATE INDEX IF NOT EXISTS ix_partner_rows_lookup ON partner_rows (sub_id, player_id)",
             "CREATE INDEX IF NOT EXISTS ix_chatterfy_rows_scope ON chatterfy_rows (period_label, status, manager, geo, offer)",
             "CREATE INDEX IF NOT EXISTS ix_chatterfy_rows_lookup ON chatterfy_rows (telegram_id, external_id)",
+            "CREATE INDEX IF NOT EXISTS ix_chatterfy_parser_rows_scope ON chatterfy_parser_rows (period_label, status, manager, geo, offer)",
+            "CREATE INDEX IF NOT EXISTS ix_chatterfy_parser_rows_lookup ON chatterfy_parser_rows (telegram_id, external_id)",
             "CREATE INDEX IF NOT EXISTS ix_chatterfy_id_rows_lookup ON chatterfy_id_rows (telegram_id, pp_player_id)",
             "CREATE INDEX IF NOT EXISTS ix_task_rows_scope ON task_rows (assigned_to_username, status, due_at)",
             "CREATE INDEX IF NOT EXISTS ix_cabinet_rows_scope ON cabinet_rows (status, name, manager_name)",
@@ -405,6 +442,7 @@ def sync_all_postgres_sequences():
         "partner_rows",
         "cabinet_rows",
         "chatterfy_rows",
+        "chatterfy_parser_rows",
         "chatterfy_id_rows",
     ]:
         sync_postgres_sequence(table_name)
@@ -418,6 +456,11 @@ sync_all_postgres_sequences()
 # =========================================
 app = FastAPI(title="TEAMbead CRM")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.on_event("startup")
+def chatterfy_parser_startup():
+    start_chatterfy_parser_sync_thread()
 
 
 @app.middleware("http")
@@ -1806,6 +1849,37 @@ def ensure_chatterfy_table():
                     conn.execute(statement)
 
 
+def ensure_chatterfy_parser_table():
+    def sqlite_migration():
+        with engine.begin() as conn:
+            columns = [row[1] for row in conn.execute(text("PRAGMA table_info(chatterfy_parser_rows)")).fetchall()]
+            if "report_date" not in columns:
+                conn.execute(text("ALTER TABLE chatterfy_parser_rows ADD COLUMN report_date VARCHAR DEFAULT ''"))
+            if "period_start" not in columns:
+                conn.execute(text("ALTER TABLE chatterfy_parser_rows ADD COLUMN period_start VARCHAR DEFAULT ''"))
+            if "period_end" not in columns:
+                conn.execute(text("ALTER TABLE chatterfy_parser_rows ADD COLUMN period_end VARCHAR DEFAULT ''"))
+            if "period_label" not in columns:
+                conn.execute(text("ALTER TABLE chatterfy_parser_rows ADD COLUMN period_label VARCHAR DEFAULT ''"))
+    ensure_table_once("chatterfy_parser_rows", [ChatterfyParserRow.__table__], sqlite_migration)
+    if not DATABASE_URL.startswith("sqlite"):
+        inspector = inspect(engine)
+        columns = {item.get("name") for item in inspector.get_columns("chatterfy_parser_rows")}
+        migration_statements = []
+        if "report_date" not in columns:
+            migration_statements.append(text("ALTER TABLE chatterfy_parser_rows ADD COLUMN IF NOT EXISTS report_date VARCHAR DEFAULT ''"))
+        if "period_start" not in columns:
+            migration_statements.append(text("ALTER TABLE chatterfy_parser_rows ADD COLUMN IF NOT EXISTS period_start VARCHAR DEFAULT ''"))
+        if "period_end" not in columns:
+            migration_statements.append(text("ALTER TABLE chatterfy_parser_rows ADD COLUMN IF NOT EXISTS period_end VARCHAR DEFAULT ''"))
+        if "period_label" not in columns:
+            migration_statements.append(text("ALTER TABLE chatterfy_parser_rows ADD COLUMN IF NOT EXISTS period_label VARCHAR DEFAULT ''"))
+        if migration_statements:
+            with engine.begin() as conn:
+                for statement in migration_statements:
+                    conn.execute(statement)
+
+
 def ensure_chatterfy_id_table():
     ensure_table_once("chatterfy_id_rows", [ChatterfyIdRow.__table__])
 
@@ -2771,6 +2845,67 @@ def import_chatterfy_dataframe(df, source_name=""):
     return len(records)
 
 
+def import_chatterfy_parser_dataframe(df, source_name=""):
+    ensure_chatterfy_parser_table()
+    normalized_columns = normalize_dataframe_columns(df)
+    name_col = resolve_normalized_dataframe_column(normalized_columns, ["Name"])
+    telegram_col = resolve_normalized_dataframe_column(normalized_columns, ["Telegram ID", "TelegramID", "Telegram Id"])
+    username_col = resolve_normalized_dataframe_column(normalized_columns, ["Username", "User Name"])
+    tags_col = resolve_normalized_dataframe_column(normalized_columns, ["Tags", "Tag"])
+    started_col = resolve_normalized_dataframe_column(normalized_columns, ["Started", "Start", "Started At"])
+    last_user_col = resolve_normalized_dataframe_column(normalized_columns, ["Last User Message", "Last user message"])
+    last_bot_col = resolve_normalized_dataframe_column(normalized_columns, ["Last Bot Message", "Last bot message"])
+    status_col = resolve_normalized_dataframe_column(normalized_columns, ["Status"])
+    step_col = resolve_normalized_dataframe_column(normalized_columns, ["Step"])
+    external_id_col = resolve_normalized_dataframe_column(normalized_columns, ["ID", "Id", "External ID", "External Id"])
+
+    required_columns = [name_col, telegram_col, tags_col, started_col, status_col]
+    if any(not item for item in required_columns):
+        return 0
+
+    records = []
+    for _, row in df.iterrows():
+        tags = safe_text(row.get(tags_col))
+        parsed = parse_chatterfy_tags(tags)
+        period_info = get_half_month_period_from_date(row.get(started_col))
+        records.append(ChatterfyParserRow(
+            source_name=source_name,
+            name=safe_text(row.get(name_col)),
+            telegram_id=safe_text(row.get(telegram_col)),
+            username=safe_text(row.get(username_col)) if username_col else "",
+            tags=tags,
+            started=safe_text(row.get(started_col)),
+            last_user_message=safe_text(row.get(last_user_col)) if last_user_col else "",
+            last_bot_message=safe_text(row.get(last_bot_col)) if last_bot_col else "",
+            status=safe_text(row.get(status_col)),
+            step=safe_text(row.get(step_col)) if step_col else "",
+            external_id=safe_text(row.get(external_id_col)) if external_id_col else "",
+            report_date=period_info["report_date"],
+            period_start=period_info["period_start"],
+            period_end=period_info["period_end"],
+            period_label=period_info["period_label"],
+            launch_date=parsed["launch_date"],
+            platform=parsed["platform"],
+            manager=parsed["manager"],
+            geo=parsed["geo"],
+            offer=parsed["offer"],
+            flow_platform=parsed["flow_platform"],
+            flow_manager=parsed["flow_manager"],
+            flow_geo=parsed["flow_geo"],
+        ))
+    db = SessionLocal()
+    try:
+        db.query(ChatterfyParserRow).delete()
+        db.commit()
+        sync_postgres_sequence("chatterfy_parser_rows")
+        for item in records:
+            db.add(item)
+        db.commit()
+    finally:
+        db.close()
+    return len(records)
+
+
 def import_chatterfy_ids_dataframe(df):
     ensure_chatterfy_id_table()
     normalized_columns = normalize_dataframe_columns(df)
@@ -2913,34 +3048,30 @@ def chatterfy_api_request(path, method="GET", token="", payload=None):
     raise last_error
 
 
+def chatterfy_auth_signin(email, password):
+    response = chatterfy_api_request(
+        "/auth/signin",
+        method="POST",
+        payload={
+            "provider": "email",
+            "data": {
+                "email": safe_text(email).strip(),
+                "password": safe_text(password),
+            },
+        },
+    )
+    token = safe_text((response or {}).get("token"))
+    if not token:
+        raise RuntimeError("Chatterfy auth token was not returned by signin API.")
+    return token
+
+
 def chatterfy_login_and_get_token(email, password):
     clean_email = safe_text(email).strip()
     clean_password = safe_text(password)
     if not clean_email or not clean_password:
         raise ValueError("Email and password are required.")
-    try:
-        from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
-    except Exception as exc:
-        raise RuntimeError("Playwright is not installed. Run `pip install playwright` and `playwright install chromium`.") from exc
-
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            try:
-                page.goto(CHATTERFY_SIGNIN_URL, wait_until="networkidle", timeout=30000)
-                page.locator('input[type="email"]').fill(clean_email)
-                page.locator('input[type="password"]').fill(clean_password)
-                page.get_by_role("button", name="Sign In").click()
-                page.wait_for_url("**/bots", timeout=30000)
-                token = safe_text(page.evaluate("localStorage.getItem('token')"))
-                if not token:
-                    raise RuntimeError("Chatterfy token was not found after login.")
-                return token
-            finally:
-                browser.close()
-    except PlaywrightTimeoutError as exc:
-        raise RuntimeError("Chatterfy login timed out. Check credentials or site availability.") from exc
+    return chatterfy_auth_signin(clean_email, clean_password)
 
 
 def chatterfy_fetch_step_map(bot_id, token):
@@ -2954,7 +3085,7 @@ def chatterfy_fetch_step_map(bot_id, token):
     return result
 
 
-def chatterfy_fetch_period_dataframe(bot_id, token, date_start, date_end):
+def chatterfy_fetch_period_dataframe(bot_id, token, date_start, date_end, progress_callback=None):
     start_dt = parse_datetime_flexible(date_start)
     end_dt = parse_datetime_flexible(date_end)
     if not start_dt or not end_dt:
@@ -2966,18 +3097,22 @@ def chatterfy_fetch_period_dataframe(bot_id, token, date_start, date_end):
 
     step_map = chatterfy_fetch_step_map(bot_id, token)
     records = []
-    offset = 0
     limit = 200
+    scroll_id = ""
+    batch_number = 0
     while True:
+        batch_number += 1
+        if progress_callback:
+            progress_callback(f"Забираю пачку чатов #{batch_number} из раздела Users.")
         response = chatterfy_api_request(
-            f"/bots/{bot_id}/chats/search",
+            f"/bots/{bot_id}/chats/export",
             method="POST",
             token=token,
             payload={
                 "filter": None,
-                "offset": offset,
+                "offset": 0,
                 "limit": limit,
-                "full": True,
+                "scroll_id": scroll_id,
                 "sort_direction": "desc",
             },
         )
@@ -2987,10 +3122,221 @@ def chatterfy_fetch_period_dataframe(bot_id, token, date_start, date_end):
         for item in chats:
             if chatterfy_chat_matches_period(item, start_dt, end_dt):
                 records.append(chatterfy_chat_to_import_row(item, step_map=step_map))
+        if progress_callback:
+            progress_callback(f"Пачка #{batch_number} получена. Подходящих записей накоплено: {len(records)}.")
+        scroll_id = safe_text(response.get("scroll_id"))
         if len(chats) < limit:
             break
-        offset += limit
+        if not scroll_id:
+            break
     return pd.DataFrame(records), start_dt, end_dt
+
+
+def get_chatterfy_parser_config():
+    ensure_upload_dir()
+    if not os.path.exists(CHATTERFY_PARSER_CONFIG_PATH):
+        return {}
+    try:
+        with CHATTERFY_CONFIG_LOCK:
+            with open(CHATTERFY_PARSER_CONFIG_PATH, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+                return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_chatterfy_parser_config(data):
+    ensure_upload_dir()
+    with CHATTERFY_CONFIG_LOCK:
+        with open(CHATTERFY_PARSER_CONFIG_PATH, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False, indent=2)
+
+
+def update_chatterfy_parser_config(**updates):
+    config = get_chatterfy_parser_config()
+    config.update(updates)
+    save_chatterfy_parser_config(config)
+    return config
+
+
+def chatterfy_parser_append_log(message, kind="info", config=None):
+    config = dict(config or get_chatterfy_parser_config())
+    logs = list(config.get("logs") or [])
+    logs.append({
+        "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "kind": safe_text(kind) or "info",
+        "message": safe_text(message),
+    })
+    config["logs"] = logs[-200:]
+    save_chatterfy_parser_config(config)
+    return config
+
+
+def chatterfy_parser_status_label(config=None):
+    config = config or {}
+    state = safe_text(config.get("sync_state")) or "stopped"
+    if state == "running":
+        return "Работает"
+    if state == "pause_pending":
+        return "Останавливается"
+    if config.get("auto_sync_enabled"):
+        return "Автосинк включен"
+    return "На паузе"
+
+
+def chatterfy_parser_next_run_text(config=None):
+    config = config or {}
+    if safe_text(config.get("sync_state")) == "running":
+        return "Сейчас идёт выгрузка"
+    if safe_text(config.get("sync_state")) == "pause_pending":
+        return "Сначала сделает последнюю выгрузку, потом остановится"
+    if not config.get("auto_sync_enabled"):
+        return "Автосинк выключен"
+    last_success = parse_datetime_flexible(config.get("last_success_at"))
+    if not last_success:
+        return "После нажатия Старт начнёт выгрузку сразу"
+    next_run = last_success + timedelta(hours=1)
+    return f"Следующая выгрузка около {next_run.strftime('%d.%m.%Y %H:%M')}"
+
+
+def build_chatterfy_parser_config_payload(
+    bot_url="",
+    email="",
+    password="",
+    date_start="",
+    date_end="",
+    auto_sync_enabled=False,
+    existing_config=None,
+):
+    existing_config = existing_config or {}
+    clean_password = safe_text(password)
+    return {
+        "bot_url": safe_text(bot_url) or safe_text(existing_config.get("bot_url")) or build_chatterfy_users_url(extract_chatterfy_bot_id(bot_url)),
+        "email": safe_text(email) or safe_text(existing_config.get("email")),
+        "password": clean_password if clean_password else safe_text(existing_config.get("password")),
+        "date_start": safe_text(date_start) or safe_text(existing_config.get("date_start")) or CHATTERFY_PARSER_DEFAULT_START,
+        "date_end": safe_text(date_end) or safe_text(existing_config.get("date_end")) or CHATTERFY_PARSER_DEFAULT_END,
+        "auto_sync_enabled": bool(auto_sync_enabled),
+        "sync_state": safe_text(existing_config.get("sync_state")) or "stopped",
+        "logs": list(existing_config.get("logs") or []),
+        "last_run_at": safe_text(existing_config.get("last_run_at")),
+        "last_success_at": safe_text(existing_config.get("last_success_at")),
+        "last_error": safe_text(existing_config.get("last_error")),
+        "last_count": safe_number(existing_config.get("last_count")),
+    }
+
+
+def perform_chatterfy_parser_sync(config, initiated_by="manual"):
+    if not CHATTERFY_SYNC_LOCK.acquire(blocking=False):
+        raise RuntimeError("Chatterfy sync is already running.")
+    try:
+        config = dict(config or {})
+        config["sync_state"] = "running"
+        config = chatterfy_parser_append_log("Запуск синхронизации. Начинаю обновление данных из Chatterfy.", kind="info", config=config)
+        bot_url = safe_text(config.get("bot_url"))
+        email = safe_text(config.get("email"))
+        password = safe_text(config.get("password"))
+        date_start = safe_text(config.get("date_start")) or CHATTERFY_PARSER_DEFAULT_START
+        date_end = safe_text(config.get("date_end")) or CHATTERFY_PARSER_DEFAULT_END
+        bot_id = extract_chatterfy_bot_id(bot_url)
+        if not bot_id:
+            raise ValueError("Invalid Chatterfy Users URL.")
+        if not email or not password:
+            raise ValueError("Chatterfy email and password are required for sync.")
+        config = chatterfy_parser_append_log("Проверяю доступ и вхожу в Chatterfy по вашим данным.", kind="info", config=config)
+        token = chatterfy_login_and_get_token(email, password)
+        config = chatterfy_parser_append_log("Вход выполнен. Получаю структуру бота и подготавливаю выгрузку.", kind="success", config=config)
+        def progress(message):
+            nonlocal config
+            config = chatterfy_parser_append_log(message, kind="info", config=config)
+        df, start_dt, end_dt = chatterfy_fetch_period_dataframe(bot_id, token, date_start, date_end, progress_callback=progress)
+        if df.empty:
+            raise RuntimeError(f"No chats found for {start_dt.strftime('%d.%m.%Y')} - {end_dt.strftime('%d.%m.%Y')}.")
+        config = chatterfy_parser_append_log(
+            f"Данные получены. Отфильтровал период {start_dt.strftime('%d.%m.%Y')} - {end_dt.strftime('%d.%m.%Y')} и подготовил {len(df)} записей.",
+            kind="info",
+            config=config,
+        )
+        source_name = f"Chatterfy API {start_dt.strftime('%d.%m.%Y')} - {end_dt.strftime('%d.%m.%Y')}"
+        config = chatterfy_parser_append_log("Загружаю обновлённые записи в раздел Chatterfy Parser внутри CRM.", kind="info", config=config)
+        result_count = import_chatterfy_parser_dataframe(df, source_name)
+        result = {"count": int(result_count)}
+        if result["count"] <= 0:
+            raise RuntimeError("Chatterfy data was fetched, but import returned zero rows.")
+        updated_config = dict(config)
+        pause_after_sync = safe_text(updated_config.get("sync_state")) == "pause_pending"
+        updated_config["last_run_at"] = datetime.utcnow().isoformat()
+        updated_config["last_success_at"] = datetime.utcnow().isoformat()
+        updated_config["last_error"] = ""
+        updated_config["last_count"] = int(result["count"])
+        updated_config["sync_state"] = "stopped" if pause_after_sync or not updated_config.get("auto_sync_enabled") else "idle"
+        if pause_after_sync:
+            updated_config["auto_sync_enabled"] = False
+            updated_config["sync_state"] = "stopped"
+        save_chatterfy_parser_config(updated_config)
+        chatterfy_parser_append_log(
+            f"Готово. В разделе Chatterfy Parser обновлено {result['count']} записей из Chatterfy.",
+            kind="success",
+            config=updated_config,
+        )
+        return {
+            "count": int(result["count"]),
+            "start_dt": start_dt,
+            "end_dt": end_dt,
+            "source_name": source_name,
+            "initiated_by": initiated_by,
+        }
+    except Exception as exc:
+        updated_config = dict(config or {})
+        updated_config["last_run_at"] = datetime.utcnow().isoformat()
+        updated_config["last_error"] = safe_text(exc)
+        updated_config["sync_state"] = "stopped" if not updated_config.get("auto_sync_enabled") else "idle"
+        save_chatterfy_parser_config(updated_config)
+        chatterfy_parser_append_log(f"Не получилось обновить данные: {exc}", kind="error", config=updated_config)
+        raise
+    finally:
+        CHATTERFY_SYNC_LOCK.release()
+
+
+def run_chatterfy_parser_sync_async(initiated_by="manual"):
+    def worker():
+        config = get_chatterfy_parser_config()
+        try:
+            perform_chatterfy_parser_sync(config, initiated_by=initiated_by)
+        except Exception:
+            pass
+        finally:
+            latest = get_chatterfy_parser_config()
+            if safe_text(latest.get("sync_state")) == "pause_pending":
+                latest["auto_sync_enabled"] = False
+                latest["sync_state"] = "stopped"
+                save_chatterfy_parser_config(latest)
+                chatterfy_parser_append_log("Автосинк остановлен. Больше почасовых выгрузок не будет, пока вы снова не нажмёте Старт.", kind="info")
+    threading.Thread(target=worker, name=f"chatterfy-sync-{initiated_by}", daemon=True).start()
+
+
+def chatterfy_parser_sync_worker():
+    while True:
+        try:
+            config = get_chatterfy_parser_config()
+            if config.get("auto_sync_enabled") and safe_text(config.get("sync_state")) != "running":
+                last_success = parse_datetime_flexible(config.get("last_success_at"))
+                now = datetime.utcnow()
+                if not last_success or (now - last_success) >= timedelta(hours=1):
+                    chatterfy_parser_append_log("Пришло время почасовой выгрузки. Запускаю очередное обновление.", kind="info", config=config)
+                    run_chatterfy_parser_sync_async(initiated_by="auto")
+        except Exception:
+            pass
+        time.sleep(60)
+
+
+def start_chatterfy_parser_sync_thread():
+    global CHATTERFY_SYNC_THREAD_STARTED
+    if CHATTERFY_SYNC_THREAD_STARTED:
+        return
+    worker = threading.Thread(target=chatterfy_parser_sync_worker, name="chatterfy-parser-sync", daemon=True)
+    worker.start()
+    CHATTERFY_SYNC_THREAD_STARTED = True
 
 
 def get_chatterfy_rows(status="", search="", date_filter="", time_filter="", telegram_id="", pp_player_id="", period_label=""):
@@ -3071,6 +3417,72 @@ def get_chatterfy_rows(status="", search="", date_filter="", time_filter="", tel
             "chat_link": linked_chat,
             "report_date": row_report_date,
             "period_label": row_period_label,
+        })
+    return filtered
+
+
+def get_chatterfy_parser_rows(status="", search="", date_filter="", time_filter="", telegram_id="", period_label=""):
+    ensure_chatterfy_parser_table()
+    telegram_digits = normalize_id_value(telegram_id)
+    db = SessionLocal()
+    try:
+        query = db.query(ChatterfyParserRow)
+        if status:
+            query = query.filter(ChatterfyParserRow.status == status)
+        if period_label:
+            query = query.filter(ChatterfyParserRow.period_label == period_label)
+        if search:
+            search_pattern = f"%{safe_text(search)}%"
+            query = query.filter(or_(
+                ChatterfyParserRow.name.ilike(search_pattern),
+                ChatterfyParserRow.username.ilike(search_pattern),
+                ChatterfyParserRow.telegram_id.ilike(search_pattern),
+                ChatterfyParserRow.tags.ilike(search_pattern),
+                ChatterfyParserRow.status.ilike(search_pattern),
+                ChatterfyParserRow.offer.ilike(search_pattern),
+                ChatterfyParserRow.manager.ilike(search_pattern),
+                ChatterfyParserRow.geo.ilike(search_pattern),
+                ChatterfyParserRow.step.ilike(search_pattern),
+            ))
+        rows = query.order_by(ChatterfyParserRow.id.desc()).all()
+    finally:
+        db.close()
+    filtered = []
+    search_lower = safe_text(search).lower()
+    for row in rows:
+        started_dt = parse_chatterfy_datetime(row.started)
+        started_date = started_dt.strftime("%d.%m.%Y") if started_dt else ""
+        started_time = started_dt.strftime("%H:%M") if started_dt else ""
+        row_report_date = safe_text(getattr(row, "report_date", "")) or (started_dt.strftime("%Y-%m-%d") if started_dt else "")
+        if date_filter and date_filter != started_date:
+            continue
+        if time_filter and not started_time.startswith(time_filter):
+            continue
+        if telegram_digits and normalize_id_value(row.telegram_id) != telegram_digits:
+            continue
+        if search_lower:
+            haystack = " | ".join([
+                row.name or "",
+                row.username or "",
+                row.telegram_id or "",
+                row.tags or "",
+                row.status or "",
+                row.offer or "",
+                row.manager or "",
+                row.geo or "",
+                row.step or "",
+                row.external_id or "",
+                started_date,
+                started_time,
+            ]).lower()
+            if search_lower not in haystack:
+                continue
+        filtered.append({
+            "row": row,
+            "started_date": started_date,
+            "started_time": started_time,
+            "report_date": row_report_date,
+            "period_label": safe_text(getattr(row, "period_label", "")),
         })
     return filtered
 
@@ -8577,15 +8989,56 @@ def render_dev_page(title, emoji, active_page, current_user=None):
 
 def chatterfy_parser_page_html(
     current_user,
+    rows,
     form_data=None,
+    status="",
+    search="",
+    date_filter="",
+    time_filter="",
+    telegram_id="",
+    page=1,
+    total_count=0,
+    per_page=100,
     success_text="",
     error_text="",
 ):
     form_data = form_data or {}
-    default_url = safe_text(form_data.get("bot_url")) or "https://new.chatterfy.ai/bots/e12733c2-7da6-4952-838b-8a318113c2bd/users"
-    default_email = safe_text(form_data.get("email"))
+    saved_config = get_chatterfy_parser_config()
+    default_url = safe_text(form_data.get("bot_url")) or safe_text(saved_config.get("bot_url")) or "https://new.chatterfy.ai/bots/e12733c2-7da6-4952-838b-8a318113c2bd/users"
+    default_email = safe_text(form_data.get("email")) or safe_text(saved_config.get("email"))
     default_start = safe_text(form_data.get("date_start")) or CHATTERFY_PARSER_DEFAULT_START
     default_end = safe_text(form_data.get("date_end")) or CHATTERFY_PARSER_DEFAULT_END
+    auto_sync_enabled = bool(saved_config.get("auto_sync_enabled"))
+    has_saved_password = bool(safe_text(saved_config.get("password")))
+    last_success_at = safe_text(saved_config.get("last_success_at"))
+    last_error = safe_text(saved_config.get("last_error"))
+    last_count = int(safe_number(saved_config.get("last_count")))
+    status_label = chatterfy_parser_status_label(saved_config)
+    next_run_text = chatterfy_parser_next_run_text(saved_config)
+    sync_state = safe_text(saved_config.get("sync_state")) or "stopped"
+    button_label = "Пауза" if auto_sync_enabled or sync_state in {"running", "pause_pending", "idle"} else "Старт"
+    logs = list(saved_config.get("logs") or [])
+    logs_html = ""
+    for item in reversed(logs[-60:]):
+        kind = safe_text(item.get("kind")) or "info"
+        kind_class = "task-chip"
+        if kind == "success":
+            kind_class = "chip good-chip"
+        elif kind == "error":
+            kind_class = "chip danger-chip"
+        elif kind == "info":
+            kind_class = "chip warn-chip"
+        logs_html += f"""
+        <div class="task-card" style="padding:16px 18px;">
+            <div style="display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap;">
+                <div class="{kind_class}">{escape(item.get('timestamp') or '')}</div>
+                <div class="muted">{escape('Этап работы' if kind == 'info' else 'Готово' if kind == 'success' else 'Нужна проверка')}</div>
+            </div>
+            <div style="margin-top:10px; font-size:15px; line-height:1.5;">{escape(item.get('message') or '')}</div>
+        </div>
+        """
+    if not logs_html:
+        logs_html = '<div class="panel">Журнал пока пуст. После запуска здесь появятся все шаги автозагрузки.</div>'
 
     message_html = ""
     if success_text:
@@ -8593,17 +9046,70 @@ def chatterfy_parser_page_html(
     if error_text:
         message_html += f'<div class="notice notice-danger">{escape(error_text)}</div>'
 
+    auto_reload_html = ""
+    if sync_state in {"running", "pause_pending"} or auto_sync_enabled:
+        auto_reload_html = """
+        <script>
+            setTimeout(function() {
+                window.location.reload();
+            }, 15000);
+        </script>
+        """
+
+    status_values = sorted({safe_text(item["row"].status) for item in rows if safe_text(item["row"].status)})
+    status_options = make_options(status_values, status)
+    base_qs = build_query_string(
+        status=status,
+        search=search,
+        date_filter=date_filter,
+        time_filter=time_filter,
+        telegram_id=telegram_id,
+    )
+    total_pages = max(1, (int(total_count or 0) + per_page - 1) // per_page)
+    prev_link = f"/chatterfy-parser?{base_qs}&page={page - 1}" if page > 1 else ""
+    next_link = f"/chatterfy-parser?{base_qs}&page={page + 1}" if page < total_pages else ""
+    table_rows_html = ""
+    for item in rows:
+        row = item["row"]
+        table_rows_html += f"""
+        <tr>
+            <td>{escape(item.get("report_date") or "")}</td>
+            <td>{escape(item.get("period_label") or "")}</td>
+            <td>{escape(item.get("started_date") or "")}</td>
+            <td>{escape(item.get("started_time") or "")}</td>
+            <td>{escape(row.name or "")}</td>
+            <td>{escape(row.telegram_id or "")}</td>
+            <td>{escape(row.username or "")}</td>
+            <td>{escape(row.tags or "")}</td>
+            <td>{escape(row.launch_date or "")}</td>
+            <td>{escape(row.platform or "")}</td>
+            <td>{escape(row.manager or "")}</td>
+            <td>{escape(row.geo or "")}</td>
+            <td>{escape(row.offer or "")}</td>
+            <td>{escape(row.status or "")}</td>
+            <td>{escape(row.step or "")}</td>
+            <td>{escape(row.external_id or "")}</td>
+        </tr>
+        """
+
     content = f"""
     {message_html}
     <div class="panel compact-panel">
         <div class="empty-dev" style="padding:0;">
-            <div class="empty-dev-card" style="width:min(100%, 760px); text-align:left;">
+            <div class="empty-dev-card" style="width:min(100%, 920px); text-align:left;">
                 <div class="big">🧩 Chatterfy Parser</div>
                 <div class="muted" style="margin-top:8px;">
-                    Импортирует только пользователей, у которых <b>Started</b> попадает в выбранный диапазон.
-                    Сейчас по умолчанию выставлен период <b>16.03.2026 - 31.03.2026</b>.
+                    Здесь работает только автозагрузка. Парсер сам заходит в Chatterfy, забирает данные за выбранный период и обновляет CRM раз в час.
                 </div>
-                <form method="post" action="/chatterfy-parser/run" style="margin-top:18px; display:grid; gap:12px;">
+                <div class="stats-grid" style="margin-top:18px;">
+                    <div class="stat-card"><div class="name">Статус</div><div class="value" style="font-size:24px;">{escape(status_label)}</div></div>
+                    <div class="stat-card"><div class="name">Что дальше</div><div class="value" style="font-size:18px;">{escape(next_run_text)}</div></div>
+                    <div class="stat-card"><div class="name">Последняя удачная выгрузка</div><div class="value" style="font-size:18px;">{escape(last_success_at or 'Пока не было')}</div></div>
+                    <div class="stat-card"><div class="name">Загружено в последний раз</div><div class="value" style="font-size:24px;">{last_count}</div></div>
+                </div>
+                {f'<div class="notice notice-danger" style="margin-top:14px;">{escape(last_error)}</div>' if last_error else ''}
+                <form method="post" action="/chatterfy-parser/toggle" style="margin-top:18px; display:grid; gap:12px;">
+                    <div class="panel-subtitle" style="margin-bottom:2px;">Настройки доступа и периода. Ручная выгрузка здесь не используется.</div>
                     <label>Chatterfy Users URL
                         <input type="text" name="bot_url" value="{escape(default_url)}" required placeholder="https://new.chatterfy.ai/bots/.../users">
                     </label>
@@ -8611,7 +9117,7 @@ def chatterfy_parser_page_html(
                         <input type="text" name="email" value="{escape(default_email)}" required placeholder="example@gmail.com">
                     </label>
                     <label>Password
-                        <input type="password" name="password" value="" required placeholder="Chatterfy password">
+                        <input type="password" name="password" value="" {"required" if not has_saved_password else ""} placeholder="{escape('Stored password will be used' if has_saved_password else 'Chatterfy password')}">
                     </label>
                     <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
                         <label>Date From
@@ -8622,13 +9128,75 @@ def chatterfy_parser_page_html(
                         </label>
                     </div>
                     <div style="display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap;">
-                        <a href="/chatterfy" class="ghost-btn small-btn">Open Chatterfy</a>
-                        <button type="submit" class="btn small-btn">Fetch And Import</button>
+                        <button type="submit" class="btn small-btn">{escape(button_label)}</button>
                     </div>
                 </form>
             </div>
         </div>
     </div>
+    <div class="panel compact-panel">
+        <div class="controls-line">
+            <div>
+                <div class="panel-title">Журнал работы</div>
+                <div class="panel-subtitle">Здесь видно, что именно парсер делает сейчас и на каком он этапе.</div>
+            </div>
+        </div>
+        <div class="task-stack" style="margin-top:16px;">{logs_html}</div>
+    </div>
+    <div class="panel compact-panel">
+        <div class="controls-line">
+            <div>
+                <div class="panel-title">Данные Парсера</div>
+                <div class="panel-subtitle">Здесь лежат только данные, которые загружены автоматическим парсером.</div>
+            </div>
+        </div>
+        <div class="panel compact-panel filters" style="margin-top:16px;">
+            <form method="get" action="/chatterfy-parser" data-persist-filters="chatterfy-parser">
+                <label>Date<input type="text" name="date_filter" value="{escape(date_filter)}" placeholder=""></label>
+                <label>Time<input type="text" name="time_filter" value="{escape(time_filter)}" placeholder=""></label>
+                <label>Telegram ID<input type="text" name="telegram_id" value="{escape(telegram_id)}" placeholder=""></label>
+                <label>Status<select name="status">{status_options}</select></label>
+                <label>Search<input type="text" name="search" value="{escape(search)}" placeholder=""></label>
+                <input type="hidden" name="page" value="1">
+                <button type="submit" class="btn small-btn">Filter</button>
+                <a href="/chatterfy-parser" class="ghost-btn small-btn" data-reset-filters="chatterfy-parser">Reset</a>
+            </form>
+        </div>
+        <div class="table-wrap" style="margin-top:16px;">
+            <table style="min-width:1900px;">
+                <thead>
+                    <tr>
+                        <th>Report Date</th>
+                        <th>Period</th>
+                        <th>Date</th>
+                        <th>Time</th>
+                        <th>Name</th>
+                        <th>Telegram ID</th>
+                        <th>Username</th>
+                        <th>Tags</th>
+                        <th>Tag Date</th>
+                        <th>Platform</th>
+                        <th>Manager</th>
+                        <th>Geo</th>
+                        <th>Offer</th>
+                        <th>Status</th>
+                        <th>Step</th>
+                        <th>External ID</th>
+                    </tr>
+                </thead>
+                <tbody>{table_rows_html if table_rows_html else '<tr><td colspan="16">Парсер пока ничего не загрузил</td></tr>'}</tbody>
+            </table>
+        </div>
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:14px; flex-wrap:wrap;">
+            <div class="user-chip">{len(rows)} / {total_count}</div>
+            <div style="display:flex; gap:8px; align-items:center;">
+                {f'<a href="{prev_link}" class="ghost-btn small-btn">Prev</a>' if prev_link else '<span class="ghost-btn small-btn" style="opacity:0.45; pointer-events:none;">Prev</span>'}
+                <span class="user-chip">Page {page} / {total_pages}</span>
+                {f'<a href="{next_link}" class="ghost-btn small-btn">Next</a>' if next_link else '<span class="ghost-btn small-btn" style="opacity:0.45; pointer-events:none;">Next</span>'}
+            </div>
+        </div>
+    </div>
+    {auto_reload_html}
     """
     return page_shell("Chatterfy Parser", content, active_page="chatterfyparser", current_user=current_user)
 
@@ -8636,6 +9204,12 @@ def chatterfy_parser_page_html(
 @app.get("/chatterfy-parser", response_class=HTMLResponse)
 def chatterfy_parser_page(
     request: Request,
+    status: str = Query(default=""),
+    search: str = Query(default=""),
+    date_filter: str = Query(default=""),
+    time_filter: str = Query(default=""),
+    telegram_id: str = Query(default=""),
+    page: int = Query(default=1),
     bot_url: str = Query(default=""),
     email: str = Query(default=""),
     date_start: str = Query(default=CHATTERFY_PARSER_DEFAULT_START),
@@ -8646,24 +9220,44 @@ def chatterfy_parser_page(
     if not user:
         return auth_redirect_response()
     enforce_page_access(user, "chatterfyparser")
+    rows = get_chatterfy_parser_rows(
+        status=status,
+        search=search,
+        date_filter=date_filter,
+        time_filter=time_filter,
+        telegram_id=telegram_id,
+    )
+    per_page = 100
+    page = max(1, int(page or 1))
+    start = (page - 1) * per_page
+    page_rows = rows[start:start + per_page]
     return chatterfy_parser_page_html(
         user,
+        page_rows,
         form_data={
             "bot_url": bot_url,
             "email": email,
             "date_start": date_start,
             "date_end": date_end,
         },
+        status=status,
+        search=search,
+        date_filter=date_filter,
+        time_filter=time_filter,
+        telegram_id=telegram_id,
+        page=page,
+        total_count=len(rows),
+        per_page=per_page,
         success_text=message,
     )
 
 
-@app.post("/chatterfy-parser/run")
-def run_chatterfy_parser(
+@app.post("/chatterfy-parser/toggle")
+def toggle_chatterfy_parser(
     request: Request,
     bot_url: str = Form(...),
     email: str = Form(...),
-    password: str = Form(...),
+    password: str = Form(default=""),
     date_start: str = Form(default=CHATTERFY_PARSER_DEFAULT_START),
     date_end: str = Form(default=CHATTERFY_PARSER_DEFAULT_END),
 ):
@@ -8672,51 +9266,56 @@ def run_chatterfy_parser(
         return auth_redirect_response()
     enforce_page_access(user, "chatterfyparser")
 
-    form_data = {
-        "bot_url": safe_text(bot_url),
-        "email": safe_text(email),
-        "date_start": safe_text(date_start) or CHATTERFY_PARSER_DEFAULT_START,
-        "date_end": safe_text(date_end) or CHATTERFY_PARSER_DEFAULT_END,
-    }
+    existing_config = get_chatterfy_parser_config()
+    form_data = build_chatterfy_parser_config_payload(
+        bot_url=bot_url,
+        email=email,
+        password=password,
+        date_start=date_start,
+        date_end=date_end,
+        auto_sync_enabled=bool(existing_config.get("auto_sync_enabled")),
+        existing_config=existing_config,
+    )
     bot_id = extract_chatterfy_bot_id(bot_url)
     if not bot_id:
         return HTMLResponse(
-            chatterfy_parser_page_html(user, form_data=form_data, error_text="Invalid Chatterfy Users URL. Expected format: /bots/<bot_id>/users"),
+            chatterfy_parser_page_html(user, [], form_data=form_data, error_text="Invalid Chatterfy Users URL. Expected format: /bots/<bot_id>/users"),
             status_code=400,
         )
 
     try:
-        token = chatterfy_login_and_get_token(email, password)
-        df, start_dt, end_dt = chatterfy_fetch_period_dataframe(bot_id, token, form_data["date_start"], form_data["date_end"])
-        if df.empty:
-            return HTMLResponse(
-                chatterfy_parser_page_html(
-                    user,
-                    form_data=form_data,
-                    error_text=f"No chats found for {start_dt.strftime('%d.%m.%Y')} - {end_dt.strftime('%d.%m.%Y')}.",
-                ),
-                status_code=400,
-            )
-        source_name = f"Chatterfy API {start_dt.strftime('%d.%m.%Y')} - {end_dt.strftime('%d.%m.%Y')}"
-        result = import_chatterfy_upload_dataframe(df, source_name, upload_kind="main")
-        if result["count"] <= 0:
-            return HTMLResponse(
-                chatterfy_parser_page_html(user, form_data=form_data, error_text="Chatterfy data was fetched, but the import format was invalid."),
-                status_code=400,
-            )
+        is_active = bool(existing_config.get("auto_sync_enabled")) or safe_text(existing_config.get("sync_state")) in {"running", "pause_pending", "idle"}
+        if is_active:
+            updated = dict(form_data)
+            updated["auto_sync_enabled"] = True
+            updated["sync_state"] = "pause_pending"
+            save_chatterfy_parser_config(updated)
+            chatterfy_parser_append_log("Нажата Пауза. Делаю последнюю выгрузку и после этого остановлю автосинк.", kind="info", config=updated)
+            if not CHATTERFY_SYNC_LOCK.locked():
+                run_chatterfy_parser_sync_async(initiated_by="pause")
+            success_message = "Пауза принята. Парсер сделает последнюю выгрузку и остановится."
+        else:
+            updated = dict(form_data)
+            updated["auto_sync_enabled"] = True
+            updated["sync_state"] = "idle"
+            save_chatterfy_parser_config(updated)
+            chatterfy_parser_append_log("Нажат Старт. Включаю штатный режим и запускаю первую выгрузку.", kind="success", config=updated)
+            if not CHATTERFY_SYNC_LOCK.locked():
+                run_chatterfy_parser_sync_async(initiated_by="start")
+            success_message = "Автосинк включён. Первая выгрузка уже запущена, дальше обновление будет раз в час."
         return RedirectResponse(
             url=(
                 f"/chatterfy-parser?bot_url={quote_plus(build_chatterfy_users_url(bot_id))}"
                 f"&email={quote_plus(safe_text(email))}"
                 f"&date_start={quote_plus(form_data['date_start'])}"
                 f"&date_end={quote_plus(form_data['date_end'])}"
-                f"&message={quote_plus(f'Imported {result['count']} chats for {start_dt.strftime('%d.%m.%Y')} - {end_dt.strftime('%d.%m.%Y')}')}"
+                f"&message={quote_plus(success_message)}"
             ),
             status_code=303,
         )
     except Exception as exc:
         return HTMLResponse(
-            chatterfy_parser_page_html(user, form_data=form_data, error_text=f"Could not import Chatterfy data: {exc}"),
+            chatterfy_parser_page_html(user, [], form_data=form_data, error_text=f"Could not import Chatterfy data: {exc}"),
             status_code=400,
         )
 
