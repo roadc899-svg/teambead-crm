@@ -1270,13 +1270,21 @@ def get_caps_rows(search="", buyer="", code="", owner_name="", period_label=""):
 def get_caps_filter_options(period_label=""):
     ensure_caps_table()
     ensure_partner_table()
+    ensure_cabinet_table()
     db = SessionLocal()
     try:
-        query = db.query(PartnerRow)
-        if period_label:
-            query = query.filter(PartnerRow.period_label == period_label)
-        partner_rows = query.all()
-        cabinets = sorted({safe_text(value.cabinet_name) for value in partner_rows if safe_text(value.cabinet_name)})
+        cabinet_rows = db.query(CabinetRow).order_by(CabinetRow.name.asc(), CabinetRow.id.asc()).all()
+        cabinets = []
+        seen_cabinets = set()
+        for row in cabinet_rows:
+            value = safe_text(row.name).strip()
+            if not value:
+                continue
+            key = value.lower()
+            if key in seen_cabinets:
+                continue
+            seen_cabinets.add(key)
+            cabinets.append(value)
 
         owners_query = db.query(CapRow)
         if period_label:
@@ -4468,6 +4476,7 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                             year: 'numeric',
                             hour: '2-digit',
                             minute: '2-digit',
+                            second: '2-digit',
                             hour12: false,
                         }}).formatToParts(now);
                         const data = Object.fromEntries(parts.filter(function(part) {{
@@ -4475,11 +4484,11 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                         }}).map(function(part) {{
                             return [part.type, part.value];
                         }}));
-                        target.textContent = data.day + '.' + data.month + '.' + data.year + ' · ' + data.hour + ':' + data.minute + ' Kyiv GMT+2';
+                        target.textContent = data.day + '.' + data.month + '.' + data.year + ' · ' + data.hour + ':' + data.minute + ':' + data.second + ' Kyiv GMT+2';
                     }} catch (error) {{}}
                 }}
                 render();
-                setInterval(render, 30000);
+                setInterval(render, 1000);
             }})();
             (function initPersistentFilters() {{
                 function getFormKey(form) {{
