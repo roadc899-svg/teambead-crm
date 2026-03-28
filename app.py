@@ -3009,6 +3009,7 @@ def aggregate_partner_totals(rows):
         "qualified_ftd_count": sum(1 for r in rows if bool(getattr(r, "is_qualified_ftd", False))),
         "avg_deposit": (deposits_total / ftd_count) if ftd_count > 0 else 0.0,
         "sumdep2spend": ((deposits_total / cpa_total) * 100) if cpa_total > 0 else 0.0,
+        "bet_to_deposit_ratio": ((bets_total / deposits_total) * 100) if deposits_total > 0 else 0.0,
     }
 def refresh_cap_current_ftd_from_partner():
     ensure_partner_table()
@@ -4405,14 +4406,20 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             }}
             .players-toolbar {{
                 align-items: flex-start;
+                row-gap: 8px;
+            }}
+            .players-toolbar .players-export-link {{
+                order: 0;
+                flex: 0 0 auto;
+                align-self: flex-start;
             }}
             .players-toolbar .panel.compact-panel.filters {{
                 order: 1;
-                flex: 1 1 760px;
-                min-width: min(760px, 100%);
+                flex: 1 1 700px;
+                min-width: min(700px, 100%);
             }}
             .players-toolbar .caps-toolbar-stats {{
-                order: 2;
+                order: 3;
             }}
             .players-toolbar .players-filter-form {{
                 display: flex;
@@ -4439,11 +4446,11 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 flex: 1 1 190px;
             }}
             .players-toolbar .players-side-tools {{
-                order: 3;
-                display: grid;
+                order: 2;
+                display: flex;
                 gap: 8px;
-                align-items: start;
-                justify-items: end;
+                align-items: flex-start;
+                justify-content: flex-end;
                 margin-left: auto;
                 flex: 0 0 auto;
             }}
@@ -4468,7 +4475,7 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 display: flex;
                 gap: 8px;
                 justify-content: flex-end;
-                width: 100%;
+                flex: 0 0 auto;
             }}
             .toolbar-actions .caps-toolbar-stats {{
                 order:2;
@@ -8901,12 +8908,25 @@ def partner_report_page_html(
         )
         return f'<a href="/partner-report?{qs}">{escape(label)}{arrow}</a>'
 
+    export_qs = build_query_string(
+        source_name=source_name,
+        period_view=period_view,
+        period_label=period_label,
+        cabinet_name=cabinet_name,
+        brand=brand,
+        geo=geo,
+        search=search,
+        sort_by=sort_by,
+        order=order,
+    )
+
     content = f"""
     {message_html}
     {render_active_period_banner(period_label)}
 
     <div class="panel compact-panel">
         <div class="toolbar-actions players-toolbar">
+                <a href="/partner-report/export?{export_qs}" class="ghost-btn small-btn toolbar-square-icon-btn players-export-link" aria-label="Export CSV" title="Export CSV">CSV</a>
                 <div class="panel compact-panel filters">
                     <form method="get" action="/partner-report" class="players-filter-form" data-persist-filters="partner-report">
                         <input type="hidden" name="period_view" value="period">
@@ -8926,54 +8946,55 @@ def partner_report_page_html(
                     <div class="mini-stat"><div class="name">deposit sum</div><div class="value">${totals['deposits']:,.2f}</div></div>
                     <div class="mini-stat"><div class="name">avg deposit</div><div class="value">${totals['avg_deposit']:,.2f}</div></div>
                     <div class="mini-stat"><div class="name">bet sum</div><div class="value">${totals['bets']:,.2f}</div></div>
+                    <div class="mini-stat"><div class="name">bet/deposit</div><div class="value">{totals['bet_to_deposit_ratio']:,.2f}%</div></div>
                     <div class="mini-stat"><div class="name">sumdep2spend</div><div class="value">{totals['sumdep2spend']:,.2f}%</div></div>
                     <div class="mini-stat"><div class="name">ngr</div><div class="value">${totals['income']:,.2f}</div></div>
                     <div class="mini-stat"><div class="name">cpa</div><div class="value">${totals['cpa']:,.2f}</div></div>
                 </div>
                 <div class="players-side-tools">
                 <div class="players-icon-stack">
-                <details class="upload-menu upload-menu-right" style="z-index:90;">
-                    <summary class="btn toggle-indicator toolbar-square-trigger" aria-label="Upload players" title="Upload players"></summary>
-                    <div class="upload-menu-list" style="width:380px; max-width:min(380px, calc(100vw - 48px));">
-                        <form method="post" action="/partner-report/upload" enctype="multipart/form-data">
-                            <input type="hidden" name="period_view" value="{escape(period_view)}">
-                            <input type="hidden" name="period_label" value="{escape(period_label)}">
-                            <label>Platform
-                                <select name="partner_platform" id="partner-upload-platform" required>{upload_platform_options}</select>
-                            </label>
-                            <label>Cabinet
-                                <select name="cabinet_name" id="partner-upload-cabinet" required>{upload_cabinet_options}</select>
-                            </label>
-                            <label>Partner File
-                                <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
-                            </label>
-                            <button type="submit" class="btn small-btn">Upload</button>
-                        </form>
-                    </div>
-                </details>
-                <details class="upload-menu upload-menu-right" style="z-index:89;">
-                    <summary class="ghost-btn small-btn toolbar-square-icon-btn" aria-label="Delete upload" title="Delete upload">🗑</summary>
-                    <div class="upload-menu-list" style="width:min(860px, calc(100vw - 48px));">
-                        <div class="panel-subtitle">Choose the exact cabinet and period upload you want to remove.</div>
-                        <div class="table-wrap" style="margin-top:8px;">
-                            <table style="min-width:780px;">
-                                <thead>
-                                    <tr>
-                                        <th>Cabinet</th>
-                                        <th>Platform</th>
-                                        <th>Period</th>
-                                        <th>From</th>
-                                        <th>To</th>
-                                        <th>Rows</th>
-                                        <th>FTD</th>
-                                        <th>Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody>{delete_upload_rows if delete_upload_rows else '<tr><td colspan="8">No uploads yet</td></tr>'}</tbody>
-                            </table>
+                    <details class="upload-menu upload-menu-right" style="z-index:89;">
+                        <summary class="ghost-btn small-btn toolbar-square-icon-btn" aria-label="Delete upload" title="Delete upload">🗑</summary>
+                        <div class="upload-menu-list" style="width:min(860px, calc(100vw - 48px));">
+                            <div class="panel-subtitle">Choose the exact cabinet and period upload you want to remove.</div>
+                            <div class="table-wrap" style="margin-top:8px;">
+                                <table style="min-width:780px;">
+                                    <thead>
+                                        <tr>
+                                            <th>Cabinet</th>
+                                            <th>Platform</th>
+                                            <th>Period</th>
+                                            <th>From</th>
+                                            <th>To</th>
+                                            <th>Rows</th>
+                                            <th>FTD</th>
+                                            <th>Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>{delete_upload_rows if delete_upload_rows else '<tr><td colspan="8">No uploads yet</td></tr>'}</tbody>
+                                </table>
+                            </div>
                         </div>
-                    </div>
-                </details>
+                    </details>
+                    <details class="upload-menu upload-menu-right" style="z-index:90;">
+                        <summary class="btn toggle-indicator toolbar-square-trigger" aria-label="Upload players" title="Upload players"></summary>
+                        <div class="upload-menu-list" style="width:380px; max-width:min(380px, calc(100vw - 48px));">
+                            <form method="post" action="/partner-report/upload" enctype="multipart/form-data">
+                                <input type="hidden" name="period_view" value="{escape(period_view)}">
+                                <input type="hidden" name="period_label" value="{escape(period_label)}">
+                                <label>Platform
+                                    <select name="partner_platform" id="partner-upload-platform" required>{upload_platform_options}</select>
+                                </label>
+                                <label>Cabinet
+                                    <select name="cabinet_name" id="partner-upload-cabinet" required>{upload_cabinet_options}</select>
+                                </label>
+                                <label>Partner File
+                                    <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
+                                </label>
+                                <button type="submit" class="btn small-btn">Upload</button>
+                            </form>
+                        </div>
+                    </details>
                 </div>
                 <form method="get" action="/partner-report" class="players-upload-filter">
                     <input type="hidden" name="period_view" value="period">
@@ -10901,6 +10922,74 @@ def partner_report_page(
         sort_by=sort_by,
         order=order,
         success_text=message,
+    )
+
+
+@app.get("/partner-report/export")
+def export_partner_report_csv(
+    request: Request,
+    source_name: str = Query(default=""),
+    period_view: str = Query(default="current"),
+    period_label: str = Query(default=""),
+    cabinet_name: str = Query(default=""),
+    brand: str = Query(default=""),
+    geo: str = Query(default=""),
+    search: str = Query(default=""),
+    sort_by: str = Query(default="id"),
+    order: str = Query(default="desc"),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "partner")
+    effective_period_label = resolve_period_label(period_view, period_label) or get_current_period_label()
+    rows = get_partner_rows_by_period(
+        period_value=source_name,
+        period_label=effective_period_label,
+        cabinet_name=cabinet_name,
+        brand=brand,
+        geo=geo,
+        search=search,
+    )
+
+    reverse = order != "asc"
+    numeric_fields = {"deposit_amount", "bet_amount", "company_income", "cpa_amount"}
+
+    def sort_value(row):
+        value = getattr(row, sort_by, "")
+        if sort_by in numeric_fields:
+            return safe_number(value)
+        if sort_by == "id":
+            return safe_number(row.id)
+        if sort_by in {"brand_name", "geo_name"}:
+            return safe_text(value).lower()
+        return safe_text(value).lower()
+
+    rows.sort(key=sort_value, reverse=reverse)
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Brands", "Cabinet", "Geo", "Registration", "ID", "Deposit Sum", "Bet Sum", "NGR", "SubID", "CPA", "Period", "Upload"])
+    for row in rows:
+        writer.writerow([
+            safe_text(getattr(row, "brand_name", "")),
+            safe_text(getattr(row, "cabinet_name", "")),
+            safe_text(getattr(row, "geo_name", "")),
+            safe_text(getattr(row, "registration_date", "")),
+            safe_text(getattr(row, "player_id", "")),
+            f"{safe_number(getattr(row, 'deposit_amount', 0)):.2f}" if getattr(row, "deposit_amount", None) not in [None, ""] else "",
+            f"{safe_number(getattr(row, 'bet_amount', 0)):.2f}" if getattr(row, "bet_amount", None) not in [None, ""] else "",
+            f"{safe_number(getattr(row, 'company_income', 0)):.2f}" if getattr(row, "company_income", None) not in [None, ""] else "",
+            safe_text(getattr(row, "sub_id", "")),
+            f"{safe_number(getattr(row, 'cpa_amount', 0)):.2f}" if getattr(row, "cpa_amount", None) not in [None, ""] else "",
+            safe_text(partner_row_period_label(row)),
+            safe_text(getattr(row, "source_name", "")),
+        ])
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename=players_{effective_period_label.replace(' ', '_')}.csv"},
     )
 
 
