@@ -3951,6 +3951,33 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 border-radius:999px;
                 background: linear-gradient(90deg, var(--accent3), var(--accent1));
             }}
+            .progress-shell.progress-free {{
+                color: #93a4bf;
+            }}
+            .progress-shell.progress-free .progress-bar {{
+                background: rgba(148, 163, 184, 0.18);
+            }}
+            .progress-shell.progress-free .progress-bar > span {{
+                background: linear-gradient(90deg, #94a3b8, #cbd5e1);
+            }}
+            .progress-shell.progress-filling {{
+                color: #fbbf24;
+            }}
+            .progress-shell.progress-filling .progress-bar {{
+                background: rgba(251, 191, 36, 0.18);
+            }}
+            .progress-shell.progress-filling .progress-bar > span {{
+                background: linear-gradient(90deg, #f59e0b, #facc15);
+            }}
+            .progress-shell.progress-overflow {{
+                color: #f87171;
+            }}
+            .progress-shell.progress-overflow .progress-bar {{
+                background: rgba(248, 113, 113, 0.18);
+            }}
+            .progress-shell.progress-overflow .progress-bar > span {{
+                background: linear-gradient(90deg, #ef4444, #dc2626);
+            }}
             .tasks-layout {{ display:grid; grid-template-columns: minmax(360px, 430px) 1fr; gap:16px; align-items:start; }}
             .tasks-form {{ display:grid; gap:12px; }}
             .tasks-form label {{ display:grid; gap:6px; font-size:12px; font-weight:800; }}
@@ -4804,11 +4831,14 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         fill_percent = cap_fill_percent(row.current_ftd, row.cap_value)
         bar_width = max(0, min(100, fill_percent))
         remaining_value = max(0.0, safe_number(row.cap_value) - safe_number(row.current_ftd))
-        state = "OK"
+        state = "Free"
+        progress_class = "progress-free"
         if fill_percent >= 100:
-            state = "FULL"
-        elif fill_percent >= 80:
-            state = "HOT"
+            state = "Overflow"
+            progress_class = "progress-overflow"
+        elif safe_number(row.current_ftd) > 0:
+            state = "Filling"
+            progress_class = "progress-filling"
         rows_html += f"""
         <tr>
             <td class="id-col">{row.id}</td>
@@ -4824,7 +4854,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             <td class="current-col">{format_int_or_float(row.current_ftd)}</td>
             <td class="remaining-col">{format_int_or_float(remaining_value)}</td>
             <td class="fill-col">
-                <div class="progress-shell">
+                <div class="progress-shell {progress_class}">
                     <div><strong>{fill_percent:.0f}%</strong> · {state}</div>
                     <div class="progress-bar"><span style="width:{bar_width}%;"></span></div>
                 </div>
@@ -4953,9 +4983,12 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     <input type="number" step="0.01" name="cap_value" value="{escape(form_data.get('cap_value', ''))}" required>
                 </label>
                 <label>Buyer
-                    <input type="text" name="buyer" list="capCabinetOptions" value="{escape(form_data.get('buyer', ''))}" required placeholder="Who took this cap">
+                    <input type="text" name="buyer" value="{escape(form_data.get('buyer', ''))}" required placeholder="Buyer">
                 </label>
             </div>
+            <label>Current FTD
+                <input type="number" step="0.01" name="current_ftd" value="{escape(form_data.get('current_ftd', '0'))}">
+            </label>
             <div class="caps-grid-2">
                 <label>Promo Code
                     <input type="text" name="promo_code" value="{escape(form_data.get('promo_code', ''))}">
