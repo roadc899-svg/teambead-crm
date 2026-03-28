@@ -3192,10 +3192,10 @@ def chatterfy_parser_next_run_text(config=None):
         return "Сначала сделает последнюю выгрузку, потом остановится"
     if not config.get("auto_sync_enabled"):
         return "Автосинк выключен"
-    last_success = parse_datetime_flexible(config.get("last_success_at"))
-    if not last_success:
+    last_run = parse_datetime_flexible(config.get("last_run_at"))
+    if not last_run:
         return "После нажатия Старт начнёт выгрузку сразу"
-    next_run = last_success + timedelta(hours=1)
+    next_run = last_run + timedelta(hours=1)
     return f"Следующая выгрузка около {next_run.strftime('%d.%m.%Y %H:%M')}"
 
 
@@ -3320,9 +3320,9 @@ def chatterfy_parser_sync_worker():
         try:
             config = get_chatterfy_parser_config()
             if config.get("auto_sync_enabled") and safe_text(config.get("sync_state")) != "running":
-                last_success = parse_datetime_flexible(config.get("last_success_at"))
+                last_run = parse_datetime_flexible(config.get("last_run_at"))
                 now = datetime.utcnow()
-                if not last_success or (now - last_success) >= timedelta(hours=1):
+                if not last_run or (now - last_run) >= timedelta(hours=1):
                     chatterfy_parser_append_log("Пришло время почасовой выгрузки. Запускаю очередное обновление.", kind="info", config=config)
                     run_chatterfy_parser_sync_async(initiated_by="auto")
         except Exception:
@@ -9010,51 +9010,44 @@ def chatterfy_parser_page_html(
     default_end = safe_text(form_data.get("date_end")) or CHATTERFY_PARSER_DEFAULT_END
     auto_sync_enabled = bool(saved_config.get("auto_sync_enabled"))
     has_saved_password = bool(safe_text(saved_config.get("password")))
-    last_success_at = safe_text(saved_config.get("last_success_at"))
+    last_success_dt = parse_datetime_flexible(saved_config.get("last_success_at"))
+    last_success_at = last_success_dt.strftime("%d.%m.%Y %H:%M") if last_success_dt else ""
     last_error = safe_text(saved_config.get("last_error"))
     last_count = int(safe_number(saved_config.get("last_count")))
     status_label = chatterfy_parser_status_label(saved_config)
     next_run_text = chatterfy_parser_next_run_text(saved_config)
     sync_state = safe_text(saved_config.get("sync_state")) or "stopped"
     button_label = "Пауза" if auto_sync_enabled or sync_state in {"running", "pause_pending", "idle"} else "Старт"
+    button_style = "background:#d94b4b; border-color:#d94b4b; color:#fff;" if button_label == "Пауза" else "background:#2f9e5b; border-color:#2f9e5b; color:#fff;"
     logs = list(saved_config.get("logs") or [])
     logs_html = ""
-    for item in reversed(logs[-60:]):
+    for item in logs[-14:]:
         kind = safe_text(item.get("kind")) or "info"
-        kind_class = "task-chip"
+        kind_label = "В работе"
+        kind_style = "background:#eef1f5; color:#52607a; border:1px solid #d5ddea;"
         if kind == "success":
-            kind_class = "chip good-chip"
+            kind_label = "Готово"
+            kind_style = "background:#eaf8ee; color:#1d7a42; border:1px solid #bfe4c9;"
         elif kind == "error":
-            kind_class = "chip danger-chip"
-        elif kind == "info":
-            kind_class = "chip warn-chip"
+            kind_label = "Ошибка"
+            kind_style = "background:#fff0f0; color:#c23d3d; border:1px solid #f1bcbc;"
         logs_html += f"""
-        <div class="task-card" style="padding:16px 18px;">
-            <div style="display:flex; gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap;">
-                <div class="{kind_class}">{escape(item.get('timestamp') or '')}</div>
-                <div class="muted">{escape('Этап работы' if kind == 'info' else 'Готово' if kind == 'success' else 'Нужна проверка')}</div>
+        <div style="display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:start; padding:12px 14px; border-bottom:1px solid #edf1f7;">
+            <div style="padding:6px 10px; border-radius:999px; font-size:12px; font-weight:800; white-space:nowrap; {kind_style}">{escape(kind_label)}</div>
+            <div>
+                <div style="font-size:12px; color:#7a8699; margin-bottom:4px;">{escape(item.get('timestamp') or '')}</div>
+                <div style="font-size:14px; line-height:1.45; color:#22314a;">{escape(item.get('message') or '')}</div>
             </div>
-            <div style="margin-top:10px; font-size:15px; line-height:1.5;">{escape(item.get('message') or '')}</div>
         </div>
         """
     if not logs_html:
-        logs_html = '<div class="panel">Журнал пока пуст. После запуска здесь появятся все шаги автозагрузки.</div>'
+        logs_html = '<div style="padding:18px; color:#6b7a90;">Журнал пока пуст. После запуска здесь появятся шаги автозагрузки.</div>'
 
     message_html = ""
     if success_text:
         message_html += f'<div class="notice">{escape(success_text)}</div>'
     if error_text:
         message_html += f'<div class="notice notice-danger">{escape(error_text)}</div>'
-
-    auto_reload_html = ""
-    if sync_state in {"running", "pause_pending"} or auto_sync_enabled:
-        auto_reload_html = """
-        <script>
-            setTimeout(function() {
-                window.location.reload();
-            }, 15000);
-        </script>
-        """
 
     status_values = sorted({safe_text(item["row"].status) for item in rows if safe_text(item["row"].status)})
     status_options = make_options(status_values, status)
@@ -9095,55 +9088,66 @@ def chatterfy_parser_page_html(
     content = f"""
     {message_html}
     <div class="panel compact-panel">
-        <div class="empty-dev" style="padding:0;">
-            <div class="empty-dev-card" style="width:min(100%, 920px); text-align:left;">
-                <div class="big">🧩 Chatterfy Parser</div>
-                <div class="muted" style="margin-top:8px;">
-                    Здесь работает только автозагрузка. Парсер сам заходит в Chatterfy, забирает данные за выбранный период и обновляет CRM раз в час.
+        <div style="display:grid; grid-template-columns:minmax(320px, 420px) minmax(360px, 1fr); gap:18px; align-items:start;">
+            <div style="border:1px solid #dbe5f2; border-radius:24px; padding:22px; background:linear-gradient(180deg, rgba(255,255,255,0.98), rgba(245,249,255,0.96)); box-shadow:0 18px 40px rgba(27,55,102,0.08);">
+                <div style="font-size:20px; font-weight:900; color:#192847;">🧩 Chatterfy Parser</div>
+                <div class="muted" style="margin-top:8px; line-height:1.5;">
+                    Автозагрузка работает отсюда. Парсер сам заходит в Chatterfy, обновляет свои данные и делает новый проход раз в час.
                 </div>
-                <div class="stats-grid" style="margin-top:18px;">
-                    <div class="stat-card"><div class="name">Статус</div><div class="value" style="font-size:24px;">{escape(status_label)}</div></div>
-                    <div class="stat-card"><div class="name">Что дальше</div><div class="value" style="font-size:18px;">{escape(next_run_text)}</div></div>
-                    <div class="stat-card"><div class="name">Последняя удачная выгрузка</div><div class="value" style="font-size:18px;">{escape(last_success_at or 'Пока не было')}</div></div>
-                    <div class="stat-card"><div class="name">Загружено в последний раз</div><div class="value" style="font-size:24px;">{last_count}</div></div>
+                <div style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; margin-top:18px;">
+                    <div style="padding:14px; border-radius:18px; background:#f8fbff; border:1px solid #dbe5f2;">
+                        <div style="font-size:12px; font-weight:800; color:#6b7a90; text-transform:uppercase;">Статус</div>
+                        <div style="margin-top:8px; font-size:24px; font-weight:900; line-height:1.15; color:#1f2f4f;">{escape(status_label)}</div>
+                    </div>
+                    <div style="padding:14px; border-radius:18px; background:#f8fbff; border:1px solid #dbe5f2;">
+                        <div style="font-size:12px; font-weight:800; color:#6b7a90; text-transform:uppercase;">Что дальше</div>
+                        <div style="margin-top:8px; font-size:18px; font-weight:800; line-height:1.2; color:#1f2f4f;">{escape(next_run_text)}</div>
+                    </div>
+                    <div style="padding:14px; border-radius:18px; background:#f8fbff; border:1px solid #dbe5f2;">
+                        <div style="font-size:12px; font-weight:800; color:#6b7a90; text-transform:uppercase;">Последняя удачная</div>
+                        <div style="margin-top:8px; font-size:18px; font-weight:800; line-height:1.2; color:#1f2f4f; word-break:break-word;">{escape(last_success_at or 'Пока не было')}</div>
+                    </div>
+                    <div style="padding:14px; border-radius:18px; background:#f8fbff; border:1px solid #dbe5f2;">
+                        <div style="font-size:12px; font-weight:800; color:#6b7a90; text-transform:uppercase;">Загружено</div>
+                        <div style="margin-top:8px; font-size:30px; font-weight:900; line-height:1; color:#1f2f4f;">{last_count}</div>
+                    </div>
                 </div>
                 {f'<div class="notice notice-danger" style="margin-top:14px;">{escape(last_error)}</div>' if last_error else ''}
                 <form method="post" action="/chatterfy-parser/toggle" style="margin-top:18px; display:grid; gap:12px;">
-                    <div class="panel-subtitle" style="margin-bottom:2px;">Настройки доступа и периода. Ручная выгрузка здесь не используется.</div>
-                    <label>Chatterfy Users URL
+                    <div class="panel-subtitle" style="margin-bottom:2px;">Настройки доступа и периода. Всё управление собрано здесь.</div>
+                    <label style="display:grid; gap:6px;">Chatterfy Users URL
                         <input type="text" name="bot_url" value="{escape(default_url)}" required placeholder="https://new.chatterfy.ai/bots/.../users">
                     </label>
-                    <label>Email
+                    <label style="display:grid; gap:6px;">Email
                         <input type="text" name="email" value="{escape(default_email)}" required placeholder="example@gmail.com">
                     </label>
-                    <label>Password
+                    <label style="display:grid; gap:6px;">Password
                         <input type="password" name="password" value="" {"required" if not has_saved_password else ""} placeholder="{escape('Stored password will be used' if has_saved_password else 'Chatterfy password')}">
                     </label>
-                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
-                        <label>Date From
+                    <div style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px;">
+                        <label style="display:grid; gap:6px;">Date From
                             <input type="date" name="date_start" value="{escape(default_start)}" required>
                         </label>
-                        <label>Date To
+                        <label style="display:grid; gap:6px;">Date To
                             <input type="date" name="date_end" value="{escape(default_end)}" required>
                         </label>
                     </div>
-                    <div style="display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap;">
-                        <button type="submit" class="btn small-btn">{escape(button_label)}</button>
-                    </div>
+                    <button type="submit" class="btn small-btn" style="width:100%; padding:14px 18px; font-size:16px; font-weight:900; border-radius:16px; {button_style}">{escape(button_label)}</button>
                 </form>
             </div>
-        </div>
-    </div>
-    <div class="panel compact-panel">
-        <div class="controls-line">
-            <div>
-                <div class="panel-title">Журнал работы</div>
-                <div class="panel-subtitle">Здесь видно, что именно парсер делает сейчас и на каком он этапе.</div>
+            <div style="border:1px solid #dbe5f2; border-radius:24px; overflow:hidden; background:#fff; box-shadow:0 18px 40px rgba(27,55,102,0.08);">
+                <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:18px 20px; border-bottom:1px solid #edf1f7; background:linear-gradient(180deg, #fbfdff, #f4f8fc);">
+                    <div>
+                        <div style="font-size:18px; font-weight:900; color:#1c2b45;">Лог Парсера</div>
+                        <div class="muted" style="margin-top:4px;">Серый: в работе, зелёный: готово, красный: ошибка.</div>
+                    </div>
+                    <div style="padding:8px 12px; border-radius:999px; background:#f4f7fb; color:#60708a; font-size:12px; font-weight:800;">Последние события</div>
+                </div>
+                <div style="max-height:560px; overflow:auto;">{logs_html}</div>
             </div>
         </div>
-        <div class="task-stack" style="margin-top:16px;">{logs_html}</div>
     </div>
-    <div class="panel compact-panel">
+    <div class="panel compact-panel" style="margin-top:18px;">
         <div class="controls-line">
             <div>
                 <div class="panel-title">Данные Парсера</div>
@@ -9196,7 +9200,6 @@ def chatterfy_parser_page_html(
             </div>
         </div>
     </div>
-    {auto_reload_html}
     """
     return page_shell("Chatterfy Parser", content, active_page="chatterfyparser", current_user=current_user)
 
