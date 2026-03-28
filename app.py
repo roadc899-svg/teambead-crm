@@ -1591,6 +1591,44 @@ def ensure_cabinet_table():
                 if "is_active" in columns:
                     conn.execute(text("UPDATE cabinet_rows SET status = CASE WHEN is_active = 1 THEN 'Active' ELSE 'Archived' END WHERE COALESCE(status, '') = ''"))
     ensure_table_once("cabinet_rows", [CabinetRow.__table__], sqlite_migration)
+    if not DATABASE_URL.startswith("sqlite"):
+        inspector = inspect(engine)
+        columns = {item.get("name") for item in inspector.get_columns("cabinet_rows")}
+        migration_statements = []
+        if "advertiser" not in columns:
+            migration_statements.append(text("ALTER TABLE cabinet_rows ADD COLUMN IF NOT EXISTS advertiser VARCHAR DEFAULT ''"))
+        if "platform" not in columns:
+            migration_statements.append(text("ALTER TABLE cabinet_rows ADD COLUMN IF NOT EXISTS platform VARCHAR DEFAULT ''"))
+        if "name" not in columns:
+            migration_statements.append(text("ALTER TABLE cabinet_rows ADD COLUMN IF NOT EXISTS name VARCHAR DEFAULT ''"))
+        if "geo_list" not in columns:
+            migration_statements.append(text("ALTER TABLE cabinet_rows ADD COLUMN IF NOT EXISTS geo_list VARCHAR DEFAULT ''"))
+        if "brands" not in columns:
+            migration_statements.append(text("ALTER TABLE cabinet_rows ADD COLUMN IF NOT EXISTS brands VARCHAR DEFAULT ''"))
+        if "team_name" not in columns:
+            migration_statements.append(text("ALTER TABLE cabinet_rows ADD COLUMN IF NOT EXISTS team_name VARCHAR DEFAULT ''"))
+        if "manager_name" not in columns:
+            migration_statements.append(text("ALTER TABLE cabinet_rows ADD COLUMN IF NOT EXISTS manager_name VARCHAR DEFAULT ''"))
+        if "manager_contact" not in columns:
+            migration_statements.append(text("ALTER TABLE cabinet_rows ADD COLUMN IF NOT EXISTS manager_contact VARCHAR DEFAULT ''"))
+        if "chat_name" not in columns:
+            migration_statements.append(text("ALTER TABLE cabinet_rows ADD COLUMN IF NOT EXISTS chat_name VARCHAR DEFAULT ''"))
+        if "wallet" not in columns:
+            migration_statements.append(text("ALTER TABLE cabinet_rows ADD COLUMN IF NOT EXISTS wallet VARCHAR DEFAULT ''"))
+        if "comments" not in columns:
+            migration_statements.append(text("ALTER TABLE cabinet_rows ADD COLUMN IF NOT EXISTS comments VARCHAR DEFAULT ''"))
+        if "status" not in columns:
+            migration_statements.append(text("ALTER TABLE cabinet_rows ADD COLUMN IF NOT EXISTS status VARCHAR DEFAULT 'Active'"))
+        if migration_statements:
+            with engine.begin() as conn:
+                for statement in migration_statements:
+                    conn.execute(statement)
+                if "name" not in columns and "cabinet_name" in columns:
+                    conn.execute(text("UPDATE cabinet_rows SET name = cabinet_name WHERE COALESCE(name, '') = ''"))
+                if "wallet" not in columns and "wallets" in columns:
+                    conn.execute(text("UPDATE cabinet_rows SET wallet = wallets WHERE COALESCE(wallet, '') = ''"))
+                if "status" not in columns and "is_active" in columns:
+                    conn.execute(text("UPDATE cabinet_rows SET status = CASE WHEN is_active = 1 THEN 'Active' ELSE 'Archived' END WHERE COALESCE(status, '') = ''"))
 
 
 def ensure_chatterfy_table():
