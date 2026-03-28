@@ -2,7 +2,7 @@ from fastapi import FastAPI, UploadFile, File, Query, Form, Request, HTTPExcepti
 from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse, Response, FileResponse
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, text, or_
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, text, or_, inspect
 from sqlalchemy.orm import sessionmaker, declarative_base
 import pandas as pd
 import shutil
@@ -1114,6 +1114,17 @@ def ensure_caps_table():
                 default_period = get_current_period_label()
                 conn.execute(text("UPDATE cap_rows SET period_label = :period_label WHERE COALESCE(period_label, '') = ''"), {"period_label": default_period})
     ensure_table_once("cap_rows", [CapRow.__table__], sqlite_migration)
+    if not DATABASE_URL.startswith("sqlite"):
+        inspector = inspect(engine)
+        columns = {item.get("name") for item in inspector.get_columns("cap_rows")}
+        if "period_label" not in columns:
+            default_period = get_current_period_label()
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE cap_rows ADD COLUMN IF NOT EXISTS period_label VARCHAR DEFAULT ''"))
+                conn.execute(
+                    text("UPDATE cap_rows SET period_label = :period_label WHERE COALESCE(period_label, '') = ''"),
+                    {"period_label": default_period},
+                )
 
 
 def ensure_task_table():
