@@ -2985,16 +2985,56 @@ def aggregate_for_hierarchy(rows, keys):
 # BLOCK 7 — UI HELPERS
 # =========================================
 def sidebar_html(active_page, current_user=None):
+    fb_icon = '''
+    <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+        <defs>
+            <linearGradient id="fbGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#35c2ff"/>
+                <stop offset="100%" stop-color="#1d4ed8"/>
+            </linearGradient>
+        </defs>
+        <rect x="6" y="6" width="52" height="52" rx="12" fill="url(#fbGrad)"/>
+        <path d="M38 18h6v8h-5c-1.5 0-2 0.7-2 2.1V33h7l-1.2 8H37v15h-8V41h-6v-8h6v-6c0-5.7 3.4-9 9-9Z" fill="#ffffff"/>
+    </svg>
+    '''
+    finance_icon = '''
+    <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+        <defs>
+            <linearGradient id="financeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#34d399"/>
+                <stop offset="100%" stop-color="#059669"/>
+            </linearGradient>
+        </defs>
+        <rect x="6" y="6" width="52" height="52" rx="12" fill="url(#financeGrad)"/>
+        <g fill="none" stroke="#ffffff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 22h26"/>
+            <path d="M32 16v32"/>
+            <path d="M22 28c1.8-3 5.4-5 10-5s8.2 2 10 5c-1.8 3-5.4 5-10 5s-8.2 2-10 5c1.8 3 5.4 5 10 5s8.2-2 10-5"/>
+        </g>
+    </svg>
+    '''
+    chatterfy_icon = '''
+    <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+        <g fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M17 13c4 0 6-5 6-7"/>
+            <path d="M43 13c4 0 6-5 6-7"/>
+            <path d="M14 18c0-6 5-11 11-11h14c11 0 20 9 20 20v8c0 11-9 20-20 20H29l-11 8 3-11c-8-2-14-10-14-19v-5c0-11 9-20 20-20h12"/>
+            <ellipse cx="24" cy="31" rx="3.5" ry="5"/>
+            <ellipse cx="40" cy="31" rx="3.5" ry="5"/>
+            <path d="M27 43c3 3 7 3 10 0"/>
+        </g>
+    </svg>
+    '''
     items = [
         ("dashboard", "/dashboard", "📊", "Dashboard", []),
-        ("grouped", "/grouped", "📘", "FB", [
+        ("grouped", "/grouped", fb_icon, "FB", [
             ("/grouped", "Export", active_page == "grouped"),
         ]),
-        ("finance", "/finance", "💸", "Finance", []),
-        ("caps", "/caps", "🔶", "Caps", []),
+        ("finance", "/finance", finance_icon, "Finance", []),
+        ("caps", "/caps", "📌", "Caps", []),
         ("partner", "/partner-report", "🎰", "Players", []),
-        ("cabinets", "/cabinets", "🗂", "Partners", []),
-        ("chatterfy", "/chatterfy", "💬", "Chatterfy", []),
+        ("cabinets", "/cabinets", "🛠", "Cabinets", []),
+        ("chatterfy", "/chatterfy", chatterfy_icon, "Chatterfy", []),
         ("holdwager", "/hold-wager", "🎯", "Hold", []),
     ]
 
@@ -3192,7 +3232,21 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 font-size: 13px;
             }}
             .sidebar-group[open] summary::after {{ transform: rotate(180deg); }}
-            .side-emoji {{ width: 22px; text-align: center; font-size: 18px; flex-shrink: 0; }}
+            .side-emoji {{
+                width: 22px;
+                height: 22px;
+                text-align: center;
+                font-size: 18px;
+                flex-shrink: 0;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+            }}
+            .side-emoji svg {{
+                width: 22px;
+                height: 22px;
+                display: block;
+            }}
             .sidebar-links {{ display: flex; flex-direction: column; gap: 8px; padding: 0 10px 10px; }}
             .sidebar-links a {{
                 text-decoration: none;
@@ -3334,6 +3388,54 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             }}
             .cap-menu-list textarea {{
                 min-height: 84px;
+            }}
+            .cap-edit-drawer {{
+                position: fixed;
+                top: 92px;
+                right: 16px;
+                bottom: 16px;
+                width: min(430px, calc(100vw - 32px));
+                display: none;
+                z-index: 95;
+            }}
+            .cap-edit-drawer.open {{
+                display: block;
+            }}
+            .cap-edit-drawer .cap-edit-card {{
+                height: 100%;
+                overflow: auto;
+                padding: 14px;
+                border-radius: 20px;
+                border: 1px solid var(--border);
+                background: linear-gradient(180deg, var(--panel), var(--panel-2));
+                box-shadow: var(--shadow);
+            }}
+            .cap-edit-head {{
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+                margin-bottom: 12px;
+                position: sticky;
+                top: 0;
+                padding-bottom: 8px;
+                background: linear-gradient(180deg, var(--panel), var(--panel-2));
+                z-index: 2;
+            }}
+            .cap-edit-title {{
+                font-size: 18px;
+                font-weight: 900;
+            }}
+            .cap-edit-close {{
+                width: 36px;
+                min-width: 36px;
+                height: 36px;
+                padding: 0 !important;
+                border-radius: 12px;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 18px;
             }}
             .upload-menu-list label {{
                 display:grid;
@@ -3948,6 +4050,11 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .caps-table thead th {{
                 font-size: 11px;
                 padding: 7px 6px;
+                position: sticky;
+                top: 0;
+                z-index: 6;
+                background: var(--table-head);
+                box-shadow: 0 1px 0 var(--border);
             }}
             .caps-table tbody tr {{ height: 40px; }}
             .caps-table .advertiser-col {{ width: 82px; min-width: 82px; }}
@@ -5092,6 +5199,23 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         bar_width = max(0, min(100, fill_percent))
         remaining_value = max(0.0, safe_number(row.cap_value) - safe_number(row.current_ftd))
         link_value = safe_text(row.link)
+        edit_payload = escape(json.dumps({
+            "id": row.id,
+            "period_label": safe_text(row.period_label or selected_period),
+            "advertiser": safe_text(row.advertiser),
+            "owner_name": safe_text(row.owner_name),
+            "cabinet_name": safe_text(row.cabinet_name),
+            "code": safe_text(normalize_geo_value(row.code or "")),
+            "rate": safe_text(format_plain_number_text(row.rate)),
+            "baseline": safe_text(format_plain_number_text(row.baseline)),
+            "cap_value": safe_text(format_int_or_float(row.cap_value)),
+            "promo_code": safe_text(row.promo_code),
+            "agent": safe_text(row.agent),
+            "chat_title": safe_text(row.chat_title),
+            "link": safe_text(row.link),
+            "kpi": safe_text(row.kpi),
+            "comments": safe_text(row.comments),
+        }))
         link_button = f'<button type="button" class="ghost-btn small-btn cap-copy-link" data-link="{escape(link_value)}" aria-label="Copy link" title="Copy link">⧉</button>' if link_value else "—"
         state = "Free"
         progress_class = "progress-free"
@@ -5126,16 +5250,16 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             <td class="link-col" data-col="link">{link_button}</td>
             <td class="action-col" data-col="action">
                 <div class="caps-actions">
-                    <form method="get" action="/caps" data-persist-filters="caps">
-                        <input type="hidden" name="edit" value="{row.id}">
-                        <input type="hidden" name="period_view" value="{escape(selected_period_view)}">
-                        <input type="hidden" name="period_label" value="{escape(selected_period)}">
-                        <button type="submit" class="ghost-btn small-btn">Edit</button>
-                    </form>
+                    <button type="button" class="ghost-btn small-btn cap-edit-trigger" data-cap="{edit_payload}">Edit</button>
                     <form method="post" action="/caps/delete" class="cap-delete-form">
                         <input type="hidden" name="cap_id" value="{row.id}">
                         <input type="hidden" name="period_view" value="{escape(selected_period_view)}">
                         <input type="hidden" name="period_label" value="{escape(selected_period)}">
+                        <input type="hidden" name="buyer" value="{escape(filter_values.get('buyer', ''))}">
+                        <input type="hidden" name="code" value="{escape(filter_values.get('code', ''))}">
+                        <input type="hidden" name="search" value="{escape(filter_values.get('search', ''))}">
+                        <input type="hidden" name="sort_by" value="{escape(sort_by)}">
+                        <input type="hidden" name="order" value="{escape(order)}">
                         <button type="button" class="ghost-btn small-btn cap-delete-trigger" data-cap-id="{row.id}">Delete</button>
                     </form>
                 </div>
@@ -5173,6 +5297,55 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             unique.append(value)
         return "".join(f'<option value="{escape(value)}"></option>' for value in unique)
 
+    def build_select_options(options, selected_value, placeholder="Choose"):
+        html = f'<option value="">{escape(placeholder)}</option>'
+        seen = set()
+        for item in options:
+            value = safe_text(item).strip()
+            if not value:
+                continue
+            key = value.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            selected = "selected" if value == safe_text(selected_value).strip() else ""
+            html += f'<option value="{escape(value)}" {selected}>{escape(value)}</option>'
+        return html
+
+    cabinet_catalog = []
+    seen_cabinet_names = set()
+    for row in cabinet_rows:
+        cabinet_name_value = safe_text(row.name).strip()
+        advertiser_value = safe_text(row.advertiser).strip()
+        manager_value = safe_text(row.manager_name).strip()
+        if not cabinet_name_value or not advertiser_value or not manager_value:
+            continue
+        cabinet_key = cabinet_name_value.lower()
+        if cabinet_key in seen_cabinet_names:
+            continue
+        seen_cabinet_names.add(cabinet_key)
+        cabinet_catalog.append({
+            "cabinet": cabinet_name_value,
+            "advertiser": advertiser_value,
+            "manager": manager_value,
+        })
+    advertiser_select_options = build_select_options(
+        sorted({item["advertiser"] for item in cabinet_catalog}, key=lambda value: value.lower()),
+        form_data.get("advertiser", ""),
+        "Advertiser",
+    )
+    manager_select_options = build_select_options(
+        sorted({item["manager"] for item in cabinet_catalog}, key=lambda value: value.lower()),
+        form_data.get("owner_name", ""),
+        "Manager",
+    )
+    cabinet_select_options = build_select_options(
+        [item["cabinet"] for item in cabinet_catalog],
+        form_data.get("cabinet_name", ""),
+        "Cabinet",
+    )
+    cabinet_catalog_json = escape(json.dumps(cabinet_catalog))
+
     advertiser_list = build_datalist(
         [
             value for value in [row.advertiser for row in cabinet_rows] + [row.advertiser for row in cap_rows]
@@ -5189,74 +5362,108 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     agent_list = build_datalist([row.agent for row in cap_rows])
 
     current_edit_id = str(form_data.get("edit_id") or "")
-    form_title = "Edit Cap" if current_edit_id else "Add Cap"
-    submit_label = "Save" if current_edit_id else "Add Cap"
+    is_edit_mode = bool(current_edit_id)
+    add_form_data = {} if is_edit_mode else form_data
+    edit_form_data = form_data if is_edit_mode else {}
+    add_advertiser_options = build_select_options(
+        sorted({item["advertiser"] for item in cabinet_catalog}, key=lambda value: value.lower()),
+        add_form_data.get("advertiser", ""),
+        "Advertiser",
+    )
+    add_manager_options = build_select_options(
+        sorted({item["manager"] for item in cabinet_catalog}, key=lambda value: value.lower()),
+        add_form_data.get("owner_name", ""),
+        "Manager",
+    )
+    add_cabinet_options = build_select_options(
+        [item["cabinet"] for item in cabinet_catalog],
+        add_form_data.get("cabinet_name", ""),
+        "Cabinet",
+    )
+    edit_advertiser_options = build_select_options(
+        sorted({item["advertiser"] for item in cabinet_catalog}, key=lambda value: value.lower()),
+        edit_form_data.get("advertiser", ""),
+        "Advertiser",
+    )
+    edit_manager_options = build_select_options(
+        sorted({item["manager"] for item in cabinet_catalog}, key=lambda value: value.lower()),
+        edit_form_data.get("owner_name", ""),
+        "Manager",
+    )
+    edit_cabinet_options = build_select_options(
+        [item["cabinet"] for item in cabinet_catalog],
+        edit_form_data.get("cabinet_name", ""),
+        "Cabinet",
+    )
     create_panel = f"""
-    <details class="upload-menu upload-menu-right" {'open' if current_edit_id else ''}>
+    <details class="upload-menu upload-menu-right" {'open' if add_form_data and not is_edit_mode else ''}>
         <summary class="btn small-btn" style="min-width:136px;">
-            <span>{form_title}</span>
+            <span>Add Cap</span>
             <span class="toggle-indicator" style="width:18px; height:18px; min-width:18px;"></span>
         </summary>
         <div class="upload-menu-list cap-menu-list">
             <form method="post" action="/caps/save" class="caps-form">
-            <input type="hidden" name="edit_id" value="{escape(current_edit_id)}">
+            <input type="hidden" name="edit_id" value="">
             <input type="hidden" name="period_view" value="{escape(selected_period_view)}">
-            <datalist id="capAdvertiserOptions">{advertiser_list}</datalist>
-            <datalist id="capOwnerOptions">{owner_list}</datalist>
-            <datalist id="capCabinetOptions">{cabinet_list}</datalist>
+            <input type="hidden" name="buyer" value="{escape(filter_values.get('buyer', ''))}">
+            <input type="hidden" name="code_filter" value="{escape(filter_values.get('code', ''))}">
+            <input type="hidden" name="search" value="{escape(filter_values.get('search', ''))}">
+            <input type="hidden" name="sort_by" value="{escape(sort_by)}">
+            <input type="hidden" name="order" value="{escape(order)}">
+            <input type="hidden" id="capCabinetCatalog" value="{cabinet_catalog_json}">
             <datalist id="capAgentOptions">{agent_list}</datalist>
             <label>Period
                 <select name="period_label" required>{period_options}</select>
             </label>
             <div class="caps-grid-2">
                 <label>Advertiser
-                    <input type="text" name="advertiser" list="capAdvertiserOptions" value="{escape(form_data.get('advertiser', ''))}" placeholder="1xbet / BetMen">
+                    <select name="advertiser" id="addCapAdvertiserSelect" required>{add_advertiser_options}</select>
                 </label>
                 <label>Manager
-                    <input type="text" name="owner_name" list="capOwnerOptions" value="{escape(form_data.get('owner_name', ''))}" placeholder="Manager">
+                    <select name="owner_name" id="addCapManagerSelect" required>{add_manager_options}</select>
                 </label>
             </div>
             <label>Cabinet
-                <input type="text" name="cabinet_name" list="capCabinetOptions" value="{escape(form_data.get('cabinet_name', ''))}" placeholder="Cabinet">
+                <select name="cabinet_name" id="addCapCabinetSelect" required>{add_cabinet_options}</select>
             </label>
             <div class="caps-grid-2">
                 <label>CODE
-                    <input type="text" name="code" value="{escape(form_data.get('code', ''))}">
+                    <input type="text" name="code" value="{escape(add_form_data.get('code', ''))}">
                 </label>
             </div>
             <div class="caps-grid-2">
                 <label>Rate
-                    <input type="text" name="rate" value="{escape(form_data.get('rate', ''))}">
+                    <input type="text" name="rate" value="{escape(add_form_data.get('rate', ''))}">
                 </label>
                 <label>Baseline
-                    <input type="text" name="baseline" value="{escape(form_data.get('baseline', ''))}">
+                    <input type="text" name="baseline" value="{escape(add_form_data.get('baseline', ''))}">
                 </label>
             </div>
             <label>Cap
-                <input type="number" step="0.01" name="cap_value" value="{escape(form_data.get('cap_value', ''))}" required>
+                <input type="number" step="0.01" name="cap_value" value="{escape(add_form_data.get('cap_value', ''))}" required>
             </label>
             <div class="caps-grid-2">
                 <label>Promocode
-                    <input type="text" name="promo_code" value="{escape(form_data.get('promo_code', ''))}">
+                    <input type="text" name="promo_code" value="{escape(add_form_data.get('promo_code', ''))}">
                 </label>
                 <label>TG
-                    <input type="text" name="agent" list="capAgentOptions" value="{escape(form_data.get('agent', ''))}">
+                    <input type="text" name="agent" list="capAgentOptions" value="{escape(add_form_data.get('agent', ''))}">
                 </label>
             </div>
             <label>Chat Name
-                <input type="text" name="chat_title" value="{escape(form_data.get('chat_title', ''))}" placeholder="Chat name">
+                <input type="text" name="chat_title" value="{escape(add_form_data.get('chat_title', ''))}" placeholder="Chat name">
             </label>
             <label>Link
-                <input type="text" name="link" value="{escape(form_data.get('link', ''))}">
+                <input type="text" name="link" value="{escape(add_form_data.get('link', ''))}">
             </label>
             <label>KPI
-                <textarea name="kpi">{escape(form_data.get('kpi', ''))}</textarea>
+                <textarea name="kpi">{escape(add_form_data.get('kpi', ''))}</textarea>
             </label>
             <label>Comments
-                <textarea name="comments">{escape(form_data.get('comments', ''))}</textarea>
+                <textarea name="comments">{escape(add_form_data.get('comments', ''))}</textarea>
             </label>
             <div style="display:flex; gap:10px; flex-wrap:wrap;">
-                <button type="submit" class="btn">{submit_label}</button>
+                <button type="submit" class="btn">Add Cap</button>
                 <a href="/caps" class="ghost-btn">Reset</a>
             </div>
             </form>
@@ -5264,9 +5471,85 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     </details>
     """
 
+    edit_panel = f"""
+    <aside class="cap-edit-drawer {'open' if is_edit_mode else ''}" id="capEditDrawer" aria-hidden="{'false' if is_edit_mode else 'true'}">
+        <div class="cap-edit-card">
+            <div class="cap-edit-head">
+                <div class="cap-edit-title">Edit Cap</div>
+                <button type="button" class="ghost-btn cap-edit-close" id="capEditClose" aria-label="Close">×</button>
+            </div>
+            <form method="post" action="/caps/save" class="caps-form" id="capEditForm">
+                <input type="hidden" name="edit_id" id="editCapEditId" value="{escape(edit_form_data.get('edit_id', ''))}">
+                <input type="hidden" name="period_view" value="{escape(selected_period_view)}">
+                <input type="hidden" name="buyer" value="{escape(filter_values.get('buyer', ''))}">
+                <input type="hidden" name="code_filter" value="{escape(filter_values.get('code', ''))}">
+                <input type="hidden" name="search" value="{escape(filter_values.get('search', ''))}">
+                <input type="hidden" name="sort_by" value="{escape(sort_by)}">
+                <input type="hidden" name="order" value="{escape(order)}">
+                <datalist id="editCapAgentOptions">{agent_list}</datalist>
+                <label>Period
+                    <select name="period_label" id="editCapPeriodSelect" required>{period_options}</select>
+                </label>
+                <div class="caps-grid-2">
+                    <label>Advertiser
+                        <select name="advertiser" id="editCapAdvertiserSelect" required>{edit_advertiser_options}</select>
+                    </label>
+                    <label>Manager
+                        <select name="owner_name" id="editCapManagerSelect" required>{edit_manager_options}</select>
+                    </label>
+                </div>
+                <label>Cabinet
+                    <select name="cabinet_name" id="editCapCabinetSelect" required>{edit_cabinet_options}</select>
+                </label>
+                <div class="caps-grid-2">
+                    <label>CODE
+                        <input type="text" name="code" id="editCapCode" value="{escape(edit_form_data.get('code', ''))}">
+                    </label>
+                </div>
+                <div class="caps-grid-2">
+                    <label>Rate
+                        <input type="text" name="rate" id="editCapRate" value="{escape(edit_form_data.get('rate', ''))}">
+                    </label>
+                    <label>Baseline
+                        <input type="text" name="baseline" id="editCapBaseline" value="{escape(edit_form_data.get('baseline', ''))}">
+                    </label>
+                </div>
+                <label>Cap
+                    <input type="number" step="0.01" name="cap_value" id="editCapValue" value="{escape(edit_form_data.get('cap_value', ''))}" required>
+                </label>
+                <div class="caps-grid-2">
+                    <label>Promocode
+                        <input type="text" name="promo_code" id="editCapPromocode" value="{escape(edit_form_data.get('promo_code', ''))}">
+                    </label>
+                    <label>TG
+                        <input type="text" name="agent" list="editCapAgentOptions" id="editCapAgent" value="{escape(edit_form_data.get('agent', ''))}">
+                    </label>
+                </div>
+                <label>Chat Name
+                    <input type="text" name="chat_title" id="editCapChatName" value="{escape(edit_form_data.get('chat_title', ''))}">
+                </label>
+                <label>Link
+                    <input type="text" name="link" id="editCapLink" value="{escape(edit_form_data.get('link', ''))}">
+                </label>
+                <label>KPI
+                    <textarea name="kpi" id="editCapKpi">{escape(edit_form_data.get('kpi', ''))}</textarea>
+                </label>
+                <label>Comments
+                    <textarea name="comments" id="editCapComments">{escape(edit_form_data.get('comments', ''))}</textarea>
+                </label>
+                <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                    <button type="submit" class="btn">Save</button>
+                    <button type="button" class="ghost-btn" id="capEditCancel">Close</button>
+                </div>
+            </form>
+        </div>
+    </aside>
+    """
+
     content = f"""
     {message_html}
     {render_active_period_banner(selected_period)}
+    {edit_panel}
     <div>
         <div class="panel compact-panel">
             <div class="toolbar-actions">
@@ -5287,16 +5570,6 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     <div class="mini-stat"><div class="name">ftd</div><div class="value">{format_int_or_float(total_current)}</div></div>
                     <div class="mini-stat"><div class="name">remaining</div><div class="value">{format_int_or_float(total_remaining)}</div></div>
                     <div class="mini-stat"><div class="name">fill avg</div><div class="value">{fill_avg:.0f}%</div></div>
-                </div>
-                <div class="column-menu-wrap">
-                    <button type="button" class="ghost-btn small-btn" onclick="toggleCapsColumnMenu()">Columns</button>
-                    <div class="column-menu" id="capsColumnMenu">
-                        <div class="column-actions">
-                            <button type="button" class="ghost-btn small-btn" onclick="showAllCapsColumns()">Show All</button>
-                            <button type="button" class="ghost-btn small-btn" onclick="resetCapsColumnsAll()">Reset All</button>
-                        </div>
-                        <div class="column-grid">{caps_column_chips}</div>
-                    </div>
                 </div>
                 {create_panel}
             </div>
@@ -5412,6 +5685,174 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                         document.body.removeChild(temp);
                     }
                 });
+            });
+        })();
+        (function initCapsCabinetSelectors() {
+            const source = document.getElementById('capCabinetCatalog');
+            if (!source) return;
+
+            let records = [];
+            try {
+                records = JSON.parse(source.value || '[]');
+            } catch (error) {
+                records = [];
+            }
+            if (!Array.isArray(records) || !records.length) return;
+
+            function normalize(value) {
+                return (value || '').trim().toLowerCase();
+            }
+
+            function uniqueValues(items, key) {
+                const seen = new Set();
+                const values = [];
+                items.forEach(function(item) {
+                    const value = (item[key] || '').trim();
+                    const norm = normalize(value);
+                    if (!norm || seen.has(norm)) return;
+                    seen.add(norm);
+                    values.push(value);
+                });
+                values.sort(function(a, b) { return a.localeCompare(b); });
+                return values;
+            }
+
+            function fillOptions(select, values, placeholder, selected) {
+                const cleanSelected = (selected || '').trim();
+                select.innerHTML = '';
+                const emptyOption = document.createElement('option');
+                emptyOption.value = '';
+                emptyOption.textContent = placeholder;
+                select.appendChild(emptyOption);
+                values.forEach(function(value) {
+                    const option = document.createElement('option');
+                    option.value = value;
+                    option.textContent = value;
+                    if (value === cleanSelected) option.selected = true;
+                    select.appendChild(option);
+                });
+                if (cleanSelected && !values.includes(cleanSelected)) {
+                    select.value = '';
+                }
+            }
+
+            function setup(prefix) {
+                const advertiserSelect = document.getElementById(prefix + 'AdvertiserSelect');
+                const managerSelect = document.getElementById(prefix + 'ManagerSelect');
+                const cabinetSelect = document.getElementById(prefix + 'CabinetSelect');
+                if (!advertiserSelect || !managerSelect || !cabinetSelect) return null;
+
+                function refresh(changedField) {
+                    const selectedAdvertiser = advertiserSelect.value;
+                    const selectedManager = managerSelect.value;
+                    const selectedCabinet = cabinetSelect.value;
+
+                    const advertiserScoped = records.filter(function(item) {
+                        return (!selectedManager || item.manager === selectedManager) && (!selectedCabinet || item.cabinet === selectedCabinet);
+                    });
+                    const managerScoped = records.filter(function(item) {
+                        return (!selectedAdvertiser || item.advertiser === selectedAdvertiser) && (!selectedCabinet || item.cabinet === selectedCabinet);
+                    });
+                    const cabinetScoped = records.filter(function(item) {
+                        return (!selectedAdvertiser || item.advertiser === selectedAdvertiser) && (!selectedManager || item.manager === selectedManager);
+                    });
+
+                    fillOptions(advertiserSelect, uniqueValues(advertiserScoped, 'advertiser'), 'Advertiser', selectedAdvertiser);
+                    fillOptions(managerSelect, uniqueValues(managerScoped, 'manager'), 'Manager', selectedManager);
+                    fillOptions(cabinetSelect, uniqueValues(cabinetScoped, 'cabinet'), 'Cabinet', selectedCabinet);
+
+                    if (changedField === 'cabinet' && cabinetSelect.value) {
+                        const match = records.find(function(item) { return item.cabinet === cabinetSelect.value; });
+                        if (match) {
+                            advertiserSelect.value = match.advertiser;
+                            managerSelect.value = match.manager;
+                        }
+                    } else {
+                        const filtered = records.filter(function(item) {
+                            return (!advertiserSelect.value || item.advertiser === advertiserSelect.value)
+                                && (!managerSelect.value || item.manager === managerSelect.value)
+                                && (!cabinetSelect.value || item.cabinet === cabinetSelect.value);
+                        });
+                        if (filtered.length === 1) {
+                            advertiserSelect.value = filtered[0].advertiser;
+                            managerSelect.value = filtered[0].manager;
+                            cabinetSelect.value = filtered[0].cabinet;
+                        }
+                    }
+                }
+
+                advertiserSelect.addEventListener('change', function() { refresh('advertiser'); });
+                managerSelect.addEventListener('change', function() { refresh('manager'); });
+                cabinetSelect.addEventListener('change', function() { refresh('cabinet'); });
+                refresh('');
+                return { refresh: refresh };
+            }
+
+            const setups = {
+                addCap: setup('addCap'),
+                editCap: setup('editCap'),
+            };
+            window.capFormSetups = setups;
+        })();
+        (function initCapsEditDrawer() {
+            const drawer = document.getElementById('capEditDrawer');
+            if (!drawer) return;
+            const closeButton = document.getElementById('capEditClose');
+            const cancelButton = document.getElementById('capEditCancel');
+
+            function setValue(id, value) {
+                const element = document.getElementById(id);
+                if (element) element.value = value || '';
+            }
+
+            function closeDrawer() {
+                drawer.classList.remove('open');
+                drawer.setAttribute('aria-hidden', 'true');
+            }
+
+            function openDrawer(payload) {
+                setValue('editCapEditId', payload.id);
+                setValue('editCapPeriodSelect', payload.period_label);
+                setValue('editCapAdvertiserSelect', payload.advertiser);
+                setValue('editCapManagerSelect', payload.owner_name);
+                setValue('editCapCabinetSelect', payload.cabinet_name);
+                const setup = (window.capFormSetups || {}).editCap;
+                if (setup && typeof setup.refresh === 'function') {
+                    setup.refresh('');
+                }
+                setValue('editCapAdvertiserSelect', payload.advertiser);
+                setValue('editCapManagerSelect', payload.owner_name);
+                setValue('editCapCabinetSelect', payload.cabinet_name);
+                setValue('editCapCode', payload.code);
+                setValue('editCapRate', payload.rate);
+                setValue('editCapBaseline', payload.baseline);
+                setValue('editCapValue', payload.cap_value);
+                setValue('editCapPromocode', payload.promo_code);
+                setValue('editCapAgent', payload.agent);
+                setValue('editCapChatName', payload.chat_title);
+                setValue('editCapLink', payload.link);
+                setValue('editCapKpi', payload.kpi);
+                setValue('editCapComments', payload.comments);
+                drawer.classList.add('open');
+                drawer.setAttribute('aria-hidden', 'false');
+            }
+
+            document.querySelectorAll('.cap-edit-trigger').forEach(function(button) {
+                button.addEventListener('click', function() {
+                    let payload = {};
+                    try {
+                        payload = JSON.parse(button.getAttribute('data-cap') || '{}');
+                    } catch (error) {
+                        payload = {};
+                    }
+                    openDrawer(payload);
+                });
+            });
+
+            closeButton?.addEventListener('click', closeDrawer);
+            cancelButton?.addEventListener('click', closeDrawer);
+            document.addEventListener('keydown', function(event) {
+                if (event.key === 'Escape' && drawer.classList.contains('open')) closeDrawer();
             });
         })();
         (function initCapsColumns() {
@@ -5604,10 +6045,16 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
                 <div class="caps-actions">
                     <form method="get" action="/finance">
                         <input type="hidden" name="edit_wallet" value="{item.id}">
+                        <input type="hidden" name="date_from" value="{escape(date_from)}">
+                        <input type="hidden" name="date_to" value="{escape(date_to)}">
+                        <input type="hidden" name="year" value="{escape(year)}">
                         <button type="submit" class="ghost-btn small-btn">Edit</button>
                     </form>
                     <form method="post" action="/finance/wallets/delete" onsubmit="return confirm('Delete this wallet?');">
                         <input type="hidden" name="wallet_id" value="{item.id}">
+                        <input type="hidden" name="date_from" value="{escape(date_from)}">
+                        <input type="hidden" name="date_to" value="{escape(date_to)}">
+                        <input type="hidden" name="year" value="{escape(year)}">
                         <button type="submit" class="ghost-btn small-btn">Delete</button>
                     </form>
                 </div>
@@ -5640,10 +6087,16 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
                 <div class="caps-actions">
                     <form method="get" action="/finance">
                         <input type="hidden" name="edit_expense" value="{item.id}">
+                        <input type="hidden" name="date_from" value="{escape(date_from)}">
+                        <input type="hidden" name="date_to" value="{escape(date_to)}">
+                        <input type="hidden" name="year" value="{escape(year)}">
                         <button type="submit" class="ghost-btn small-btn">Edit</button>
                     </form>
                     <form method="post" action="/finance/expenses/delete" onsubmit="return confirm('Delete expense?');">
                         <input type="hidden" name="expense_id" value="{item.id}">
+                        <input type="hidden" name="date_from" value="{escape(date_from)}">
+                        <input type="hidden" name="date_to" value="{escape(date_to)}">
+                        <input type="hidden" name="year" value="{escape(year)}">
                         <button type="submit" class="ghost-btn small-btn">Delete</button>
                     </form>
                 </div>
@@ -5665,10 +6118,16 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
                 <div class="caps-actions">
                     <form method="get" action="/finance">
                         <input type="hidden" name="edit_income" value="{item.id}">
+                        <input type="hidden" name="date_from" value="{escape(date_from)}">
+                        <input type="hidden" name="date_to" value="{escape(date_to)}">
+                        <input type="hidden" name="year" value="{escape(year)}">
                         <button type="submit" class="ghost-btn small-btn">Edit</button>
                     </form>
                     <form method="post" action="/finance/income/delete" onsubmit="return confirm('Delete income?');">
                         <input type="hidden" name="income_id" value="{item.id}">
+                        <input type="hidden" name="date_from" value="{escape(date_from)}">
+                        <input type="hidden" name="date_to" value="{escape(date_to)}">
+                        <input type="hidden" name="year" value="{escape(year)}">
                         <button type="submit" class="ghost-btn small-btn">Delete</button>
                     </form>
                 </div>
@@ -5690,10 +6149,16 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
                 <div class="caps-actions">
                     <form method="get" action="/finance">
                         <input type="hidden" name="edit_transfer" value="{item.id}">
+                        <input type="hidden" name="date_from" value="{escape(date_from)}">
+                        <input type="hidden" name="date_to" value="{escape(date_to)}">
+                        <input type="hidden" name="year" value="{escape(year)}">
                         <button type="submit" class="ghost-btn small-btn">Edit</button>
                     </form>
                     <form method="post" action="/finance/transfers/delete" onsubmit="return confirm('Delete transfer?');">
                         <input type="hidden" name="transfer_id" value="{item.id}">
+                        <input type="hidden" name="date_from" value="{escape(date_from)}">
+                        <input type="hidden" name="date_to" value="{escape(date_to)}">
+                        <input type="hidden" name="year" value="{escape(year)}">
                         <button type="submit" class="ghost-btn small-btn">Delete</button>
                     </form>
                 </div>
@@ -5723,6 +6188,9 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
                 <div class="panel-title">{'Edit Service Wallet' if form_data.get('wallet_edit_id') else 'Add Service Wallet'}</div>
                 <form method="post" action="/finance/wallets/save" class="caps-form" style="margin-top:14px;">
                     <input type="hidden" name="edit_id" value="{escape(form_data.get('wallet_edit_id', ''))}">
+                    <input type="hidden" name="date_from" value="{escape(date_from)}">
+                    <input type="hidden" name="date_to" value="{escape(date_to)}">
+                    <input type="hidden" name="year" value="{escape(year)}">
                     <label>Type
                         <select name="category">
                             {make_options(['Сервисы', 'Рекламодатели', 'Партнеры'], form_data.get('wallet_category', 'Сервисы'))}
@@ -5742,6 +6210,9 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
                 <div class="panel-title">{'Edit Expense' if form_data.get('expense_edit_id') else 'Add Expense'}</div>
                 <form method="post" action="/finance/expenses/save" class="caps-form" style="margin-top:14px;">
                     <input type="hidden" name="edit_id" value="{escape(form_data.get('expense_edit_id', ''))}">
+                    <input type="hidden" name="date_from" value="{escape(date_from)}">
+                    <input type="hidden" name="date_to" value="{escape(date_to)}">
+                    <input type="hidden" name="year" value="{escape(year)}">
                     <label>Date<input type="date" name="expense_date" value="{escape(form_data.get('expense_date', ''))}"></label>
                     <label>Category
                         <select name="category">{make_options(['Сервисы', 'Рекламодатели', 'Партнеры'], form_data.get('expense_category', 'Сервисы'))}</select>
@@ -5762,6 +6233,9 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
                 <div class="panel-title">{'Edit Income' if form_data.get('income_edit_id') else 'Add Income'}</div>
                 <form method="post" action="/finance/income/save" class="caps-form" style="margin-top:14px;">
                     <input type="hidden" name="edit_id" value="{escape(form_data.get('income_edit_id', ''))}">
+                    <input type="hidden" name="date_from" value="{escape(date_from)}">
+                    <input type="hidden" name="date_to" value="{escape(date_to)}">
+                    <input type="hidden" name="year" value="{escape(year)}">
                     <label>Date<input type="date" name="income_date" value="{escape(form_data.get('income_date', ''))}"></label>
                     <label>Category
                         <select name="category">{make_options(['Сервисы', 'Рекламодатели', 'Партнеры'], form_data.get('income_category', 'Сервисы'))}</select>
@@ -5780,6 +6254,9 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
                 <div class="panel-title">{'Edit Transfer' if form_data.get('transfer_edit_id') else 'Add Transfer'}</div>
                 <form method="post" action="/finance/transfers/save" class="caps-form" style="margin-top:14px;">
                     <input type="hidden" name="edit_id" value="{escape(form_data.get('transfer_edit_id', ''))}">
+                    <input type="hidden" name="date_from" value="{escape(date_from)}">
+                    <input type="hidden" name="date_to" value="{escape(date_to)}">
+                    <input type="hidden" name="year" value="{escape(year)}">
                     <label>Date<input type="date" name="transfer_date" value="{escape(form_data.get('transfer_date', ''))}"></label>
                     <label>Category
                         <select name="category">{make_options(['Сервисы', 'Рекламодатели', 'Партнеры'], form_data.get('transfer_category', 'Сервисы'))}</select>
@@ -5884,6 +6361,9 @@ def tasks_page_html(current_user, rows, filter_values=None, form_data=None, succ
             </summary>
             <div class="upload-menu-list" style="width:min(720px, calc(100vw - 48px));">
             <form method="post" action="/tasks/save" class="tasks-form" style="margin-top:14px;">
+                <input type="hidden" name="status_filter" value="{escape(filter_values.get('status', ''))}">
+                <input type="hidden" name="assignee_filter" value="{escape(filter_values.get('assignee', ''))}">
+                <input type="hidden" name="search_filter" value="{escape(filter_values.get('search', ''))}">
                 <label>Assignee
                     <select name="assigned_to_username" required>{assign_options}</select>
                 </label>
@@ -5921,12 +6401,18 @@ def tasks_page_html(current_user, rows, filter_values=None, form_data=None, succ
                 delete_block = f"""
                 <form method="post" action="/tasks/delete" style="margin-top:10px;" onsubmit="return confirm('Удалить задачу?');">
                     <input type="hidden" name="task_id" value="{row.id}">
+                    <input type="hidden" name="status_filter" value="{escape(filter_values.get('status', ''))}">
+                    <input type="hidden" name="assignee_filter" value="{escape(filter_values.get('assignee', ''))}">
+                    <input type="hidden" name="search_filter" value="{escape(filter_values.get('search', ''))}">
                     <button type="submit" class="ghost-btn small-btn">Delete</button>
                 </form>
                 """
             respond_block = f"""
             <form method="post" action="/tasks/respond" class="tasks-form" style="margin-top:14px;">
                 <input type="hidden" name="task_id" value="{row.id}">
+                <input type="hidden" name="status_filter" value="{escape(filter_values.get('status', ''))}">
+                <input type="hidden" name="assignee_filter" value="{escape(filter_values.get('assignee', ''))}">
+                <input type="hidden" name="search_filter" value="{escape(filter_values.get('search', ''))}">
                 <label>Статус
                     <select name="status">
                         {''.join([f'<option value="{escape(option)}" {"selected" if row.status == option else ""}>{escape(option)}</option>' for option in status_options])}
@@ -6440,14 +6926,11 @@ def hold_wager_page_html(current_user, rows, cabinet_name="", period_view="curre
                     <a href="/hold-wager" class="ghost-btn small-btn" data-reset-filters="hold-wager">Reset</a>
                 </form>
             </div>
-        </div>
-    </div>
-
-    <div class="panel compact-panel">
-        <div class="stats-grid">
-            <div class="stat-card"><div class="name">Players</div><div class="value">{total_players}</div></div>
-            <div class="stat-card"><div class="name">Baseline Fail</div><div class="value">{baseline_fails}</div></div>
-            <div class="stat-card"><div class="name">Wager Fail</div><div class="value">{wager_fails}</div></div>
+            <div class="caps-toolbar-stats">
+                <div class="mini-stat"><div class="name">players</div><div class="value">{total_players}</div></div>
+                <div class="mini-stat"><div class="name">baseline fail</div><div class="value">{baseline_fails}</div></div>
+                <div class="mini-stat"><div class="name">wager fail</div><div class="value">{wager_fails}</div></div>
+            </div>
         </div>
     </div>
 
@@ -6497,7 +6980,6 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
     for row in rows:
         rows_html += f"""
         <tr>
-            <td>{escape(str(row.id))}</td>
             <td>{escape(row.advertiser or "")}</td>
             <td>{escape(row.platform or "")}</td>
             <td>{escape(row.name or "")}</td>
@@ -6513,10 +6995,14 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
                 <div style="display:flex; gap:8px;">
                     <form method="get" action="/cabinets">
                         <input type="hidden" name="edit" value="{row.id}">
+                        <input type="hidden" name="status" value="{escape(filter_values.get('status', ''))}">
+                        <input type="hidden" name="search" value="{escape(filter_values.get('search', ''))}">
                         <button type="submit" class="ghost-btn small-btn">Edit</button>
                     </form>
                     <form method="post" action="/cabinets/delete" onsubmit="return confirm('Delete this cabinet?');">
                         <input type="hidden" name="cabinet_id" value="{row.id}">
+                        <input type="hidden" name="status" value="{escape(filter_values.get('status', ''))}">
+                        <input type="hidden" name="search" value="{escape(filter_values.get('search', ''))}">
                         <button type="submit" class="ghost-btn small-btn">Delete</button>
                     </form>
                 </div>
@@ -6548,6 +7034,8 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
                     <div class="upload-menu-list" style="width:520px; max-width:min(520px, calc(100vw - 48px));">
                         <form method="post" action="/cabinets/save">
                             <input type="hidden" name="edit_id" value="{escape(form_data.get('edit_id', ''))}">
+                            <input type="hidden" name="status_filter" value="{escape(filter_values.get('status', ''))}">
+                            <input type="hidden" name="search" value="{escape(filter_values.get('search', ''))}">
                             <label>Advertiser
                                 <input type="text" name="advertiser" value="{escape(form_data.get('advertiser', ''))}" placeholder="Example: 1xBet">
                             </label>
@@ -6593,7 +7081,6 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
             <table style="min-width:1200px;">
                 <thead>
                     <tr>
-                        <th>ID</th>
                         <th>Advertiser</th>
                         <th>Platform</th>
                         <th>Cabinet Name</th>
@@ -6608,12 +7095,12 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
                         <th>Actions</th>
                     </tr>
                 </thead>
-                <tbody>{rows_html if rows_html else '<tr><td colspan="13">No partners yet</td></tr>'}</tbody>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="12">No cabinets yet</td></tr>'}</tbody>
             </table>
         </div>
     </div>
     """
-    return page_shell("Partners", content, active_page="cabinets", current_user=current_user)
+    return page_shell("Cabinets", content, active_page="cabinets", current_user=current_user)
 
 
 def partner_report_page_html(
@@ -6702,6 +7189,13 @@ def partner_report_page_html(
             <td style="white-space:nowrap;">
                 <form method="post" action="/partner-report/delete-upload" onsubmit="return confirm('Delete this upload? This action will remove this cabinet period data.');">
                     <input type="hidden" name="source_name" value="{escape(item.get('source_name', ''))}">
+                    <input type="hidden" name="period_view" value="{escape(period_view)}">
+                    <input type="hidden" name="period_label" value="{escape(period_label)}">
+                    <input type="hidden" name="cabinet_name" value="{escape(cabinet_name)}">
+                    <input type="hidden" name="country" value="{escape(country)}">
+                    <input type="hidden" name="search" value="{escape(search)}">
+                    <input type="hidden" name="sort_by" value="{escape(sort_by)}">
+                    <input type="hidden" name="order" value="{escape(order)}">
                     <button type="submit" class="ghost-btn small-btn">Delete</button>
                 </form>
             </td>
@@ -6893,6 +7387,9 @@ def save_task(
     due_hour: str = Form(default="12"),
     due_minute: str = Form(default="0"),
     notes: str = Form(default=""),
+    status_filter: str = Form(default=""),
+    assignee_filter: str = Form(default=""),
+    search_filter: str = Form(default=""),
 ):
     user = get_current_user(request)
     if not user:
@@ -6940,7 +7437,15 @@ def save_task(
     finally:
         db.close()
 
-    return RedirectResponse(url="/tasks?message=Task+created", status_code=303)
+    return RedirectResponse(
+        url=(
+            f"/tasks?status={quote_plus(safe_text(status_filter))}"
+            f"&assignee={quote_plus(safe_text(assignee_filter))}"
+            f"&search={quote_plus(safe_text(search_filter))}"
+            f"&message=Task+created"
+        ),
+        status_code=303,
+    )
 
 
 @app.post("/tasks/upload")
@@ -6966,7 +7471,13 @@ async def upload_tasks_file(
 
 
 @app.post("/tasks/delete")
-def delete_task(request: Request, task_id: str = Form(...)):
+def delete_task(
+    request: Request,
+    task_id: str = Form(...),
+    status_filter: str = Form(default=""),
+    assignee_filter: str = Form(default=""),
+    search_filter: str = Form(default=""),
+):
     user = get_current_user(request)
     if not user:
         return auth_redirect_response()
@@ -6978,7 +7489,15 @@ def delete_task(request: Request, task_id: str = Form(...)):
         db.commit()
     finally:
         db.close()
-    return RedirectResponse(url="/tasks?message=Task+deleted", status_code=303)
+    return RedirectResponse(
+        url=(
+            f"/tasks?status={quote_plus(safe_text(status_filter))}"
+            f"&assignee={quote_plus(safe_text(assignee_filter))}"
+            f"&search={quote_plus(safe_text(search_filter))}"
+            f"&message=Task+deleted"
+        ),
+        status_code=303,
+    )
 
 
 @app.post("/tasks/respond")
@@ -6987,6 +7506,9 @@ def respond_task(
     task_id: str = Form(...),
     status: str = Form(...),
     response_text: str = Form(default=""),
+    status_filter: str = Form(default=""),
+    assignee_filter: str = Form(default=""),
+    search_filter: str = Form(default=""),
 ):
     user = get_current_user(request)
     if not user:
@@ -6994,13 +7516,29 @@ def respond_task(
     enforce_page_access(user, "tasks")
     ensure_task_table()
     if status not in get_task_status_options():
-        return RedirectResponse(url="/tasks?message=Неизвестный статус", status_code=303)
+        return RedirectResponse(
+            url=(
+                f"/tasks?status={quote_plus(safe_text(status_filter))}"
+                f"&assignee={quote_plus(safe_text(assignee_filter))}"
+                f"&search={quote_plus(safe_text(search_filter))}"
+                f"&message=Неизвестный+статус"
+            ),
+            status_code=303,
+        )
 
     db = SessionLocal()
     try:
         task = db.query(TaskRow).filter(TaskRow.id == safe_number(task_id)).first()
         if not task:
-            return RedirectResponse(url="/tasks?message=Task+not+found", status_code=303)
+            return RedirectResponse(
+                url=(
+                    f"/tasks?status={quote_plus(safe_text(status_filter))}"
+                    f"&assignee={quote_plus(safe_text(assignee_filter))}"
+                    f"&search={quote_plus(safe_text(search_filter))}"
+                    f"&message=Task+not+found"
+                ),
+                status_code=303,
+            )
         if not is_admin_role(user) and task.assigned_to_username != user.get("username"):
             raise HTTPException(status_code=403)
         task.status = status
@@ -7012,7 +7550,15 @@ def respond_task(
     finally:
         db.close()
 
-    return RedirectResponse(url="/tasks?message=Ответ сохранен", status_code=303)
+    return RedirectResponse(
+        url=(
+            f"/tasks?status={quote_plus(safe_text(status_filter))}"
+            f"&assignee={quote_plus(safe_text(assignee_filter))}"
+            f"&search={quote_plus(safe_text(search_filter))}"
+            f"&message=%D0%9E%D1%82%D0%B2%D0%B5%D1%82+%D1%81%D0%BE%D1%85%D1%80%D0%B0%D0%BD%D0%B5%D0%BD"
+        ),
+        status_code=303,
+    )
 
 
 @app.post("/users/save")
@@ -7733,6 +8279,9 @@ def save_finance_wallet(
     owner_name: str = Form(default=""),
     wallet: str = Form(default=""),
     amount: str = Form(default="0"),
+    date_from: str = Form(default=""),
+    date_to: str = Form(default=""),
+    year: str = Form(default=""),
 ):
     user = get_current_user(request)
     if not user:
@@ -7763,7 +8312,7 @@ def save_finance_wallet(
     finally:
         db.close()
     clear_runtime_cache("finance_snapshot::")
-    return RedirectResponse(url="/finance?message=Кошелек сохранен", status_code=303)
+    return RedirectResponse(url=f"/finance?date_from={quote_plus(safe_text(date_from))}&date_to={quote_plus(safe_text(date_to))}&year={quote_plus(safe_text(year))}&message=%D0%9A%D0%BE%D1%88%D0%B5%D0%BB%D0%B5%D0%BA+%D1%81%D0%BE%D1%85%D1%80%D0%B0%D0%BD%D0%B5%D0%BD", status_code=303)
 
 
 @app.post("/finance/upload")
@@ -7790,6 +8339,9 @@ def save_finance_expense(
     from_wallet: str = Form(default=""),
     paid_by: str = Form(default=""),
     comment: str = Form(default=""),
+    date_from: str = Form(default=""),
+    date_to: str = Form(default=""),
+    year: str = Form(default=""),
 ):
     user = get_current_user(request)
     if not user:
@@ -7823,7 +8375,7 @@ def save_finance_expense(
     finally:
         db.close()
     clear_runtime_cache("finance_snapshot::")
-    return RedirectResponse(url="/finance?message=Расход сохранен", status_code=303)
+    return RedirectResponse(url=f"/finance?date_from={quote_plus(safe_text(date_from))}&date_to={quote_plus(safe_text(date_to))}&year={quote_plus(safe_text(year))}&message=%D0%A0%D0%B0%D1%81%D1%85%D0%BE%D0%B4+%D1%81%D0%BE%D1%85%D1%80%D0%B0%D0%BD%D0%B5%D0%BD", status_code=303)
 
 
 @app.post("/finance/income/save")
@@ -7836,6 +8388,9 @@ def save_finance_income(
     amount: str = Form(default="0"),
     from_wallet: str = Form(default=""),
     comment: str = Form(default=""),
+    date_from: str = Form(default=""),
+    date_to: str = Form(default=""),
+    year: str = Form(default=""),
 ):
     user = get_current_user(request)
     if not user:
@@ -7871,7 +8426,7 @@ def save_finance_income(
     finally:
         db.close()
     clear_runtime_cache("finance_snapshot::")
-    return RedirectResponse(url="/finance?message=Приход сохранен", status_code=303)
+    return RedirectResponse(url=f"/finance?date_from={quote_plus(safe_text(date_from))}&date_to={quote_plus(safe_text(date_to))}&year={quote_plus(safe_text(year))}&message=%D0%9F%D1%80%D0%B8%D1%85%D0%BE%D0%B4+%D1%81%D0%BE%D1%85%D1%80%D0%B0%D0%BD%D0%B5%D0%BD", status_code=303)
 
 
 @app.post("/finance/transfers/save")
@@ -7884,6 +8439,9 @@ def save_finance_transfer(
     from_wallet: str = Form(default=""),
     to_wallet: str = Form(default=""),
     comment: str = Form(default=""),
+    date_from: str = Form(default=""),
+    date_to: str = Form(default=""),
+    year: str = Form(default=""),
 ):
     user = get_current_user(request)
     if not user:
@@ -7916,11 +8474,11 @@ def save_finance_transfer(
     finally:
         db.close()
     clear_runtime_cache("finance_snapshot::")
-    return RedirectResponse(url="/finance?message=Перемещение сохранено", status_code=303)
+    return RedirectResponse(url=f"/finance?date_from={quote_plus(safe_text(date_from))}&date_to={quote_plus(safe_text(date_to))}&year={quote_plus(safe_text(year))}&message=%D0%9F%D0%B5%D1%80%D0%B5%D0%BC%D0%B5%D1%89%D0%B5%D0%BD%D0%B8%D0%B5+%D1%81%D0%BE%D1%85%D1%80%D0%B0%D0%BD%D0%B5%D0%BD%D0%BE", status_code=303)
 
 
 @app.post("/finance/wallets/delete")
-def delete_finance_wallet(request: Request, wallet_id: str = Form(...)):
+def delete_finance_wallet(request: Request, wallet_id: str = Form(...), date_from: str = Form(default=""), date_to: str = Form(default=""), year: str = Form(default="")):
     user = get_current_user(request)
     if not user:
         return auth_redirect_response()
@@ -7933,11 +8491,11 @@ def delete_finance_wallet(request: Request, wallet_id: str = Form(...)):
     finally:
         db.close()
     clear_runtime_cache("finance_snapshot::")
-    return RedirectResponse(url="/finance?message=Кошелек удален", status_code=303)
+    return RedirectResponse(url=f"/finance?date_from={quote_plus(safe_text(date_from))}&date_to={quote_plus(safe_text(date_to))}&year={quote_plus(safe_text(year))}&message=%D0%9A%D0%BE%D1%88%D0%B5%D0%BB%D0%B5%D0%BA+%D1%83%D0%B4%D0%B0%D0%BB%D0%B5%D0%BD", status_code=303)
 
 
 @app.post("/finance/expenses/delete")
-def delete_finance_expense(request: Request, expense_id: str = Form(...)):
+def delete_finance_expense(request: Request, expense_id: str = Form(...), date_from: str = Form(default=""), date_to: str = Form(default=""), year: str = Form(default="")):
     user = get_current_user(request)
     if not user:
         return auth_redirect_response()
@@ -7950,11 +8508,11 @@ def delete_finance_expense(request: Request, expense_id: str = Form(...)):
     finally:
         db.close()
     clear_runtime_cache("finance_snapshot::")
-    return RedirectResponse(url="/finance?message=Расход удален", status_code=303)
+    return RedirectResponse(url=f"/finance?date_from={quote_plus(safe_text(date_from))}&date_to={quote_plus(safe_text(date_to))}&year={quote_plus(safe_text(year))}&message=%D0%A0%D0%B0%D1%81%D1%85%D0%BE%D0%B4+%D1%83%D0%B4%D0%B0%D0%BB%D0%B5%D0%BD", status_code=303)
 
 
 @app.post("/finance/income/delete")
-def delete_finance_income(request: Request, income_id: str = Form(...)):
+def delete_finance_income(request: Request, income_id: str = Form(...), date_from: str = Form(default=""), date_to: str = Form(default=""), year: str = Form(default="")):
     user = get_current_user(request)
     if not user:
         return auth_redirect_response()
@@ -7967,11 +8525,11 @@ def delete_finance_income(request: Request, income_id: str = Form(...)):
     finally:
         db.close()
     clear_runtime_cache("finance_snapshot::")
-    return RedirectResponse(url="/finance?message=Приход удален", status_code=303)
+    return RedirectResponse(url=f"/finance?date_from={quote_plus(safe_text(date_from))}&date_to={quote_plus(safe_text(date_to))}&year={quote_plus(safe_text(year))}&message=%D0%9F%D1%80%D0%B8%D1%85%D0%BE%D0%B4+%D1%83%D0%B4%D0%B0%D0%BB%D0%B5%D0%BD", status_code=303)
 
 
 @app.post("/finance/transfers/delete")
-def delete_finance_transfer(request: Request, transfer_id: str = Form(...)):
+def delete_finance_transfer(request: Request, transfer_id: str = Form(...), date_from: str = Form(default=""), date_to: str = Form(default=""), year: str = Form(default="")):
     user = get_current_user(request)
     if not user:
         return auth_redirect_response()
@@ -7984,7 +8542,7 @@ def delete_finance_transfer(request: Request, transfer_id: str = Form(...)):
     finally:
         db.close()
     clear_runtime_cache("finance_snapshot::")
-    return RedirectResponse(url="/finance?message=Перемещение удалено", status_code=303)
+    return RedirectResponse(url=f"/finance?date_from={quote_plus(safe_text(date_from))}&date_to={quote_plus(safe_text(date_to))}&year={quote_plus(safe_text(year))}&message=%D0%9F%D0%B5%D1%80%D0%B5%D0%BC%D0%B5%D1%89%D0%B5%D0%BD%D0%B8%D0%B5+%D1%83%D0%B4%D0%B0%D0%BB%D0%B5%D0%BD%D0%BE", status_code=303)
 
 
 @app.get("/caps", response_class=HTMLResponse)
@@ -8096,6 +8654,10 @@ def save_cap(
     period_view: str = Form(default="period"),
     period_label: str = Form(default=""),
     buyer: str = Form(default=""),
+    code_filter: str = Form(default=""),
+    search: str = Form(default=""),
+    sort_by: str = Form(default="cabinet"),
+    order: str = Form(default="asc"),
     cabinet_name: str = Form(default=""),
     flow: str = Form(default=""),
     code: str = Form(default=""),
@@ -8119,6 +8681,9 @@ def save_cap(
     clean_buyer = safe_text(buyer)
     clean_period_label = safe_text(period_label) or get_current_period_label()
     clean_cap_value = safe_cap_number(cap_value)
+    clean_cabinet_name = safe_text(cabinet_name)
+    clean_advertiser = safe_text(advertiser)
+    clean_owner_name = safe_text(owner_name)
     form_data = {
         "edit_id": edit_id,
         "advertiser": advertiser,
@@ -8140,21 +8705,62 @@ def save_cap(
         "comments": comments,
         "agent": agent,
     }
+    current_filter_values = {
+        "search": safe_text(search),
+        "period_view": safe_text(period_view) or "period",
+        "period_label": clean_period_label,
+        "sort_by": safe_text(sort_by) or "cabinet",
+        "order": safe_text(order).lower() or "asc",
+        "buyer": clean_buyer,
+        "code": safe_text(code_filter),
+    }
     if clean_cap_value <= 0:
-        return HTMLResponse(caps_page_html(user, get_caps_rows(period_label=clean_period_label), filter_values={"period_label": clean_period_label}, form_data=form_data, error_text="Cap must be greater than 0."), status_code=400)
+        return HTMLResponse(caps_page_html(user, get_caps_rows(period_label=clean_period_label), filter_values=current_filter_values, form_data=form_data, error_text="Cap must be greater than 0."), status_code=400)
 
+    ensure_cabinet_table()
     db = SessionLocal()
     try:
+        cabinet_item = db.query(CabinetRow).filter(CabinetRow.name == clean_cabinet_name).first()
+        if not cabinet_item:
+            rows = get_caps_rows(
+                search=current_filter_values["search"],
+                buyer=current_filter_values["buyer"],
+                code=current_filter_values["code"],
+                owner_name="",
+                period_label=clean_period_label,
+            )
+            return HTMLResponse(caps_page_html(user, rows, filter_values=current_filter_values, form_data=form_data, error_text="Cabinet must exist in Cabinets list."), status_code=400)
+        expected_advertiser = safe_text(cabinet_item.advertiser)
+        expected_manager = safe_text(cabinet_item.manager_name)
+        if not expected_advertiser or not expected_manager:
+            rows = get_caps_rows(
+                search=current_filter_values["search"],
+                buyer=current_filter_values["buyer"],
+                code=current_filter_values["code"],
+                owner_name="",
+                period_label=clean_period_label,
+            )
+            return HTMLResponse(caps_page_html(user, rows, filter_values=current_filter_values, form_data=form_data, error_text="Fill advertiser and manager in Cabinets first."), status_code=400)
+        if clean_advertiser != expected_advertiser or clean_owner_name != expected_manager:
+            rows = get_caps_rows(
+                search=current_filter_values["search"],
+                buyer=current_filter_values["buyer"],
+                code=current_filter_values["code"],
+                owner_name="",
+                period_label=clean_period_label,
+            )
+            return HTMLResponse(caps_page_html(user, rows, filter_values=current_filter_values, form_data=form_data, error_text="Advertiser, manager and cabinet must match Cabinets list."), status_code=400)
+
         item = db.query(CapRow).filter(CapRow.id == safe_number(edit_id)).first() if edit_id else None
         if not item:
             item = CapRow()
             db.add(item)
 
-        item.advertiser = safe_text(advertiser)
-        item.owner_name = safe_text(owner_name)
+        item.advertiser = expected_advertiser
+        item.owner_name = expected_manager
         item.period_label = clean_period_label
         item.buyer = clean_buyer
-        item.cabinet_name = safe_text(cabinet_name)
+        item.cabinet_name = clean_cabinet_name
         item.flow = safe_text(flow)
         item.code = normalize_geo_value(code)
         item.geo = normalize_geo_value(geo)
@@ -8176,7 +8782,19 @@ def save_cap(
     refresh_cap_current_ftd_from_partner()
     clear_runtime_cache("stat_support::")
     final_period_view = safe_text(period_view) or "period"
-    return RedirectResponse(url=f"/caps?period_view={quote_plus(final_period_view)}&period_label={quote_plus(clean_period_label)}&message=Cap+saved", status_code=303)
+    return RedirectResponse(
+        url=(
+            f"/caps?period_view={quote_plus(final_period_view)}"
+            f"&period_label={quote_plus(clean_period_label)}"
+            f"&buyer={quote_plus(safe_text(buyer))}"
+            f"&code={quote_plus(safe_text(code_filter))}"
+            f"&search={quote_plus(safe_text(search))}"
+            f"&sort_by={quote_plus(safe_text(sort_by) or 'cabinet')}"
+            f"&order={quote_plus((safe_text(order).lower() or 'asc'))}"
+            f"&message=Cap+saved"
+        ),
+        status_code=303,
+    )
 
 @app.post("/caps/delete")
 def delete_cap(
@@ -8184,6 +8802,11 @@ def delete_cap(
     cap_id: str = Form(...),
     period_view: str = Form(default="period"),
     period_label: str = Form(default=""),
+    buyer: str = Form(default=""),
+    code: str = Form(default=""),
+    search: str = Form(default=""),
+    sort_by: str = Form(default="cabinet"),
+    order: str = Form(default="asc"),
 ):
     user = get_current_user(request)
     if not user:
@@ -8199,7 +8822,19 @@ def delete_cap(
         db.close()
     clear_runtime_cache("stat_support::")
     refresh_cap_current_ftd_from_partner()
-    return RedirectResponse(url=f"/caps?period_view={quote_plus(clean_period_view)}&period_label={quote_plus(clean_period_label)}&message=Cap+deleted", status_code=303)
+    return RedirectResponse(
+        url=(
+            f"/caps?period_view={quote_plus(clean_period_view)}"
+            f"&period_label={quote_plus(clean_period_label)}"
+            f"&buyer={quote_plus(safe_text(buyer))}"
+            f"&code={quote_plus(safe_text(code))}"
+            f"&search={quote_plus(safe_text(search))}"
+            f"&sort_by={quote_plus(safe_text(sort_by) or 'cabinet')}"
+            f"&order={quote_plus((safe_text(order).lower() or 'asc'))}"
+            f"&message=Cap+deleted"
+        ),
+        status_code=303,
+    )
 
 @app.get("/api/partner/current-period")
 def api_partner_current_period(request: Request):
@@ -8341,6 +8976,8 @@ def save_cabinet(
     wallet: str = Form(default=""),
     comments: str = Form(default=""),
     status: str = Form(default="Active"),
+    status_filter: str = Form(default=""),
+    search: str = Form(default=""),
 ):
     user = get_current_user(request)
     if not user:
@@ -8392,11 +9029,19 @@ def save_cabinet(
         db.commit()
     finally:
         db.close()
-    return RedirectResponse(url="/cabinets?message=Cabinet saved", status_code=303)
+    return RedirectResponse(
+        url=f"/cabinets?status={quote_plus(safe_text(status_filter))}&search={quote_plus(safe_text(search))}&message=Cabinet+saved",
+        status_code=303,
+    )
 
 
 @app.post("/cabinets/delete")
-def delete_cabinet(request: Request, cabinet_id: str = Form(...)):
+def delete_cabinet(
+    request: Request,
+    cabinet_id: str = Form(...),
+    status: str = Form(default=""),
+    search: str = Form(default=""),
+):
     user = get_current_user(request)
     if not user:
         return auth_redirect_response()
@@ -8408,7 +9053,10 @@ def delete_cabinet(request: Request, cabinet_id: str = Form(...)):
         db.commit()
     finally:
         db.close()
-    return RedirectResponse(url="/cabinets?message=Cabinet deleted", status_code=303)
+    return RedirectResponse(
+        url=f"/cabinets?status={quote_plus(safe_text(status))}&search={quote_plus(safe_text(search))}&message=Cabinet+deleted",
+        status_code=303,
+    )
 
 
 @app.get("/partner-report", response_class=HTMLResponse)
@@ -8532,6 +9180,13 @@ async def upload_partner_report_file(
 def delete_partner_upload(
     request: Request,
     source_name: str = Form(default=""),
+    period_view: str = Form(default="current"),
+    period_label: str = Form(default=""),
+    cabinet_name: str = Form(default=""),
+    country: str = Form(default=""),
+    search: str = Form(default=""),
+    sort_by: str = Form(default="id"),
+    order: str = Form(default="desc"),
 ):
     user = get_current_user(request)
     if not user:
@@ -8539,7 +9194,19 @@ def delete_partner_upload(
     enforce_page_access(user, "partner")
     clean_source_name = safe_text(source_name)
     if not clean_source_name:
-        return RedirectResponse(url="/partner-report?message=Upload+not+found", status_code=303)
+        return RedirectResponse(
+            url=(
+                f"/partner-report?period_view={quote_plus(safe_text(period_view) or 'current')}"
+                f"&period_label={quote_plus(safe_text(period_label))}"
+                f"&cabinet_name={quote_plus(safe_text(cabinet_name))}"
+                f"&country={quote_plus(safe_text(country))}"
+                f"&search={quote_plus(safe_text(search))}"
+                f"&sort_by={quote_plus(safe_text(sort_by) or 'id')}"
+                f"&order={quote_plus(safe_text(order).lower() or 'desc')}"
+                f"&message=Upload+not+found"
+            ),
+            status_code=303,
+        )
 
     ensure_partner_table()
     db = SessionLocal()
@@ -8550,7 +9217,19 @@ def delete_partner_upload(
         db.close()
     clear_runtime_cache("stat_support::")
     refresh_cap_current_ftd_from_partner()
-    return RedirectResponse(url="/partner-report?message=Upload+deleted", status_code=303)
+    return RedirectResponse(
+        url=(
+            f"/partner-report?period_view={quote_plus(safe_text(period_view) or 'current')}"
+            f"&period_label={quote_plus(safe_text(period_label))}"
+            f"&cabinet_name={quote_plus(safe_text(cabinet_name))}"
+            f"&country={quote_plus(safe_text(country))}"
+            f"&search={quote_plus(safe_text(search))}"
+            f"&sort_by={quote_plus(safe_text(sort_by) or 'id')}"
+            f"&order={quote_plus(safe_text(order).lower() or 'desc')}"
+            f"&message=Upload+deleted"
+        ),
+        status_code=303,
+    )
 
 
 @app.post("/partner-report/flags/save")
