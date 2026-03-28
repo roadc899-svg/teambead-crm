@@ -2969,7 +2969,7 @@ def sidebar_html(active_page, current_user=None):
         ("partner", "/partner-report", "🎰", "Players", []),
         ("cabinets", "/cabinets", "🗂", "Partners", []),
         ("chatterfy", "/chatterfy", "💬", "Chatterfy", []),
-        ("holdwager", "/hold-wager", "🎯", "Hold/Wager", []),
+        ("holdwager", "/hold-wager", "🎯", "Hold", []),
     ]
 
     html = '''
@@ -3864,39 +3864,56 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             }}
             .caps-form textarea {{ min-height: 110px; resize: vertical; }}
             .caps-grid-2 {{ display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:10px; }}
-            .caps-table {{ min-width: 1280px; table-layout: fixed; width: 100%; }}
+            .caps-table {{ min-width: 1220px; table-layout: fixed; width: 100%; }}
             .caps-table th, .caps-table td {{
                 white-space: nowrap;
                 overflow: hidden;
                 text-overflow: ellipsis;
                 vertical-align: middle;
                 line-height: 1.2;
-                padding: 8px 10px;
-                font-size: 13px;
+                padding: 7px 8px;
+                font-size: 12px;
             }}
             .caps-table thead th {{
-                font-size: 12px;
-                padding: 8px 10px;
+                font-size: 11px;
+                padding: 7px 8px;
             }}
-            .caps-table tbody tr {{ height: 42px; }}
-            .caps-table .id-col {{ width: 54px; min-width: 54px; }}
-            .caps-table .advertiser-col {{ width: 92px; min-width: 92px; }}
-            .caps-table .owner-col {{ width: 90px; min-width: 90px; }}
-            .caps-table .buyer-col {{ width: 108px; min-width: 108px; }}
+            .caps-table tbody tr {{ height: 40px; }}
+            .caps-table .id-col {{ width: 48px; min-width: 48px; }}
+            .caps-table .advertiser-col {{ width: 82px; min-width: 82px; }}
+            .caps-table .owner-col {{ width: 82px; min-width: 82px; }}
+            .caps-table .buyer-col {{ width: 92px; min-width: 92px; }}
             .caps-table .flow-col {{ width: 148px; min-width: 148px; }}
-            .caps-table .code-col {{ width: 64px; min-width: 64px; }}
-            .caps-table .geo-col {{ width: 84px; min-width: 84px; }}
-            .caps-table .rate-col {{ width: 66px; min-width: 66px; }}
-            .caps-table .baseline-col {{ width: 76px; min-width: 76px; }}
-            .caps-table .cap-col {{ width: 64px; min-width: 64px; }}
-            .caps-table .current-col {{ width: 90px; min-width: 90px; }}
-            .caps-table .fill-col {{ width: 108px; min-width: 108px; }}
-            .caps-table .promo-col {{ width: 98px; min-width: 98px; }}
-            .caps-table .agent-col {{ width: 84px; min-width: 84px; }}
-            .caps-table .kpi-col {{ width: 128px; min-width: 128px; }}
-            .caps-table .comment-col {{ width: 122px; min-width: 122px; }}
-            .caps-table .link-col {{ width: 92px; min-width: 92px; }}
-            .caps-table .action-col {{ width: 108px; min-width: 108px; }}
+            .caps-table .code-col {{ width: 56px; min-width: 56px; }}
+            .caps-table .geo-col {{ width: 58px; min-width: 58px; }}
+            .caps-table .rate-col {{ width: 58px; min-width: 58px; }}
+            .caps-table .baseline-col {{ width: 64px; min-width: 64px; }}
+            .caps-table .cap-col {{ width: 58px; min-width: 58px; }}
+            .caps-table .current-col {{ width: 74px; min-width: 74px; }}
+            .caps-table .remaining-col {{ width: 74px; min-width: 74px; }}
+            .caps-table .fill-col {{ width: 92px; min-width: 92px; }}
+            .caps-table .promo-col {{ width: 82px; min-width: 82px; }}
+            .caps-table .agent-col {{ width: 72px; min-width: 72px; }}
+            .caps-table .kpi-col {{ width: 94px; min-width: 94px; }}
+            .caps-table .comment-col {{ width: 94px; min-width: 94px; }}
+            .caps-table .link-col {{ width: 72px; min-width: 72px; }}
+            .caps-table .action-col {{ width: 82px; min-width: 82px; }}
+            .caps-table th .th-inner {{
+                justify-content: flex-start;
+                gap: 6px;
+                padding-right: 14px;
+            }}
+            .caps-table th .resizer {{
+                right: 0;
+            }}
+            .caps-table .ghost-btn,
+            .caps-table .btn,
+            .caps-table button {{
+                min-height: 30px;
+                padding: 7px 8px;
+                font-size: 11px;
+                border-radius: 10px;
+            }}
             .progress-shell {{
                 min-width: 0;
                 display:grid;
@@ -4106,6 +4123,82 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             (function initTheme() {{
                 const saved = localStorage.getItem(window.teambeadStorageKey('theme'));
                 if (saved === 'light') document.body.classList.add('light');
+            }})();
+            (function initPersistentFilters() {{
+                function getFormKey(form) {{
+                    const scope = form.getAttribute('data-persist-filters');
+                    if (!scope) return '';
+                    return window.teambeadStorageKey('filters:' + scope);
+                }}
+                function getTrackedFields(form) {{
+                    return Array.from(form.elements || []).filter(function(el) {{
+                        return el.name && !el.disabled && !['submit', 'button', 'file'].includes((el.type || '').toLowerCase());
+                    }});
+                }}
+                function saveFormState(form) {{
+                    const key = getFormKey(form);
+                    if (!key) return;
+                    const payload = {{}};
+                    getTrackedFields(form).forEach(function(el) {{
+                        if ((el.type || '').toLowerCase() === 'checkbox') payload[el.name] = !!el.checked;
+                        else if ((el.type || '').toLowerCase() === 'radio') {{
+                            if (el.checked) payload[el.name] = el.value;
+                        }} else {{
+                            payload[el.name] = el.value ?? '';
+                        }}
+                    }});
+                    localStorage.setItem(key, JSON.stringify(payload));
+                }}
+                function restoreFormState(form) {{
+                    const key = getFormKey(form);
+                    if (!key) return;
+                    const raw = localStorage.getItem(key);
+                    if (!raw) return;
+                    let payload = null;
+                    try {{
+                        payload = JSON.parse(raw);
+                    }} catch (err) {{
+                        return;
+                    }}
+                    const tracked = getTrackedFields(form);
+                    const params = new URLSearchParams(window.location.search);
+                    const hasExplicitQuery = tracked.some(function(el) {{
+                        return params.has(el.name);
+                    }});
+                    if (hasExplicitQuery) return;
+                    tracked.forEach(function(el) {{
+                        if (!(el.name in payload)) return;
+                        const value = payload[el.name];
+                        const type = (el.type || '').toLowerCase();
+                        if (type === 'checkbox') el.checked = !!value;
+                        else if (type === 'radio') el.checked = el.value === value;
+                        else el.value = value ?? '';
+                    }});
+                }}
+                document.querySelectorAll('form[data-persist-filters]').forEach(function(form) {{
+                    restoreFormState(form);
+                    getTrackedFields(form).forEach(function(el) {{
+                        const eventName = ['select-one', 'select-multiple', 'checkbox', 'radio'].includes((el.type || '').toLowerCase()) ? 'change' : 'input';
+                        el.addEventListener(eventName, function() {{
+                            saveFormState(form);
+                        }});
+                        if (eventName !== 'change') {{
+                            el.addEventListener('change', function() {{
+                                saveFormState(form);
+                            }});
+                        }}
+                    }});
+                    form.addEventListener('submit', function() {{
+                        saveFormState(form);
+                    }});
+                }});
+                document.querySelectorAll('[data-reset-filters]').forEach(function(link) {{
+                    link.addEventListener('click', function() {{
+                        const scope = link.getAttribute('data-reset-filters');
+                        if (!scope) return;
+                        localStorage.removeItem(window.teambeadStorageKey('filters:' + scope));
+                    }});
+                }});
             }})();
             document.addEventListener('click', function(e) {{
                 const wrap = document.querySelector('.column-menu-wrap');
@@ -4521,7 +4614,7 @@ def render_chatterfy_status_badge(status):
     if not status_text:
         return '<span class="status-chip">—</span>'
     if "block" in status_lower:
-        return f'<span class="status-chip status-chip-blocked">⛔ {escape(status_text)}</span>'
+        return f'<span class="status-chip status-chip-blocked">🛑 {escape(status_text)}</span>'
     if "wait" in status_lower:
         return f'<span class="status-chip status-chip-waiting">⏳ {escape(status_text)}</span>'
     if "manual" in status_lower:
@@ -4535,7 +4628,7 @@ def render_chatterfy_status_icon(status):
     if not status_text:
         return '<span class="status-icon" title="No status">—</span>'
     if "block" in status_lower:
-        return f'<span class="status-icon status-icon-blocked" title="{escape(status_text)}">⛔</span>'
+        return f'<span class="status-icon status-icon-blocked" title="{escape(status_text)}">🛑</span>'
     if "wait" in status_lower:
         return f'<span class="status-icon status-icon-waiting" title="{escape(status_text)}">⏳</span>'
     if "manual" in status_lower:
@@ -4851,7 +4944,6 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         ("id", "ID"),
         ("advertiser", "Advertiser"),
         ("manager", "Manager"),
-        ("buyer", "Buyer"),
         ("cabinet", "Cabinet"),
         ("code", "CODE"),
         ("geo", "GEO"),
@@ -4880,7 +4972,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         remaining_value = max(0.0, safe_number(row.cap_value) - safe_number(row.current_ftd))
         geo_code = normalize_geo_value(row.geo or "")
         link_value = safe_text(row.link)
-        link_button = f'<a href="{escape(link_value)}" target="_blank" rel="noreferrer" class="ghost-btn small-btn">Open</a>' if link_value else "—"
+        link_button = f'<button type="button" class="ghost-btn small-btn cap-copy-link" data-link="{escape(link_value)}">Copy</button>' if link_value else "—"
         state = "Free"
         progress_class = "progress-free"
         if fill_percent >= 100:
@@ -4894,7 +4986,6 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             <td class="id-col" data-col="id">{row.id}</td>
             <td class="advertiser-col" data-col="advertiser" title="{escape(row.advertiser or '')}">{escape(row.advertiser or "")}</td>
             <td class="owner-col" data-col="manager" title="{escape(row.owner_name or '')}">{escape(row.owner_name or "")}</td>
-            <td class="buyer-col" data-col="buyer" title="{escape(row.buyer or '')}">{escape(row.buyer or "")}</td>
             <td class="buyer-col" data-col="cabinet" title="{escape(row.cabinet_name or '')}">{escape(row.cabinet_name or "")}</td>
             <td class="code-col" data-col="code" title="{escape(row.code or '')}">{escape(row.code or "")}</td>
             <td class="geo-col" data-col="geo" title="{escape(geo_code)}">{escape(geo_code)}</td>
@@ -4916,7 +5007,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             <td class="link-col" data-col="link">{link_button}</td>
             <td class="action-col" data-col="action">
                 <div class="caps-actions">
-                    <form method="get" action="/caps">
+                    <form method="get" action="/caps" data-persist-filters="caps">
                         <input type="hidden" name="edit" value="{row.id}">
                         <input type="hidden" name="period_view" value="{escape(selected_period_view)}">
                         <input type="hidden" name="period_label" value="{escape(selected_period)}">
@@ -5034,14 +5125,9 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     <input type="text" name="baseline" value="{escape(form_data.get('baseline', ''))}">
                 </label>
             </div>
-            <div class="caps-grid-2">
-                <label>Cap
-                    <input type="number" step="0.01" name="cap_value" value="{escape(form_data.get('cap_value', ''))}" required>
-                </label>
-                <label>Buyer
-                    <input type="text" name="buyer" value="{escape(form_data.get('buyer', ''))}" required placeholder="Buyer">
-                </label>
-            </div>
+            <label>Cap
+                <input type="number" step="0.01" name="cap_value" value="{escape(form_data.get('cap_value', ''))}" required>
+            </label>
             <label>Current FTD
                 <input type="number" step="0.01" name="current_ftd" value="{escape(form_data.get('current_ftd', '0'))}">
             </label>
@@ -5080,12 +5166,12 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 <div class="panel compact-panel filters">
                     <form method="get" action="/caps">
                         <label>Period<select name="period_label">{period_options}</select></label>
-                        <label>Buyer<select name="buyer">{buyer_options}</select></label>
+                        <label>Cabinet<select name="buyer">{buyer_options}</select></label>
                         <label>Geo<select name="geo">{geo_options}</select></label>
                         <label>Manager<select name="owner_name">{owner_options}</select></label>
                         <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="Search caps"></label>
                         <button type="submit" class="btn small-btn">Filter</button>
-                        <a href="/caps" class="ghost-btn small-btn">Reset</a>
+                        <a href="/caps" class="ghost-btn small-btn" data-reset-filters="caps">Reset</a>
                     </form>
                 </div>
                 <div class="column-menu-wrap">
@@ -5119,13 +5205,12 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 </div>
             </div>
             <div class="table-wrap">
-                <table class="caps-table" id="capsTable" style="min-width:1750px;">
+                <table class="caps-table" id="capsTable">
                     <thead>
                         <tr>
                             <th class="id-col" data-col="id" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>ID<span class="resizer"></span></div></th>
                             <th class="advertiser-col" data-col="advertiser" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Advertiser<span class="resizer"></span></div></th>
                             <th class="owner-col" data-col="manager" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Manager<span class="resizer"></span></div></th>
-                            <th class="buyer-col" data-col="buyer" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Buyer<span class="resizer"></span></div></th>
                             <th class="buyer-col" data-col="cabinet" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Cabinet<span class="resizer"></span></div></th>
                             <th class="code-col" data-col="code" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>CODE<span class="resizer"></span></div></th>
                             <th class="geo-col" data-col="geo" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>GEO<span class="resizer"></span></div></th>
@@ -5143,7 +5228,7 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                             <th class="action-col" data-col="action" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>Action<span class="resizer"></span></div></th>
                         </tr>
                     </thead>
-                        <tbody>{rows_html if rows_html else '<tr><td colspan="19">No caps yet</td></tr>'}</tbody>
+                        <tbody>{rows_html if rows_html else '<tr><td colspan="18">No caps yet</td></tr>'}</tbody>
                 </table>
             </div>
         </div>
@@ -5191,6 +5276,42 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             });
             document.addEventListener('keydown', function(event) {
                 if (event.key === 'Escape' && overlay.classList.contains('open')) closeModal();
+            });
+        })();
+        (function initCapsCopyButtons() {
+            function showCopyFeedback(button, text) {
+                if (!button) return;
+                const original = button.dataset.originalLabel || button.textContent;
+                button.dataset.originalLabel = original;
+                button.textContent = text;
+                setTimeout(function() {
+                    button.textContent = original;
+                }, 1200);
+            }
+            document.querySelectorAll('.cap-copy-link').forEach(function(button) {
+                button.addEventListener('click', async function() {
+                    const value = button.getAttribute('data-link') || '';
+                    if (!value) return;
+                    try {
+                        await navigator.clipboard.writeText(value);
+                        showCopyFeedback(button, 'Copied');
+                    } catch (err) {
+                        const temp = document.createElement('textarea');
+                        temp.value = value;
+                        temp.style.position = 'fixed';
+                        temp.style.opacity = '0';
+                        document.body.appendChild(temp);
+                        temp.focus();
+                        temp.select();
+                        try {
+                            document.execCommand('copy');
+                            showCopyFeedback(button, 'Copied');
+                        } catch (copyErr) {
+                            showCopyFeedback(button, 'Failed');
+                        }
+                        document.body.removeChild(temp);
+                    }
+                });
             });
         })();
         (function initCapsColumns() {
@@ -5589,12 +5710,12 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
             </div>
             <div class="toolbar-actions">
                 <div class="panel compact-panel filters">
-                    <form method="get" action="/finance" style="justify-content:flex-end;">
+                    <form method="get" action="/finance" style="justify-content:flex-end;" data-persist-filters="finance">
                         <label>Date From<input type="date" name="date_from" value="{escape(date_from)}"></label>
                         <label>Date To<input type="date" name="date_to" value="{escape(date_to)}"></label>
                         <label>Year<select name="year">{year_options}</select></label>
                         <button type="submit" class="btn small-btn">Filter</button>
-                        <a href="/finance" class="ghost-btn small-btn">Reset</a>
+                        <a href="/finance" class="ghost-btn small-btn" data-reset-filters="finance">Reset</a>
                     </form>
                 </div>
                 {create_panel}
@@ -5755,12 +5876,12 @@ def tasks_page_html(current_user, rows, filter_values=None, form_data=None, succ
         <div class="controls-line">
             <div class="toolbar-actions">
                 <div class="panel compact-panel filters">
-                    <form method="get" action="/tasks">
+                    <form method="get" action="/tasks" data-persist-filters="tasks">
                         {assignee_filter_rendered}
                         <label>Статус<select name="status">{status_options_html}</select></label>
                         <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="Search tasks"></label>
                         <button type="submit" class="btn small-btn">Filter</button>
-                        <a href="/tasks" class="ghost-btn small-btn">Reset</a>
+                        <a href="/tasks" class="ghost-btn small-btn" data-reset-filters="tasks">Reset</a>
                     </form>
                 </div>
                 {create_block}
@@ -6079,7 +6200,7 @@ def chatterfy_page_html(
     <div class="panel compact-panel">
         <div class="toolbar-actions">
                 <div class="panel compact-panel filters">
-                    <form method="get" action="/chatterfy" style="justify-content:flex-end;">
+                    <form method="get" action="/chatterfy" style="justify-content:flex-end;" data-persist-filters="chatterfy">
                         <label>Date<input type="text" name="date_filter" value="{escape(date_filter)}" placeholder="27.03.2026"></label>
                         <label>Time<input type="text" name="time_filter" value="{escape(time_filter)}" placeholder="09:3"></label>
                         <label>View<select name="period_view">{period_view_options}</select></label>
@@ -6090,7 +6211,7 @@ def chatterfy_page_html(
                         <label>Search<input type="text" name="search" value="{escape(search)}" placeholder="tags, manager, geo, offer"></label>
                         <input type="hidden" name="page" value="1">
                         <button type="submit" class="btn small-btn">Filter</button>
-                        <a href="/chatterfy" class="ghost-btn small-btn">Reset</a>
+                        <a href="/chatterfy" class="ghost-btn small-btn" data-reset-filters="chatterfy">Reset</a>
                     </form>
                 </div>
                 <details class="upload-menu">
@@ -6212,13 +6333,13 @@ def hold_wager_page_html(current_user, rows, cabinet_name="", period_view="curre
     <div class="panel compact-panel">
         <div class="toolbar-actions">
             <div class="panel compact-panel filters">
-                <form method="get" action="/hold-wager">
+                <form method="get" action="/hold-wager" data-persist-filters="hold-wager">
                     <label>View<select name="period_view">{period_view_options}</select></label>
                     <label>Period<select name="period_label">{period_options}</select></label>
                     <label>Cabinet<select name="cabinet_name">{cabinet_options}</select></label>
                     <label>Search<input type="text" name="search" value="{escape(search)}" placeholder="subid, player id, country"></label>
                     <button type="submit" class="btn small-btn">Filter</button>
-                    <a href="/hold-wager" class="ghost-btn small-btn">Reset</a>
+                    <a href="/hold-wager" class="ghost-btn small-btn" data-reset-filters="hold-wager">Reset</a>
                 </form>
             </div>
         </div>
@@ -6263,7 +6384,7 @@ def hold_wager_page_html(current_user, rows, cabinet_name="", period_view="curre
         </div>
     </div>
     """
-    return page_shell("Hold/Wager", content, active_page="holdwager", current_user=current_user)
+    return page_shell("Hold", content, active_page="holdwager", current_user=current_user)
 
 
 def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, success_text="", error_text=""):
@@ -6317,11 +6438,11 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
     <div class="panel compact-panel">
         <div class="toolbar-actions">
                 <div class="panel compact-panel filters">
-                    <form method="get" action="/cabinets" style="justify-content:flex-end;">
+                    <form method="get" action="/cabinets" style="justify-content:flex-end;" data-persist-filters="cabinets">
                         <label>Status<select name="status">{status_options}</select></label>
                         <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="advertiser, platform, cabinet, geo, brands, team"></label>
                         <button type="submit" class="btn small-btn">Filter</button>
-                        <a href="/cabinets" class="ghost-btn small-btn">Reset</a>
+                        <a href="/cabinets" class="ghost-btn small-btn" data-reset-filters="cabinets">Reset</a>
                     </form>
                 </div>
                 <details class="upload-menu" {open_attr}>
@@ -6517,7 +6638,7 @@ def partner_report_page_html(
     <div class="panel compact-panel">
         <div class="toolbar-actions">
                 <div class="panel compact-panel filters">
-                    <form method="get" action="/partner-report" style="justify-content:flex-end;">
+                    <form method="get" action="/partner-report" style="justify-content:flex-end;" data-persist-filters="partner-report">
                         <label>Upload<select name="source_name">{source_options}</select></label>
                         <label>View<select name="period_view">{period_view_options}</select></label>
                         <label>Period<select name="period_label">{period_options}</select></label>
@@ -6525,7 +6646,7 @@ def partner_report_page_html(
                         <label>Country<select name="country">{country_options}</select></label>
                         <label>Search<input type="text" name="search" value="{escape(search)}" placeholder="subid, player, source"></label>
                         <button type="submit" class="btn small-btn">Filter</button>
-                        <a href="/partner-report" class="ghost-btn small-btn">Reset</a>
+                        <a href="/partner-report" class="ghost-btn small-btn" data-reset-filters="partner-report">Reset</a>
                     </form>
                 </div>
                 <details class="upload-menu upload-menu-right" style="z-index:90;">
@@ -7160,7 +7281,7 @@ def show_grouped_table(
     <div class="panel compact-panel">
         <div class="toolbar-actions">
             <div class="panel compact-panel filters">
-                <form method="get" action="/grouped">
+                <form method="get" action="/grouped" data-persist-filters="grouped">
                     {'<label>Buyer<select name="buyer">' + buyer_options + '</select></label>' if is_admin_role(user) or user.get("role") == "operator" else ''}
                     <label>Manager<select name="manager">{manager_options}</select></label>
                     <label>Geo<select name="geo">{geo_options}</select></label>
@@ -7169,7 +7290,7 @@ def show_grouped_table(
                     <input type="hidden" name="sort_by" value="{escape(sort_by)}">
                     <input type="hidden" name="order" value="{escape(order)}">
                     <button type="submit" class="btn small-btn">Filter</button>
-                    <a href="/grouped" class="ghost-btn small-btn">Reset</a>
+                    <a href="/grouped" class="ghost-btn small-btn" data-reset-filters="grouped">Reset</a>
                 </form>
             </div>
             {upload_block}
@@ -7418,7 +7539,7 @@ def render_dashboard_page(
     <div class="panel compact-panel">
         <div class="toolbar-actions">
             <div class="panel compact-panel filters">
-                <form method="get" action="/dashboard">
+                <form method="get" action="/dashboard" data-persist-filters="dashboard">
                     {'<label>Buyer<select name="buyer">' + buyer_options + '</select></label>' if is_admin_role(user) or user.get("role") == "operator" else ''}
                     <label>Manager<select name="manager">{manager_options}</select></label>
                     <label>Geo<select name="geo">{geo_options}</select></label>
@@ -7427,7 +7548,7 @@ def render_dashboard_page(
                     <label>Period<select name="period_label">{period_options}</select></label>
                     <label>Search<input type="text" name="search" value="{escape(search)}"></label>
                     <button type="submit" class="btn small-btn">Filter</button>
-                    <a href="/dashboard" class="ghost-btn small-btn">Reset</a>
+                    <a href="/dashboard" class="ghost-btn small-btn" data-reset-filters="dashboard">Reset</a>
                 </form>
             </div>
         </div>
@@ -7841,7 +7962,7 @@ def save_cap(
     owner_name: str = Form(default=""),
     period_view: str = Form(default="period"),
     period_label: str = Form(default=""),
-    buyer: str = Form(...),
+    buyer: str = Form(default=""),
     cabinet_name: str = Form(default=""),
     flow: str = Form(default=""),
     code: str = Form(default=""),
@@ -7884,8 +8005,6 @@ def save_cap(
         "comments": comments,
         "agent": agent,
     }
-    if not clean_buyer:
-        return HTMLResponse(caps_page_html(user, get_caps_rows(period_label=clean_period_label), filter_values={"period_label": clean_period_label}, form_data=form_data, error_text="Cabinet is required."), status_code=400)
     if clean_cap_value <= 0:
         return HTMLResponse(caps_page_html(user, get_caps_rows(period_label=clean_period_label), filter_values={"period_label": clean_period_label}, form_data=form_data, error_text="Cap must be greater than 0."), status_code=400)
 
