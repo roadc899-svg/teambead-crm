@@ -4414,8 +4414,14 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 flex: 1 1 900px;
                 min-width: min(900px, 100%);
             }}
-            .players-toolbar .caps-toolbar-stats {{
+            .players-toolbar .players-stats-controls {{
                 order: 3;
+                flex: 1 1 100%;
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                flex-wrap: nowrap;
             }}
             .players-toolbar .players-filter-form {{
                 display: flex;
@@ -4442,27 +4448,29 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 flex: 1 1 190px;
             }}
             .players-toolbar .players-side-tools {{
-                order: 2;
                 display: flex;
-                gap: 8px;
-                align-items: flex-start;
+                gap: 10px;
+                align-items: stretch;
                 justify-content: flex-end;
-                margin-left: auto;
                 flex: 0 0 auto;
             }}
             .players-toolbar .players-upload-filter {{
-                width: 170px;
+                width: 168px;
+                min-height: 74px;
                 padding: 8px 10px;
                 border-radius: 14px;
                 border: 1px solid var(--border);
                 background: linear-gradient(180deg, var(--panel), var(--panel-3));
                 box-shadow: var(--shadow);
+                display: flex;
+                align-items: center;
             }}
             .players-toolbar .players-upload-filter label {{
                 display: grid;
                 gap: 5px;
                 font-size: 12px;
                 font-weight: 800;
+                width: 100%;
             }}
             .players-toolbar .players-upload-filter select {{
                 width: 100%;
@@ -4470,17 +4478,19 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .players-toolbar .players-icon-stack {{
                 display: flex;
                 gap: 8px;
+                align-items: center;
                 justify-content: flex-end;
                 flex: 0 0 auto;
             }}
             .players-toolbar .players-export-form {{
                 margin: 0;
+                display: flex;
             }}
             .players-toolbar .players-export-button {{
-                min-width: 58px;
-                min-height: 58px;
+                min-width: 54px;
+                min-height: 54px;
                 padding: 0 10px;
-                font-size: 14px;
+                font-size: 13px;
                 font-weight: 900;
                 transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
             }}
@@ -4491,18 +4501,18 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 box-shadow: 0 10px 24px rgba(47, 191, 113, 0.28);
             }}
             .toolbar-actions .caps-toolbar-stats {{
-                order:2;
-                flex: 0 1 auto;
+                flex: 1 1 auto;
                 display: flex;
                 align-items: stretch;
-                gap: 8px;
-                flex-wrap: wrap;
-                justify-content: flex-end;
-                align-self: flex-start;
+                gap: 10px;
+                flex-wrap: nowrap;
+                justify-content: flex-start;
+                align-self: stretch;
+                min-width: 0;
             }}
             .caps-toolbar-stats .mini-stat {{
-                min-width: 108px;
-                padding: 9px 12px;
+                min-width: 102px;
+                padding: 8px 12px;
                 border-radius: 14px;
                 border: 1px solid var(--border);
                 background: linear-gradient(180deg, var(--panel), var(--panel-3));
@@ -4517,7 +4527,7 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 letter-spacing: 0;
             }}
             .caps-toolbar-stats .mini-stat .value {{
-                font-size: 22px;
+                font-size: 20px;
                 font-weight: 900;
                 line-height: 1.05;
             }}
@@ -8941,84 +8951,86 @@ def partner_report_page_html(
                         <a href="/partner-report" class="ghost-btn small-btn" data-reset-filters="partner-report">×</a>
                     </form>
                 </div>
-                <div class="caps-toolbar-stats">
-                    <div class="mini-stat"><div class="name">ftd</div><div class="value">{totals['players']}</div></div>
-                    <div class="mini-stat"><div class="name">qftd</div><div class="value">{totals['qualified_ftd_count']}</div></div>
-                    <div class="mini-stat"><div class="name">deposit sum</div><div class="value">${totals['deposits']:,.2f}</div></div>
-                    <div class="mini-stat"><div class="name">avg deposit</div><div class="value">${totals['avg_deposit']:,.2f}</div></div>
-                    <div class="mini-stat"><div class="name">bet sum</div><div class="value">${totals['bets']:,.2f}</div></div>
-                    <div class="mini-stat"><div class="name">bet/deposit</div><div class="value">{totals['bet_to_deposit_ratio']:,.1f}x</div></div>
-                    <div class="mini-stat"><div class="name">sumdep2spend</div><div class="value">{totals['sumdep2spend']:,.2f}%</div></div>
-                    <div class="mini-stat"><div class="name">ngr</div><div class="value">${totals['income']:,.2f}</div></div>
-                    <div class="mini-stat"><div class="name">cpa</div><div class="value">${totals['cpa']:,.2f}</div></div>
-                    <div class="mini-stat"><div class="name">romi</div><div class="value">{totals['romi_ratio']:,.2f}x</div></div>
-                </div>
-                <div class="players-side-tools">
-                <div class="players-icon-stack">
-                    <details class="upload-menu upload-menu-right" style="z-index:89;">
-                        <summary class="ghost-btn small-btn toolbar-square-icon-btn" aria-label="Delete upload" title="Delete upload">🗑</summary>
-                        <div class="upload-menu-list" style="width:min(860px, calc(100vw - 48px));">
-                            <div class="panel-subtitle">Choose the exact cabinet and period upload you want to remove.</div>
-                            <div class="table-wrap" style="margin-top:8px;">
-                                <table style="min-width:780px;">
-                                    <thead>
-                                        <tr>
-                                            <th>Cabinet</th>
-                                            <th>Platform</th>
-                                            <th>Period</th>
-                                            <th>From</th>
-                                            <th>To</th>
-                                            <th>Rows</th>
-                                            <th>FTD</th>
-                                            <th>Action</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>{delete_upload_rows if delete_upload_rows else '<tr><td colspan="8">No uploads yet</td></tr>'}</tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </details>
-                    <details class="upload-menu upload-menu-right" style="z-index:90;" id="playersUploadMenu" data-manual-close>
-                        <summary class="btn toggle-indicator toolbar-square-trigger" aria-label="Upload players" title="Upload players"></summary>
-                        <div class="upload-menu-list" style="width:380px; max-width:min(380px, calc(100vw - 48px));">
-                            <form method="post" action="/partner-report/upload" enctype="multipart/form-data">
+                <div class="players-stats-controls">
+                    <div class="caps-toolbar-stats">
+                        <div class="mini-stat"><div class="name">ftd</div><div class="value">{totals['players']}</div></div>
+                        <div class="mini-stat"><div class="name">qftd</div><div class="value">{totals['qualified_ftd_count']}</div></div>
+                        <div class="mini-stat"><div class="name">deposit sum</div><div class="value">${totals['deposits']:,.2f}</div></div>
+                        <div class="mini-stat"><div class="name">avg deposit</div><div class="value">${totals['avg_deposit']:,.2f}</div></div>
+                        <div class="mini-stat"><div class="name">bet sum</div><div class="value">${totals['bets']:,.2f}</div></div>
+                        <div class="mini-stat"><div class="name">bet/deposit</div><div class="value">{totals['bet_to_deposit_ratio']:,.1f}x</div></div>
+                        <div class="mini-stat"><div class="name">sumdep2spend</div><div class="value">{totals['sumdep2spend']:,.2f}%</div></div>
+                        <div class="mini-stat"><div class="name">ngr</div><div class="value">${totals['income']:,.2f}</div></div>
+                        <div class="mini-stat"><div class="name">cpa</div><div class="value">${totals['cpa']:,.2f}</div></div>
+                        <div class="mini-stat"><div class="name">romi</div><div class="value">{totals['romi_ratio'] * 100:,.2f}%</div></div>
+                    </div>
+                    <div class="players-side-tools">
+                        <div class="players-icon-stack">
+                            <form method="get" action="/partner-report/export" target="partnerPlayersCsvFrame" class="players-export-form" id="playersExportForm">
+                                <input type="hidden" name="source_name" value="{escape(source_name)}">
                                 <input type="hidden" name="period_view" value="{escape(period_view)}">
                                 <input type="hidden" name="period_label" value="{escape(period_label)}">
-                                <label>Platform
-                                    <select name="partner_platform" id="partner-upload-platform" required>{upload_platform_options}</select>
-                                </label>
-                                <label>Cabinet
-                                    <select name="cabinet_name" id="partner-upload-cabinet" required>{upload_cabinet_options}</select>
-                                </label>
-                                <label>Partner File
-                                    <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
-                                </label>
-                                <button type="submit" class="btn small-btn">Upload</button>
+                                <input type="hidden" name="cabinet_name" value="{escape(cabinet_name)}">
+                                <input type="hidden" name="brand" value="{escape(brand)}">
+                                <input type="hidden" name="geo" value="{escape(geo)}">
+                                <input type="hidden" name="search" value="{escape(search)}">
+                                <input type="hidden" name="sort_by" value="{escape(sort_by)}">
+                                <input type="hidden" name="order" value="{escape(order)}">
+                                <button type="submit" class="ghost-btn small-btn toolbar-square-icon-btn players-export-button" id="playersExportButton" aria-label="Export CSV" title="Export CSV">CSV</button>
                             </form>
+                            <details class="upload-menu upload-menu-right" style="z-index:89;">
+                                <summary class="ghost-btn small-btn toolbar-square-icon-btn" aria-label="Delete upload" title="Delete upload">🗑</summary>
+                                <div class="upload-menu-list" style="width:min(860px, calc(100vw - 48px));">
+                                    <div class="panel-subtitle">Choose the exact cabinet and period upload you want to remove.</div>
+                                    <div class="table-wrap" style="margin-top:8px;">
+                                        <table style="min-width:780px;">
+                                            <thead>
+                                                <tr>
+                                                    <th>Cabinet</th>
+                                                    <th>Platform</th>
+                                                    <th>Period</th>
+                                                    <th>From</th>
+                                                    <th>To</th>
+                                                    <th>Rows</th>
+                                                    <th>FTD</th>
+                                                    <th>Action</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>{delete_upload_rows if delete_upload_rows else '<tr><td colspan="8">No uploads yet</td></tr>'}</tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </details>
+                            <details class="upload-menu upload-menu-right" style="z-index:90;" id="playersUploadMenu" data-manual-close>
+                                <summary class="btn toggle-indicator toolbar-square-trigger" aria-label="Upload players" title="Upload players"></summary>
+                                <div class="upload-menu-list" style="width:380px; max-width:min(380px, calc(100vw - 48px));">
+                                    <form method="post" action="/partner-report/upload" enctype="multipart/form-data">
+                                        <input type="hidden" name="period_view" value="{escape(period_view)}">
+                                        <input type="hidden" name="period_label" value="{escape(period_label)}">
+                                        <label>Platform
+                                            <select name="partner_platform" id="partner-upload-platform" required>{upload_platform_options}</select>
+                                        </label>
+                                        <label>Cabinet
+                                            <select name="cabinet_name" id="partner-upload-cabinet" required>{upload_cabinet_options}</select>
+                                        </label>
+                                        <label>Partner File
+                                            <input type="file" name="file" accept=".csv,.xlsx,.xls" required>
+                                        </label>
+                                        <button type="submit" class="btn small-btn">Upload</button>
+                                    </form>
+                                </div>
+                            </details>
                         </div>
-                    </details>
-                    <form method="get" action="/partner-report/export" target="partnerPlayersCsvFrame" class="players-export-form" id="playersExportForm">
-                        <input type="hidden" name="source_name" value="{escape(source_name)}">
-                        <input type="hidden" name="period_view" value="{escape(period_view)}">
-                        <input type="hidden" name="period_label" value="{escape(period_label)}">
-                        <input type="hidden" name="cabinet_name" value="{escape(cabinet_name)}">
-                        <input type="hidden" name="brand" value="{escape(brand)}">
-                        <input type="hidden" name="geo" value="{escape(geo)}">
-                        <input type="hidden" name="search" value="{escape(search)}">
-                        <input type="hidden" name="sort_by" value="{escape(sort_by)}">
-                        <input type="hidden" name="order" value="{escape(order)}">
-                        <button type="submit" class="ghost-btn small-btn toolbar-square-icon-btn players-export-button" id="playersExportButton" aria-label="Export CSV" title="Export CSV">CSV</button>
-                    </form>
-                </div>
-                <form method="get" action="/partner-report" class="players-upload-filter">
-                    <input type="hidden" name="period_view" value="period">
-                    <input type="hidden" name="period_label" value="{escape(period_label)}">
-                    <input type="hidden" name="brand" value="{escape(brand)}">
-                    <input type="hidden" name="cabinet_name" value="{escape(cabinet_name)}">
-                    <input type="hidden" name="geo" value="{escape(geo)}">
-                    <input type="hidden" name="search" value="{escape(search)}">
-                    <label>Upload<select name="source_name" onchange="this.form.submit()">{source_options}</select></label>
-                </form>
+                        <form method="get" action="/partner-report" class="players-upload-filter">
+                            <input type="hidden" name="period_view" value="period">
+                            <input type="hidden" name="period_label" value="{escape(period_label)}">
+                            <input type="hidden" name="brand" value="{escape(brand)}">
+                            <input type="hidden" name="cabinet_name" value="{escape(cabinet_name)}">
+                            <input type="hidden" name="geo" value="{escape(geo)}">
+                            <input type="hidden" name="search" value="{escape(search)}">
+                            <label>Upload<select name="source_name" onchange="this.form.submit()">{source_options}</select></label>
+                        </form>
+                    </div>
                 </div>
         </div>
     </div>
