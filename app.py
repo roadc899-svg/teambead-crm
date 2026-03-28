@@ -2899,12 +2899,19 @@ def date_matches_filters(value, date_from="", date_to="", year=""):
     return True
 
 
-def filter_finance_manual_rows(manual, date_from="", date_to="", year=""):
+def finance_date_matches_period(value, period_label=""):
+    clean_period = safe_text(period_label)
+    if not clean_period:
+        return True
+    return safe_text(get_half_month_period_from_date(value).get("period_label", "")) == clean_period
+
+
+def filter_finance_manual_rows(manual, date_from="", date_to="", year="", period_label=""):
     return {
         "wallets": manual.get("wallets", []),
-        "expenses": [item for item in manual.get("expenses", []) if date_matches_filters(item.expense_date, date_from, date_to, year)],
-        "income": [item for item in manual.get("income", []) if date_matches_filters(item.income_date, date_from, date_to, year)],
-        "transfers": [item for item in manual.get("transfers", []) if date_matches_filters(item.transfer_date, date_from, date_to, year)],
+        "expenses": [item for item in manual.get("expenses", []) if date_matches_filters(item.expense_date, date_from, date_to, year) and finance_date_matches_period(item.expense_date, period_label)],
+        "income": [item for item in manual.get("income", []) if date_matches_filters(item.income_date, date_from, date_to, year) and finance_date_matches_period(item.income_date, period_label)],
+        "transfers": [item for item in manual.get("transfers", []) if date_matches_filters(item.transfer_date, date_from, date_to, year) and finance_date_matches_period(item.transfer_date, period_label)],
     }
 
 
@@ -3087,17 +3094,20 @@ def sidebar_html(active_page, current_user=None):
         ]),
         ("finance", "/finance", finance_icon, "Finance", []),
         ("caps", "/caps", "📌", "Caps", []),
-        ("partner", "/partner-report", "🎰", "Players", []),
-        ("cabinets", "/cabinets", "🛠", "Cabinets", []),
+        ("partner", "/partner-report", "👤", "Players", []),
+        ("cabinets", "/cabinets", "🛠", "Partners", []),
         ("chatterfy", "/chatterfy", chatterfy_icon, "Chatterfy", []),
-        ("holdwager", "/hold-wager", "🎯", "Hold", []),
+        ("holdwager", "/hold-wager", "✏️", "Hold", []),
     ]
 
     html = '''
     <aside class="sidebar">
         <div class="sidebar-brand">
-            <span class="brand-mark"></span>
-            <span>TEAMbead CRM</span>
+            <div class="sidebar-brand-main">
+                <span class="brand-mark"></span>
+                <span class="sidebar-brand-text">TEAMbead CRM</span>
+            </div>
+            <button type="button" class="sidebar-collapse-btn" id="sidebarCollapseBtn" aria-label="Toggle sidebar" aria-expanded="true">‹</button>
         </div>
     '''
 
@@ -3119,7 +3129,7 @@ def sidebar_html(active_page, current_user=None):
             open_attr = "open" if active_page in ["grouped"] else ""
             html += f'''
             <details class="sidebar-group" {open_attr}>
-                <summary><span class="side-emoji">{icon}</span><span>{title}</span></summary>
+                <summary><span class="side-emoji">{icon}</span><span class="side-label">{title}</span></summary>
                 <div class="sidebar-links">
             '''
             for child_href, child_title, active in children:
@@ -3128,15 +3138,15 @@ def sidebar_html(active_page, current_user=None):
             html += '</div></details>'
         else:
             active_class = "sidebar-standalone active-link" if active_page == key else "sidebar-standalone"
-            html += f'<a href="{href}" class="{active_class}"><span class="side-emoji">{icon}</span><span>{title}</span></a>'
+            html += f'<a href="{href}" class="{active_class}"><span class="side-emoji">{icon}</span><span class="side-label">{title}</span></a>'
 
     bottom_links = ""
     if can_access_page(current_user, "tasks"):
         active_class = "sidebar-standalone subtle-link active-link" if active_page == "tasks" else "sidebar-standalone subtle-link"
-        bottom_links += f'<a href="/tasks" class="{active_class}"><span class="side-emoji">✅</span><span>Tasks</span></a>'
+        bottom_links += f'<a href="/tasks" class="{active_class}"><span class="side-emoji">✅</span><span class="side-label">Tasks</span></a>'
     if can_access_page(current_user, "users"):
         active_class = "sidebar-standalone subtle-link active-link" if active_page == "users" else "sidebar-standalone subtle-link"
-        bottom_links += f'<a href="/users" class="{active_class}"><span class="side-emoji">🧑</span><span>Users</span></a>'
+        bottom_links += f'<a href="/users" class="{active_class}"><span class="side-emoji">🧑</span><span class="side-label">Users</span></a>'
 
     html += f'''
         <div class="sidebar-bottom">
@@ -3256,11 +3266,21 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .sidebar-brand {{
                 display: flex;
                 align-items: center;
-                gap: 10px;
-                font-size: 18px;
-                font-weight: 900;
+                justify-content: space-between;
+                gap: 12px;
                 margin-bottom: 18px;
                 color: var(--text);
+            }}
+            .sidebar-brand-main {{
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                min-width: 0;
+                font-size: 18px;
+                font-weight: 900;
+            }}
+            .sidebar-brand-text {{
+                white-space: nowrap;
             }}
             .brand-mark {{
                 width: 14px;
@@ -3270,6 +3290,26 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 box-shadow: 0 0 0 4px rgba(56,189,248,0.14);
                 display: inline-block;
                 flex-shrink: 0;
+            }}
+            .sidebar-collapse-btn {{
+                width: 34px;
+                min-width: 34px;
+                height: 34px;
+                border-radius: 12px;
+                border: 1px solid var(--border);
+                background: var(--panel);
+                color: var(--text);
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                cursor: pointer;
+                box-shadow: var(--shadow);
+                font-size: 18px;
+                font-weight: 900;
+                transition: transform .18s ease, background .18s ease;
+            }}
+            .sidebar-collapse-btn:hover {{
+                background: var(--soft);
             }}
             .sidebar-group, .sidebar-standalone {{
                 display: block;
@@ -3377,6 +3417,59 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 grid-template-columns: repeat(2, minmax(0, 1fr));
                 gap:8px;
                 align-items:start;
+            }}
+            .app.sidebar-collapsed .sidebar {{
+                width: 92px;
+                padding-left: 10px;
+                padding-right: 10px;
+            }}
+            .app.sidebar-collapsed .sidebar-brand {{
+                justify-content: center;
+            }}
+            .app.sidebar-collapsed .sidebar-brand-main {{
+                justify-content: center;
+            }}
+            .app.sidebar-collapsed .sidebar-brand-text,
+            .app.sidebar-collapsed .side-label,
+            .app.sidebar-collapsed .sidebar-group summary::after,
+            .app.sidebar-collapsed .sidebar-links,
+            .app.sidebar-collapsed .sidebar-user-chip,
+            .app.sidebar-collapsed .sidebar-datetime,
+            .app.sidebar-collapsed .sidebar-mini-actions {{
+                display: none !important;
+            }}
+            .app.sidebar-collapsed .sidebar-group,
+            .app.sidebar-collapsed .sidebar-standalone {{
+                border-radius: 14px;
+            }}
+            .app.sidebar-collapsed .sidebar-group summary,
+            .app.sidebar-collapsed .sidebar-standalone {{
+                justify-content: center;
+                padding: 12px 10px;
+                gap: 0;
+            }}
+            .app.sidebar-collapsed .side-emoji {{
+                width: 24px;
+                height: 24px;
+                font-size: 20px;
+            }}
+            .app.sidebar-collapsed .sidebar-bottom {{
+                gap: 10px;
+            }}
+            .app.sidebar-collapsed .sidebar-bottom-links {{
+                display: grid;
+                grid-template-columns: 1fr;
+                gap: 10px;
+            }}
+            .app.sidebar-collapsed .sidebar-bottom-links .sidebar-standalone {{
+                padding: 10px;
+            }}
+            .app.sidebar-collapsed .sidebar-user {{
+                padding: 10px;
+                justify-items: center;
+            }}
+            .app.sidebar-collapsed .sidebar-collapse-btn {{
+                transform: rotate(180deg);
             }}
             .minimal-btn {{
                 background: transparent;
@@ -3765,12 +3858,31 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 align-self: end;
                 align-items: center;
             }}
+            .filter-actions-inline {{
+                display: flex;
+                gap: 8px;
+                align-self: end;
+                align-items: center;
+            }}
             .filter-actions-stack .btn,
-            .filter-actions-stack .ghost-btn {{
+            .filter-actions-stack .ghost-btn,
+            .filter-actions-inline .btn,
+            .filter-actions-inline .ghost-btn {{
                 width: 104px;
                 min-width: 104px;
             }}
             .filter-actions-stack .filter-reset-btn {{
+                width: 38px !important;
+                min-width: 38px !important;
+                max-width: 38px !important;
+                height: 38px !important;
+                min-height: 38px !important;
+                padding: 0 !important;
+                border-radius: 10px;
+                font-size: 18px !important;
+                line-height: 1 !important;
+            }}
+            .filter-actions-inline .filter-reset-btn {{
                 width: 38px !important;
                 min-width: 38px !important;
                 max-width: 38px !important;
@@ -3882,11 +3994,36 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
             .stat-card .value {{ font-size: 28px; font-weight: 900; line-height: 1.05; }}
             .controls-line {{ display: flex; justify-content: space-between; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }}
             .table-wrap {{
-                overflow: auto;
+                overflow-x: auto;
+                overflow-y: visible;
                 border-radius: 18px;
                 border: 1px solid var(--border);
                 box-shadow: var(--shadow);
                 background: var(--panel);
+            }}
+            .table-sticky-header {{
+                position: fixed;
+                top: 10px;
+                left: 0;
+                z-index: 64;
+                display: none;
+                pointer-events: none;
+            }}
+            .table-sticky-header.open {{
+                display: block;
+            }}
+            .table-sticky-header .table-wrap {{
+                overflow: hidden;
+                border-radius: 16px 16px 0 0;
+            }}
+            .table-sticky-header table {{
+                min-width: 0;
+                margin: 0;
+            }}
+            .table-sticky-header th {{
+                position: static !important;
+                top: auto !important;
+                box-shadow: none !important;
             }}
             table {{ border-collapse: separate; border-spacing: 0; width: 100%; min-width: 1450px; background: var(--panel); color: var(--text); }}
             th, td {{
@@ -4502,6 +4639,30 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 localStorage.setItem(window.teambeadStorageKey('theme'), mode === 'light' ? 'light' : 'dark');
                 document.documentElement.classList.add('theme-ready');
             }}
+            (function initSidebarCollapse() {{
+                const appRoot = document.querySelector('.app');
+                const toggleButton = document.getElementById('sidebarCollapseBtn');
+                if (!appRoot || !toggleButton) return;
+                const storageKey = window.teambeadStorageKey('sidebar-collapsed');
+                function applyState(collapsed) {{
+                    appRoot.classList.toggle('sidebar-collapsed', !!collapsed);
+                    toggleButton.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+                    toggleButton.setAttribute('title', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+                }}
+                let collapsed = false;
+                try {{
+                    collapsed = localStorage.getItem(storageKey) === '1';
+                }} catch (error) {{}}
+                applyState(collapsed);
+                toggleButton.addEventListener('click', function() {{
+                    collapsed = !appRoot.classList.contains('sidebar-collapsed');
+                    applyState(collapsed);
+                    try {{
+                        localStorage.setItem(storageKey, collapsed ? '1' : '0');
+                    }} catch (error) {{}}
+                    window.dispatchEvent(new Event('resize'));
+                }});
+            }})();
             (function initTheme() {{
                 const saved = localStorage.getItem(window.teambeadStorageKey('theme'));
                 if (saved === 'light') {{
@@ -4614,6 +4775,379 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                         if (!scope) return;
                         localStorage.removeItem(window.teambeadStorageKey('filters:' + scope));
                     }});
+                }});
+            }})();
+            (function initUnifiedFilterUi() {{
+                function createPeriodJumpButton(step, label) {{
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = 'ghost-btn small-btn period-jump-btn';
+                    button.setAttribute('data-period-jump', String(step));
+                    button.setAttribute('aria-label', label);
+                    button.textContent = step < 0 ? '‹' : '›';
+                    return button;
+                }}
+
+                function wirePeriodPicker(form, picker, periodSelect) {{
+                    const viewSelect = form.querySelector('select[name=\"period_view\"]');
+                    const viewInput = form.querySelector('input[name=\"period_view\"]');
+                    const buttons = picker.querySelectorAll('[data-period-jump]');
+
+                    function setPeriodMode() {{
+                        if (viewSelect) {{
+                            const hasPeriod = Array.from(viewSelect.options || []).some(function(option) {{
+                                return option.value === 'period';
+                            }});
+                            if (hasPeriod) viewSelect.value = 'period';
+                        }}
+                        if (viewInput) viewInput.value = 'period';
+                    }}
+
+                    function updateButtons() {{
+                        const options = Array.from(periodSelect.options || []);
+                        const currentIndex = options.findIndex(function(option) {{
+                            return option.value === periodSelect.value;
+                        }});
+                        buttons.forEach(function(button) {{
+                            const step = Number(button.getAttribute('data-period-jump') || '0');
+                            const nextIndex = currentIndex + step;
+                            button.disabled = currentIndex < 0 || nextIndex < 0 || nextIndex >= options.length;
+                            button.style.opacity = button.disabled ? '0.45' : '1';
+                        }});
+                    }}
+
+                    buttons.forEach(function(button) {{
+                        button.addEventListener('click', function() {{
+                            const options = Array.from(periodSelect.options || []);
+                            const currentIndex = options.findIndex(function(option) {{
+                                return option.value === periodSelect.value;
+                            }});
+                            const step = Number(button.getAttribute('data-period-jump') || '0');
+                            const nextIndex = currentIndex + step;
+                            if (currentIndex < 0 || nextIndex < 0 || nextIndex >= options.length) return;
+                            periodSelect.value = options[nextIndex].value;
+                            setPeriodMode();
+                            form.requestSubmit();
+                        }});
+                    }});
+
+                    periodSelect.addEventListener('change', updateButtons);
+                    if (viewSelect) viewSelect.addEventListener('change', updateButtons);
+                    updateButtons();
+                }}
+
+                document.querySelectorAll('.panel.compact-panel.filters form').forEach(function(form) {{
+                    const resetLink = form.querySelector('a[data-reset-filters]');
+                    const submitButton = form.querySelector('button[type=\"submit\"]');
+                    if (resetLink) {{
+                        resetLink.classList.add('filter-reset-btn');
+                        resetLink.textContent = '×';
+                        resetLink.setAttribute('aria-label', 'Reset filters');
+                        resetLink.setAttribute('title', 'Reset filters');
+                    }}
+                    if (submitButton && resetLink && !submitButton.closest('.filter-actions-stack') && !submitButton.closest('.filter-actions-inline')) {{
+                        const actions = document.createElement('div');
+                        actions.className = 'filter-actions-inline';
+                        const resetParent = resetLink.parentNode;
+                        const submitParent = submitButton.parentNode;
+                        if (submitParent) submitParent.insertBefore(actions, submitButton);
+                        actions.appendChild(submitButton);
+                        actions.appendChild(resetLink);
+                    }}
+
+                    const periodSelect = form.querySelector('select[name=\"period_label\"]');
+                    if (!periodSelect || periodSelect.closest('.period-picker')) return;
+                    const label = periodSelect.closest('label');
+                    if (!label) return;
+                    const picker = document.createElement('div');
+                    picker.className = 'period-picker';
+                    const prevButton = createPeriodJumpButton(-1, 'Previous period');
+                    const nextButton = createPeriodJumpButton(1, 'Next period');
+                    label.parentNode.insertBefore(picker, label);
+                    picker.appendChild(prevButton);
+                    picker.appendChild(label);
+                    picker.appendChild(nextButton);
+                    wirePeriodPicker(form, picker, periodSelect);
+                }});
+            }})();
+            (function initGenericTableEnhancements() {{
+                const skipLayoutIds = new Set(['capsTable', 'groupedTable', 'chatterfyTable']);
+                const skipStickyIds = new Set(['capsTable']);
+
+                function slugify(text, fallback) {{
+                    const value = (text || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+                    return value || fallback;
+                }}
+
+                function ensureHeaderMarkup(th) {{
+                    if (th.querySelector('.th-inner')) return;
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'th-inner';
+                    const drag = document.createElement('span');
+                    drag.className = 'drag-handle';
+                    drag.textContent = '⋮⋮';
+                    wrapper.appendChild(drag);
+                    while (th.firstChild) {{
+                        wrapper.appendChild(th.firstChild);
+                    }}
+                    th.appendChild(wrapper);
+                    if (!th.querySelector('.resizer')) {{
+                        const resizer = document.createElement('span');
+                        resizer.className = 'resizer';
+                        th.appendChild(resizer);
+                    }}
+                }}
+
+                function annotateTable(table, tableIndex) {{
+                    if (skipLayoutIds.has(table.id || '')) return null;
+                    const headerRow = table.querySelector('thead tr');
+                    if (!headerRow) return null;
+                    const headers = Array.from(headerRow.children || []);
+                    if (!headers.length) return null;
+                    const used = new Set();
+                    headers.forEach(function(th, index) {{
+                        let key = th.dataset.col || slugify(th.textContent, 'col_' + index);
+                        while (used.has(key)) key += '_' + index;
+                        used.add(key);
+                        th.dataset.col = key;
+                        th.setAttribute('draggable', 'true');
+                        ensureHeaderMarkup(th);
+                    }});
+                    table.querySelectorAll('tbody tr').forEach(function(row) {{
+                        const cells = Array.from(row.children || []);
+                        if (cells.length !== headers.length) return;
+                        cells.forEach(function(cell, index) {{
+                            cell.dataset.col = headers[index].dataset.col;
+                        }});
+                    }});
+                    return {{
+                        keyBase: window.teambeadStorageKey('table:' + window.location.pathname + ':' + (table.id || ('generic_' + tableIndex))),
+                        headers: headers,
+                    }};
+                }}
+
+                function initLayout(table, meta) {{
+                    const ORDER_KEY = meta.keyBase + ':order';
+                    const WIDTH_KEY = meta.keyBase + ':widths';
+
+                    function getCurrentOrder() {{
+                        return Array.from(table.querySelectorAll('thead th[data-col]')).map(function(th) {{ return th.dataset.col; }});
+                    }}
+
+                    function reorderCells(order) {{
+                        table.querySelectorAll('tr').forEach(function(row) {{
+                            const children = Array.from(row.children || []);
+                            if (!children.length) return;
+                            const cells = {{}};
+                            children.forEach(function(cell) {{
+                                if (cell.dataset.col) cells[cell.dataset.col] = cell;
+                            }});
+                            if (!Object.keys(cells).length) return;
+                            order.forEach(function(key) {{
+                                if (cells[key]) row.appendChild(cells[key]);
+                            }});
+                        }});
+                    }}
+
+                    function applyOrder() {{
+                        let saved = [];
+                        try {{
+                            saved = JSON.parse(localStorage.getItem(ORDER_KEY) || '[]');
+                        }} catch (error) {{
+                            saved = [];
+                        }}
+                        const current = getCurrentOrder();
+                        if (!saved.length) return;
+                        const merged = saved.filter(function(item) {{ return current.includes(item); }}).concat(current.filter(function(item) {{ return !saved.includes(item); }}));
+                        reorderCells(merged);
+                    }}
+
+                    function applyWidths() {{
+                        let widths = {{}};
+                        try {{
+                            widths = JSON.parse(localStorage.getItem(WIDTH_KEY) || '{{}}');
+                        }} catch (error) {{
+                            widths = {{}};
+                        }}
+                        Object.entries(widths).forEach(function(entry) {{
+                            const key = entry[0];
+                            const width = entry[1];
+                            table.querySelectorAll('[data-col=\"' + key + '\"]').forEach(function(el) {{
+                                el.style.width = width + 'px';
+                                el.style.minWidth = width + 'px';
+                            }});
+                        }});
+                    }}
+
+                    function saveWidth(key, width) {{
+                        let widths = {{}};
+                        try {{
+                            widths = JSON.parse(localStorage.getItem(WIDTH_KEY) || '{{}}');
+                        }} catch (error) {{
+                            widths = {{}};
+                        }}
+                        widths[key] = Math.max(80, Math.round(width));
+                        localStorage.setItem(WIDTH_KEY, JSON.stringify(widths));
+                    }}
+
+                    applyOrder();
+                    applyWidths();
+
+                    table.querySelectorAll('th[data-col]').forEach(function(th) {{
+                        const resizer = th.querySelector('.resizer');
+                        if (!resizer) return;
+                        let startX = 0;
+                        let startWidth = 0;
+                        let resizing = false;
+                        const key = th.dataset.col;
+                        resizer.addEventListener('mousedown', function(e) {{
+                            e.preventDefault();
+                            e.stopPropagation();
+                            resizing = true;
+                            startX = e.clientX;
+                            startWidth = th.getBoundingClientRect().width;
+                            document.body.style.cursor = 'col-resize';
+                        }});
+                        document.addEventListener('mousemove', function(e) {{
+                            if (!resizing) return;
+                            const newWidth = Math.max(80, startWidth + (e.clientX - startX));
+                            table.querySelectorAll('[data-col=\"' + key + '\"]').forEach(function(el) {{
+                                el.style.width = newWidth + 'px';
+                                el.style.minWidth = newWidth + 'px';
+                            }});
+                        }});
+                        document.addEventListener('mouseup', function() {{
+                            if (!resizing) return;
+                            resizing = false;
+                            document.body.style.cursor = '';
+                            saveWidth(key, th.getBoundingClientRect().width);
+                        }});
+                    }});
+
+                    let dragged = null;
+                    table.querySelectorAll('th[data-col]').forEach(function(th) {{
+                        th.addEventListener('dragstart', function(e) {{
+                            if (e.target.classList.contains('resizer')) {{
+                                e.preventDefault();
+                                return;
+                            }}
+                            dragged = th;
+                            th.classList.add('dragging');
+                        }});
+                        th.addEventListener('dragend', function() {{
+                            table.querySelectorAll('th[data-col]').forEach(function(item) {{
+                                item.classList.remove('dragging', 'drag-target-left', 'drag-target-right');
+                            }});
+                            dragged = null;
+                        }});
+                        th.addEventListener('dragover', function(e) {{
+                            e.preventDefault();
+                            if (!dragged || dragged === th) return;
+                            const rect = th.getBoundingClientRect();
+                            const before = (e.clientX - rect.left) < rect.width / 2;
+                            th.classList.toggle('drag-target-left', before);
+                            th.classList.toggle('drag-target-right', !before);
+                        }});
+                        th.addEventListener('dragleave', function() {{
+                            th.classList.remove('drag-target-left', 'drag-target-right');
+                        }});
+                        th.addEventListener('drop', function(e) {{
+                            e.preventDefault();
+                            if (!dragged || dragged === th) return;
+                            const rect = th.getBoundingClientRect();
+                            const before = (e.clientX - rect.left) < rect.width / 2;
+                            if (before) th.parentNode.insertBefore(dragged, th);
+                            else th.parentNode.insertBefore(dragged, th.nextSibling);
+                            const order = getCurrentOrder();
+                            reorderCells(order);
+                            localStorage.setItem(ORDER_KEY, JSON.stringify(order));
+                            table.querySelectorAll('th[data-col]').forEach(function(item) {{
+                                item.classList.remove('drag-target-left', 'drag-target-right');
+                            }});
+                        }});
+                    }});
+                }}
+
+                function initStickyHeader(table) {{
+                    if (skipStickyIds.has(table.id || '')) return;
+                    const wrap = table.closest('.table-wrap');
+                    const thead = table.querySelector('thead');
+                    if (!wrap || !thead) return;
+                    const stickyHost = document.createElement('div');
+                    stickyHost.className = 'table-sticky-header';
+                    wrap.parentNode.insertBefore(stickyHost, wrap);
+                    let stickyTable = null;
+                    let stickyCells = [];
+
+                    function build() {{
+                        stickyHost.innerHTML = '';
+                        const shell = document.createElement('div');
+                        shell.className = 'table-wrap';
+                        stickyTable = document.createElement('table');
+                        stickyTable.className = table.className;
+                        const clonedHead = thead.cloneNode(true);
+                        stickyTable.appendChild(clonedHead);
+                        shell.appendChild(stickyTable);
+                        stickyHost.appendChild(shell);
+                        stickyCells = Array.from(clonedHead.querySelectorAll('th'));
+                        stickyCells.forEach(function(cell) {{
+                            cell.removeAttribute('draggable');
+                            const resizer = cell.querySelector('.resizer');
+                            if (resizer) resizer.remove();
+                        }});
+                    }}
+
+                    function sync() {{
+                        if (!stickyTable || stickyCells.length !== thead.querySelectorAll('th').length) build();
+                        const sourceCells = Array.from(thead.querySelectorAll('th'));
+                        const wrapRect = wrap.getBoundingClientRect();
+                        stickyHost.style.left = wrapRect.left + 'px';
+                        stickyHost.style.width = wrapRect.width + 'px';
+                        stickyTable.style.width = table.getBoundingClientRect().width + 'px';
+                        stickyTable.style.transform = 'translateX(' + (-wrap.scrollLeft) + 'px)';
+                        sourceCells.forEach(function(cell, index) {{
+                            const width = Math.round(cell.getBoundingClientRect().width);
+                            const clone = stickyCells[index];
+                            if (!clone) return;
+                            clone.style.width = width + 'px';
+                            clone.style.minWidth = width + 'px';
+                            clone.style.maxWidth = width + 'px';
+                        }});
+                    }}
+
+                    function update() {{
+                        const tableRect = table.getBoundingClientRect();
+                        const headRect = thead.getBoundingClientRect();
+                        const shouldShow = headRect.top < 10 && tableRect.bottom > 90;
+                        stickyHost.classList.toggle('open', shouldShow);
+                        if (shouldShow) sync();
+                    }}
+
+                    build();
+                    sync();
+                    update();
+                    wrap.addEventListener('scroll', function() {{
+                        if (stickyHost.classList.contains('open')) sync();
+                    }}, {{ passive: true }});
+                    window.addEventListener('scroll', update, {{ passive: true }});
+                    window.addEventListener('resize', function() {{
+                        sync();
+                        update();
+                    }});
+                    if (window.ResizeObserver) {{
+                        const observer = new ResizeObserver(function() {{
+                            sync();
+                            update();
+                        }});
+                        observer.observe(table);
+                        observer.observe(wrap);
+                    }}
+                }}
+
+                document.querySelectorAll('.table-wrap table').forEach(function(table, index) {{
+                    const meta = annotateTable(table, index);
+                    if (meta) initLayout(table, meta);
+                    initStickyHeader(table);
                 }});
             }})();
             document.addEventListener('click', function(e) {{
@@ -5366,11 +5900,11 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         ("current_ftd", "FTD"),
         ("remaining", "Remaining"),
         ("fill", "Fill"),
-        ("promo_code", "Promocode"),
         ("agent", "TG"),
         ("chat_title", "Chat Name"),
         ("kpi", "KPI"),
         ("comments", "Comments"),
+        ("promo_code", "Promocode"),
         ("link", "Link"),
         ("action", "Action"),
     ]
@@ -5441,11 +5975,11 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     <div class="progress-bar"><span style="width:{bar_width}%;"></span></div>
                 </div>
             </td>
-            <td class="promo-col" data-col="promo_code" title="{escape(row.promo_code or '')}">{escape(row.promo_code or "")}</td>
             <td class="agent-col" data-col="agent" title="{escape(row.agent or '')}">{escape(row.agent or "")}</td>
             <td class="chat-col" data-col="chat_title" title="{escape(row.chat_title or '')}">{escape(row.chat_title or "")}</td>
             <td class="kpi-col" data-col="kpi" title="{escape(row.kpi or '')}">{escape(row.kpi or "")}</td>
             <td class="comment-col" data-col="comments" title="{escape(row.comments or '')}">{escape(row.comments or "")}</td>
+            <td class="promo-col" data-col="promo_code" title="{escape(row.promo_code or '')}">{escape(row.promo_code or "")}</td>
             <td class="link-col" data-col="link">{link_button}</td>
             <td class="action-col" data-col="action">
                 <div class="caps-actions">
@@ -5611,9 +6145,13 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
             <input type="hidden" name="order" value="{escape(order)}">
             <input type="hidden" id="capCabinetCatalog" value="{cabinet_catalog_json}">
             <datalist id="capAgentOptions">{agent_list}</datalist>
-            <label>Period
-                <select name="period_label" required>{period_options}</select>
-            </label>
+            <div class="period-picker" data-period-nav="local">
+                <button type="button" class="ghost-btn small-btn period-jump-btn" data-period-jump="-1" aria-label="Previous period">‹</button>
+                <label>Period
+                    <select name="period_label" required>{period_options}</select>
+                </label>
+                <button type="button" class="ghost-btn small-btn period-jump-btn" data-period-jump="1" aria-label="Next period">›</button>
+            </div>
             <div class="caps-grid-2">
                 <label>Advertiser
                     <select name="advertiser" id="addCapAdvertiserSelect" required>{add_advertiser_options}</select>
@@ -5686,9 +6224,13 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 <input type="hidden" name="sort_by" value="{escape(sort_by)}">
                 <input type="hidden" name="order" value="{escape(order)}">
                 <datalist id="editCapAgentOptions">{agent_list}</datalist>
-                <label>Period
-                    <select name="period_label" id="editCapPeriodSelect" required>{period_options}</select>
-                </label>
+                <div class="period-picker" data-period-nav="local">
+                    <button type="button" class="ghost-btn small-btn period-jump-btn" data-period-jump="-1" aria-label="Previous period">‹</button>
+                    <label>Period
+                        <select name="period_label" id="editCapPeriodSelect" required>{period_options}</select>
+                    </label>
+                    <button type="button" class="ghost-btn small-btn period-jump-btn" data-period-jump="1" aria-label="Next period">›</button>
+                </div>
                 <div class="caps-grid-2">
                     <label>Advertiser
                         <select name="advertiser" id="editCapAdvertiserSelect" required>{edit_advertiser_options}</select>
@@ -5797,11 +6339,11 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                             <th class="current-col" data-col="current_ftd" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("current_ftd", "FTD")}<span class="resizer"></span></div></th>
                             <th class="remaining-col" data-col="remaining" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("remaining", "Remaining")}<span class="resizer"></span></div></th>
                             <th class="fill-col" data-col="fill" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("fill", "Fill")}<span class="resizer"></span></div></th>
-                            <th class="promo-col" data-col="promo_code" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("promo_code", "Promocode")}<span class="resizer"></span></div></th>
                             <th class="agent-col" data-col="agent" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("agent", "TG")}<span class="resizer"></span></div></th>
                             <th class="chat-col" data-col="chat_title" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("chat_title", "Chat Name")}<span class="resizer"></span></div></th>
                             <th class="kpi-col" data-col="kpi" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("kpi", "KPI")}<span class="resizer"></span></div></th>
                             <th class="comment-col" data-col="comments" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("comments", "Comments")}<span class="resizer"></span></div></th>
+                            <th class="promo-col" data-col="promo_code" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("promo_code", "Promocode")}<span class="resizer"></span></div></th>
                             <th class="link-col" data-col="link" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("link", "Link")}<span class="resizer"></span></div></th>
                             <th class="action-col" data-col="action" draggable="true"><div class="th-inner"><span class="drag-handle">⋮⋮</span>{header_link("action", "Action")}<span class="resizer"></span></div></th>
                         </tr>
@@ -5962,6 +6504,8 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     let advertiser = advertiserSelect.value;
                     let manager = managerSelect.value;
                     let cabinet = cabinetSelect.value;
+                    const allAdvertisers = uniqueValues(records, 'advertiser');
+                    const allManagers = uniqueValues(records, 'manager');
 
                     if (changedField === 'cabinet') {
                         const cabinetMatch = records.find(function(item) {
@@ -5973,18 +6517,16 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                         }
                     }
 
-                    const advertiserValues = uniqueValues(filterRecords({ manager: manager, cabinet: cabinet }), 'advertiser');
-                    if (advertiser && !advertiserValues.includes(advertiser)) {
+                    if (advertiser && !allAdvertisers.includes(advertiser)) {
                         advertiser = '';
                     }
-                    fillOptions(advertiserSelect, advertiserValues, 'Advertiser', advertiser);
+                    fillOptions(advertiserSelect, allAdvertisers, 'Advertiser', advertiser);
                     advertiserSelect.value = advertiser;
 
-                    const managerValues = uniqueValues(filterRecords({ advertiser: advertiser, cabinet: cabinet }), 'manager');
-                    if (manager && !managerValues.includes(manager)) {
+                    if (manager && !allManagers.includes(manager)) {
                         manager = '';
                     }
-                    fillOptions(managerSelect, managerValues, 'Manager', manager);
+                    fillOptions(managerSelect, allManagers, 'Manager', manager);
                     managerSelect.value = manager;
 
                     const cabinetValues = uniqueValues(filterRecords({ advertiser: advertiser, manager: manager }), 'cabinet');
@@ -5994,14 +6536,15 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                     fillOptions(cabinetSelect, cabinetValues, 'Cabinet', cabinet);
                     cabinetSelect.value = cabinet;
 
-                    const exactMatches = filterRecords({
-                        advertiser: advertiserSelect.value,
-                        manager: managerSelect.value,
-                        cabinet: cabinetSelect.value,
-                    });
-                    if (exactMatches.length === 1 && changedField === 'cabinet') {
-                        advertiserSelect.value = exactMatches[0].advertiser;
-                        managerSelect.value = exactMatches[0].manager;
+                    if (changedField !== 'cabinet' && cabinetSelect.value) {
+                        const exactMatches = filterRecords({
+                            advertiser: advertiserSelect.value,
+                            manager: managerSelect.value,
+                            cabinet: cabinetSelect.value,
+                        });
+                        if (!exactMatches.length) {
+                            cabinetSelect.value = '';
+                        }
                     }
                 }
 
@@ -6079,10 +6622,10 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 if (event.key === 'Escape' && drawer.classList.contains('open')) closeDrawer();
             });
         })();
-        (function initCapsPeriodJump() {
-            const form = document.getElementById('capsFilterForm');
-            const select = document.getElementById('capsPeriodSelect');
-            if (!form || !select) return;
+            (function initCapsPeriodJump() {
+                const form = document.getElementById('capsFilterForm');
+                const select = document.getElementById('capsPeriodSelect');
+                if (!form || !select) return;
 
             function updateButtons() {
                 const options = Array.from(select.options || []);
@@ -6113,10 +6656,44 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
 
             select.addEventListener('change', updateButtons);
             updateButtons();
-        })();
-        (function initCapsStickyHeader() {
-            const wrap = document.querySelector('.caps-table-wrap');
-            const table = document.getElementById('capsTable');
+            })();
+            (function initLocalPeriodPickers() {
+                document.querySelectorAll('.period-picker[data-period-nav="local"]').forEach(function(picker) {
+                    const select = picker.querySelector('select[name="period_label"]');
+                    if (!select) return;
+                    function updateButtons() {
+                        const options = Array.from(select.options || []);
+                        const currentIndex = options.findIndex(function(option) {
+                            return option.value === select.value;
+                        });
+                        picker.querySelectorAll('[data-period-jump]').forEach(function(button) {
+                            const step = Number(button.getAttribute('data-period-jump') || '0');
+                            const nextIndex = currentIndex + step;
+                            button.disabled = currentIndex < 0 || nextIndex < 0 || nextIndex >= options.length;
+                            button.style.opacity = button.disabled ? '0.45' : '1';
+                        });
+                    }
+                    picker.querySelectorAll('[data-period-jump]').forEach(function(button) {
+                        button.addEventListener('click', function() {
+                            const options = Array.from(select.options || []);
+                            const currentIndex = options.findIndex(function(option) {
+                                return option.value === select.value;
+                            });
+                            const step = Number(button.getAttribute('data-period-jump') || '0');
+                            const nextIndex = currentIndex + step;
+                            if (currentIndex < 0 || nextIndex < 0 || nextIndex >= options.length) return;
+                            select.value = options[nextIndex].value;
+                            select.dispatchEvent(new Event('change', { bubbles: true }));
+                            updateButtons();
+                        });
+                    });
+                    select.addEventListener('change', updateButtons);
+                    updateButtons();
+                });
+            })();
+            (function initCapsStickyHeader() {
+                const wrap = document.querySelector('.caps-table-wrap');
+                const table = document.getElementById('capsTable');
             const thead = table ? table.querySelector('thead') : null;
             const stickyHost = document.getElementById('capsStickyHeader');
             if (!wrap || !table || !thead || !stickyHost) return;
@@ -6365,8 +6942,22 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
     date_from = safe_text(filter_values.get("date_from"))
     date_to = safe_text(filter_values.get("date_to"))
     year = safe_text(filter_values.get("year"))
-    manual = filter_finance_manual_rows(manual_all, date_from=date_from, date_to=date_to, year=year)
+    period_view = safe_text(filter_values.get("period_view") or "current")
+    period_label = safe_text(filter_values.get("period_label"))
+    effective_period_label = resolve_period_label(period_view, period_label) or get_current_period_label()
+    manual = filter_finance_manual_rows(
+        manual_all,
+        date_from=date_from,
+        date_to=date_to,
+        year=year,
+        period_label=effective_period_label if period_view != "all" else "",
+    )
     year_options = make_options(get_finance_year_options(manual_all), year)
+    period_view_options = "".join([
+        f'<option value="{value}" {"selected" if period_view == value else ""}>{label}</option>'
+        for value, label in [("all", "All Time"), ("current", "Current Period"), ("period", "Choose Period")]
+    ])
+    period_options = make_options(build_period_options(), effective_period_label)
     balances = compute_finance_balances(snapshot, manual_all)
 
     service_wallet_rows = ""
@@ -6615,6 +7206,7 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
 
     content = f"""
     {message_html}
+    {render_active_period_banner(effective_period_label if period_view != "all" else "")}
     <div class="panel compact-panel">
         <div class="controls-line">
             <div>
@@ -6623,6 +7215,8 @@ def finance_page_html(current_user, success_text="", error_text="", form_data=No
             <div class="toolbar-actions">
                 <div class="panel compact-panel filters">
                     <form method="get" action="/finance" style="justify-content:flex-end;" data-persist-filters="finance">
+                        <label>View<select name="period_view">{period_view_options}</select></label>
+                        <label>Period<select name="period_label">{period_options}</select></label>
                         <label>Date From<input type="date" name="date_from" value="{escape(date_from)}"></label>
                         <label>Date To<input type="date" name="date_to" value="{escape(date_to)}"></label>
                         <label>Year<select name="year">{year_options}</select></label>
@@ -7152,16 +7746,6 @@ def chatterfy_page_html(
                         </form>
                     </div>
                 </details>
-                <div class="column-menu-wrap">
-                <button type="button" class="ghost-btn small-btn" onclick="toggleChatterfyColumnMenu()">⚙️ Columns</button>
-                <div class="column-menu" id="chatterfyColumnMenu">
-                    <div class="column-actions">
-                        <button type="button" class="ghost-btn small-btn" onclick="showAllColumns()">Show All</button>
-                        <button type="button" class="ghost-btn small-btn" onclick="resetColumnsAll()">Reset All</button>
-                    </div>
-                    <div class="column-grid">{column_chips}</div>
-                </div>
-            </div>
         </div>
         <div class="table-wrap">
             <table id="chatterfyTable" style="min-width:1900px;">
@@ -7308,9 +7892,6 @@ def hold_wager_page_html(current_user, rows, cabinet_name="", period_view="curre
 def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, success_text="", error_text=""):
     filter_values = filter_values or {}
     form_data = form_data or {}
-    status_values = ["Active", "Paused", "Archived"]
-    status_options = make_options(status_values, filter_values.get("status", ""))
-    form_status_options = make_options(status_values, form_data.get("status", "Active") or "Active")
     open_attr = "open" if form_data.get("edit_id") or form_data.get("name") else ""
 
     rows_html = ""
@@ -7326,19 +7907,16 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
             <td>{escape(row.manager_name or "")}</td>
             <td>{escape(row.manager_contact or "")}</td>
             <td style="white-space:normal; min-width:220px;">{escape(row.wallet or "")}</td>
-            <td>{escape(row.status or "")}</td>
             <td style="white-space:normal; min-width:260px;">{escape(row.comments or "")}</td>
             <td>
                 <div style="display:flex; gap:8px;">
                     <form method="get" action="/cabinets">
                         <input type="hidden" name="edit" value="{row.id}">
-                        <input type="hidden" name="status" value="{escape(filter_values.get('status', ''))}">
                         <input type="hidden" name="search" value="{escape(filter_values.get('search', ''))}">
                         <button type="submit" class="ghost-btn small-btn">Edit</button>
                     </form>
                     <form method="post" action="/cabinets/delete" onsubmit="return confirm('Delete this cabinet?');">
                         <input type="hidden" name="cabinet_id" value="{row.id}">
-                        <input type="hidden" name="status" value="{escape(filter_values.get('status', ''))}">
                         <input type="hidden" name="search" value="{escape(filter_values.get('search', ''))}">
                         <button type="submit" class="ghost-btn small-btn">Delete</button>
                     </form>
@@ -7360,7 +7938,6 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
         <div class="toolbar-actions">
                 <div class="panel compact-panel filters">
                     <form method="get" action="/cabinets" style="justify-content:flex-end;" data-persist-filters="cabinets">
-                        <label>Status<select name="status">{status_options}</select></label>
                         <label>Search<input type="text" name="search" value="{escape(filter_values.get('search', ''))}" placeholder="advertiser, platform, cabinet, geo, brands, team"></label>
                         <button type="submit" class="btn small-btn">Filter</button>
                         <a href="/cabinets" class="ghost-btn small-btn" data-reset-filters="cabinets">Reset</a>
@@ -7371,7 +7948,6 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
                     <div class="upload-menu-list" style="width:520px; max-width:min(520px, calc(100vw - 48px));">
                         <form method="post" action="/cabinets/save">
                             <input type="hidden" name="edit_id" value="{escape(form_data.get('edit_id', ''))}">
-                            <input type="hidden" name="status_filter" value="{escape(filter_values.get('status', ''))}">
                             <input type="hidden" name="search" value="{escape(filter_values.get('search', ''))}">
                             <label>Advertiser
                                 <input type="text" name="advertiser" value="{escape(form_data.get('advertiser', ''))}" placeholder="Example: 1xBet">
@@ -7400,9 +7976,6 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
                             <label>Wallet
                                 <textarea name="wallet" placeholder="TRC20 wallet, notes or several wallets">{escape(form_data.get('wallet', ''))}</textarea>
                             </label>
-                            <label>Status
-                                <select name="status">{form_status_options}</select>
-                            </label>
                             <label>Comments
                                 <textarea name="comments" placeholder="Anything important about this cabinet">{escape(form_data.get('comments', ''))}</textarea>
                             </label>
@@ -7427,17 +8000,16 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
                         <th>Manager</th>
                         <th>Manager Contact</th>
                         <th>Wallet</th>
-                        <th>Status</th>
                         <th>Comments</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
-                <tbody>{rows_html if rows_html else '<tr><td colspan="12">No cabinets yet</td></tr>'}</tbody>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="11">No partners yet</td></tr>'}</tbody>
             </table>
         </div>
     </div>
     """
-    return page_shell("Cabinets", content, active_page="cabinets", current_user=current_user)
+    return page_shell("Partners", content, active_page="cabinets", current_user=current_user)
 
 
 def partner_report_page_html(
@@ -8581,6 +9153,8 @@ def show_dashboard(
 def finance_page(
     request: Request,
     message: str = Query(default=""),
+    period_view: str = Query(default="current"),
+    period_label: str = Query(default=""),
     date_from: str = Query(default=""),
     date_to: str = Query(default=""),
     year: str = Query(default=""),
@@ -8604,7 +9178,18 @@ def finance_page(
         form_data = build_finance_form_data(wallet_item=wallet_item, expense_item=expense_item, income_item=income_item, transfer_item=transfer_item)
     finally:
         db.close()
-    return finance_page_html(user, success_text=message, form_data=form_data, filter_values={"date_from": date_from, "date_to": date_to, "year": year})
+    return finance_page_html(
+        user,
+        success_text=message,
+        form_data=form_data,
+        filter_values={
+            "period_view": period_view,
+            "period_label": period_label,
+            "date_from": date_from,
+            "date_to": date_to,
+            "year": year,
+        },
+    )
 
 
 @app.post("/finance/wallets/save")
@@ -9292,7 +9877,7 @@ def cabinets_page(
     return cabinets_page_html(
         user,
         rows,
-        filter_values={"search": search, "status": status},
+        filter_values={"search": search},
         form_data=form_data,
         success_text=message,
     )
@@ -9313,7 +9898,6 @@ def save_cabinet(
     wallet: str = Form(default=""),
     comments: str = Form(default=""),
     status: str = Form(default="Active"),
-    status_filter: str = Form(default=""),
     search: str = Form(default=""),
 ):
     user = get_current_user(request)
@@ -9335,7 +9919,6 @@ def save_cabinet(
         "manager_contact": manager_contact,
         "wallet": wallet,
         "comments": comments,
-        "status": status or "Active",
     }
     if not clean_name:
         return HTMLResponse(cabinets_page_html(user, get_cabinet_rows(), form_data=form_data, error_text="Cabinet name is required."), status_code=400)
@@ -9362,12 +9945,12 @@ def save_cabinet(
         item.manager_contact = safe_text(manager_contact)
         item.wallet = safe_text(wallet)
         item.comments = safe_text(comments)
-        item.status = safe_text(status) or "Active"
+        item.status = safe_text(item.status) or "Active"
         db.commit()
     finally:
         db.close()
     return RedirectResponse(
-        url=f"/cabinets?status={quote_plus(safe_text(status_filter))}&search={quote_plus(safe_text(search))}&message=Cabinet+saved",
+        url=f"/cabinets?search={quote_plus(safe_text(search))}&message=Partner+saved",
         status_code=303,
     )
 
@@ -9376,7 +9959,6 @@ def save_cabinet(
 def delete_cabinet(
     request: Request,
     cabinet_id: str = Form(...),
-    status: str = Form(default=""),
     search: str = Form(default=""),
 ):
     user = get_current_user(request)
@@ -9391,7 +9973,7 @@ def delete_cabinet(
     finally:
         db.close()
     return RedirectResponse(
-        url=f"/cabinets?status={quote_plus(safe_text(status))}&search={quote_plus(safe_text(search))}&message=Cabinet+deleted",
+        url=f"/cabinets?search={quote_plus(safe_text(search))}&message=Partner+deleted",
         status_code=303,
     )
 
