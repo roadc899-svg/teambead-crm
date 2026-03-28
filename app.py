@@ -4453,6 +4453,22 @@ def page_shell(title, content, active_page="grouped", extra_scripts="", top_acti
                 background: linear-gradient(90deg, rgba(74, 222, 128, 0.92), rgba(34, 197, 94, 0.9)) !important;
                 color: #ffffff !important;
             }}
+            .partners-table th {{
+                text-align: center;
+            }}
+            .partners-table th .th-inner {{
+                justify-content: center;
+                gap: 0;
+                padding: 0 18px;
+                position: relative;
+            }}
+            .partners-table th .drag-handle {{
+                position: absolute;
+                left: 0;
+            }}
+            .partners-table th .resizer {{
+                right: 0;
+            }}
             .progress-shell {{
                 min-width: 0;
                 display:grid;
@@ -5952,10 +5968,6 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
         ("link", "Link"),
         ("action", "Action"),
     ]
-    caps_column_chips = "".join(
-        f'<label class="column-chip"><input class="column-toggle-caps" type="checkbox" value="{escape(key)}" checked> {escape(label)}</label>'
-        for key, label in caps_columns
-    )
 
     def header_link(field, label):
         return sort_link(
@@ -6123,19 +6135,6 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
     )
     cabinet_catalog_json = escape(json.dumps(cabinet_catalog))
 
-    advertiser_list = build_datalist(
-        [
-            value for value in [row.advertiser for row in cabinet_rows] + [row.advertiser for row in cap_rows]
-            if safe_text(value).strip().lower() in {"1xbet", "betmen"}
-        ]
-    )
-    owner_list = build_datalist(
-        [row.manager_name for row in cabinet_rows]
-        + [row.owner_name for row in cap_rows]
-    )
-    cabinet_list = build_datalist(
-        [row.cabinet_name for row in partner_rows]
-    )
     agent_list = build_datalist([row.agent for row in cap_rows])
 
     current_edit_id = str(form_data.get("edit_id") or "")
@@ -6857,20 +6856,6 @@ def caps_page_html(current_user, rows, filter_values=None, form_data=None, succe
                 });
                 localStorage.setItem(HIDDEN_KEY, JSON.stringify(hidden));
                 applyVisibility();
-            }
-            window.toggleCapsColumnMenu = function() {
-                const menu = document.getElementById('capsColumnMenu');
-                if (menu) menu.classList.toggle('open');
-            }
-            window.showAllCapsColumns = function() {
-                localStorage.setItem(HIDDEN_KEY, JSON.stringify([]));
-                applyVisibility();
-            }
-            window.resetCapsColumnsAll = function() {
-                localStorage.removeItem(HIDDEN_KEY);
-                localStorage.removeItem(ORDER_KEY);
-                localStorage.removeItem(WIDTH_KEY);
-                window.location.reload();
             }
             function applyWidths() {
                 const widths = JSON.parse(localStorage.getItem(WIDTH_KEY) || '{}');
@@ -8032,7 +8017,7 @@ def cabinets_page_html(current_user, rows, filter_values=None, form_data=None, s
                 </details>
         </div>
         <div class="table-wrap">
-            <table style="min-width:1200px;">
+            <table class="partners-table" style="min-width:1200px;">
                 <thead>
                     <tr>
                         <th style="text-align:center;">Advertiser</th>
