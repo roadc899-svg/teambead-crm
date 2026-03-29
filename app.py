@@ -1,5 +1,5 @@
 from fastapi import FastAPI, UploadFile, File, Query, Form, Request, HTTPException, Header
-from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse, Response, FileResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse, Response, FileResponse, JSONResponse
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, text, or_, inspect
@@ -3199,6 +3199,88 @@ def chatterfy_parser_next_run_text(config=None):
     return f"Следующая выгрузка около {next_run.strftime('%d.%m.%Y %H:%M')}"
 
 
+def chatterfy_parser_next_run_seconds(config=None):
+    config = config or {}
+    if safe_text(config.get("sync_state")) in {"running", "pause_pending"}:
+        return None
+    if not config.get("auto_sync_enabled"):
+        return None
+    last_run = parse_datetime_flexible(config.get("last_run_at"))
+    if not last_run:
+        return 0
+    next_run = last_run + timedelta(hours=1)
+    seconds = int((next_run - datetime.utcnow()).total_seconds())
+    return max(0, seconds)
+
+
+def format_duration_clock(total_seconds):
+    seconds = max(0, int(safe_number(total_seconds)))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
+def chatterfy_parser_log_badge(kind):
+    clean_kind = safe_text(kind) or "info"
+    if clean_kind == "success":
+        return {
+            "label": "Готово",
+            "style": "background:#eaf8ee; color:#1d7a42; border:1px solid #bfe4c9;",
+        }
+    if clean_kind == "error":
+        return {
+            "label": "Ошибка",
+            "style": "background:#fff0f0; color:#c23d3d; border:1px solid #f1bcbc;",
+        }
+    return {
+        "label": "В работе",
+        "style": "background:#eef1f5; color:#52607a; border:1px solid #d5ddea;",
+    }
+
+
+def chatterfy_parser_log_entries(logs, limit=14):
+    entries = []
+    for item in list(logs or [])[-limit:][::-1]:
+        badge = chatterfy_parser_log_badge(item.get("kind"))
+        entries.append({
+            "timestamp": safe_text(item.get("timestamp")),
+            "message": safe_text(item.get("message")),
+            "label": badge["label"],
+            "style": badge["style"],
+        })
+    return entries
+
+
+def chatterfy_parser_runtime_payload(config=None):
+    config = config or get_chatterfy_parser_config()
+    last_success_dt = parse_datetime_flexible(config.get("last_success_at"))
+    last_success_at = last_success_dt.strftime("%d.%m.%Y %H:%M") if last_success_dt else "Пока не было"
+    sync_state = safe_text(config.get("sync_state")) or "stopped"
+    auto_sync_enabled = bool(config.get("auto_sync_enabled"))
+    next_run_seconds = chatterfy_parser_next_run_seconds(config)
+    countdown_text = "Идёт выгрузка"
+    if sync_state == "pause_pending":
+        countdown_text = "Ждёт остановки"
+    elif not auto_sync_enabled:
+        countdown_text = "На паузе"
+    elif next_run_seconds is not None:
+        countdown_text = format_duration_clock(next_run_seconds)
+    return {
+        "status_label": chatterfy_parser_status_label(config),
+        "next_run_text": chatterfy_parser_next_run_text(config),
+        "last_success_at": last_success_at,
+        "last_count": int(safe_number(config.get("last_count"))),
+        "last_duration_text": format_duration_clock(config.get("last_duration_seconds")) if safe_number(config.get("last_duration_seconds")) > 0 else "Пока не было",
+        "countdown_text": countdown_text,
+        "next_run_seconds": next_run_seconds,
+        "last_error": safe_text(config.get("last_error")),
+        "sync_state": sync_state,
+        "logs": chatterfy_parser_log_entries(config.get("logs") or []),
+    }
+
+
 def build_chatterfy_parser_config_payload(
     bot_url="",
     email="",
@@ -3223,6 +3305,7 @@ def build_chatterfy_parser_config_payload(
         "last_success_at": safe_text(existing_config.get("last_success_at")),
         "last_error": safe_text(existing_config.get("last_error")),
         "last_count": safe_number(existing_config.get("last_count")),
+        "last_duration_seconds": safe_number(existing_config.get("last_duration_seconds")),
     }
 
 
@@ -3230,6 +3313,7 @@ def perform_chatterfy_parser_sync(config, initiated_by="manual"):
     if not CHATTERFY_SYNC_LOCK.acquire(blocking=False):
         raise RuntimeError("Chatterfy sync is already running.")
     try:
+        sync_started_at = datetime.utcnow()
         config = dict(config or {})
         config["sync_state"] = "running"
         config = chatterfy_parser_append_log("Запуск синхронизации. Начинаю обновление данных из Chatterfy.", kind="info", config=config)
@@ -3269,6 +3353,7 @@ def perform_chatterfy_parser_sync(config, initiated_by="manual"):
         updated_config["last_success_at"] = datetime.utcnow().isoformat()
         updated_config["last_error"] = ""
         updated_config["last_count"] = int(result["count"])
+        updated_config["last_duration_seconds"] = int((datetime.utcnow() - sync_started_at).total_seconds())
         updated_config["sync_state"] = "stopped" if pause_after_sync or not updated_config.get("auto_sync_enabled") else "idle"
         if pause_after_sync:
             updated_config["auto_sync_enabled"] = False
@@ -3290,6 +3375,7 @@ def perform_chatterfy_parser_sync(config, initiated_by="manual"):
         updated_config = dict(config or {})
         updated_config["last_run_at"] = datetime.utcnow().isoformat()
         updated_config["last_error"] = safe_text(exc)
+        updated_config["last_duration_seconds"] = int((datetime.utcnow() - sync_started_at).total_seconds()) if 'sync_started_at' in locals() else 0
         updated_config["sync_state"] = "stopped" if not updated_config.get("auto_sync_enabled") else "idle"
         save_chatterfy_parser_config(updated_config)
         chatterfy_parser_append_log(f"Не получилось обновить данные: {exc}", kind="error", config=updated_config)
@@ -9010,33 +9096,18 @@ def chatterfy_parser_page_html(
     default_end = safe_text(form_data.get("date_end")) or CHATTERFY_PARSER_DEFAULT_END
     auto_sync_enabled = bool(saved_config.get("auto_sync_enabled"))
     has_saved_password = bool(safe_text(saved_config.get("password")))
-    last_success_dt = parse_datetime_flexible(saved_config.get("last_success_at"))
-    last_success_at = last_success_dt.strftime("%d.%m.%Y %H:%M") if last_success_dt else ""
-    last_error = safe_text(saved_config.get("last_error"))
-    last_count = int(safe_number(saved_config.get("last_count")))
-    status_label = chatterfy_parser_status_label(saved_config)
-    next_run_text = chatterfy_parser_next_run_text(saved_config)
     sync_state = safe_text(saved_config.get("sync_state")) or "stopped"
+    runtime_payload = chatterfy_parser_runtime_payload(saved_config)
     button_label = "Пауза" if auto_sync_enabled or sync_state in {"running", "pause_pending", "idle"} else "Старт"
     button_style = "background:#d94b4b; border-color:#d94b4b; color:#fff;" if button_label == "Пауза" else "background:#2f9e5b; border-color:#2f9e5b; color:#fff;"
-    logs = list(saved_config.get("logs") or [])
     logs_html = ""
-    for item in logs[-14:]:
-        kind = safe_text(item.get("kind")) or "info"
-        kind_label = "В работе"
-        kind_style = "background:#eef1f5; color:#52607a; border:1px solid #d5ddea;"
-        if kind == "success":
-            kind_label = "Готово"
-            kind_style = "background:#eaf8ee; color:#1d7a42; border:1px solid #bfe4c9;"
-        elif kind == "error":
-            kind_label = "Ошибка"
-            kind_style = "background:#fff0f0; color:#c23d3d; border:1px solid #f1bcbc;"
+    for item in runtime_payload["logs"]:
         logs_html += f"""
         <div style="display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:start; padding:12px 14px; border-bottom:1px solid #edf1f7;">
-            <div style="padding:6px 10px; border-radius:999px; font-size:12px; font-weight:800; white-space:nowrap; {kind_style}">{escape(kind_label)}</div>
+            <div style="padding:6px 10px; border-radius:999px; font-size:12px; font-weight:800; white-space:nowrap; {item['style']}">{escape(item['label'])}</div>
             <div>
-                <div style="font-size:12px; color:#7a8699; margin-bottom:4px;">{escape(item.get('timestamp') or '')}</div>
-                <div style="font-size:14px; line-height:1.45; color:#22314a;">{escape(item.get('message') or '')}</div>
+                <div style="font-size:12px; color:#7a8699; margin-bottom:4px;">{escape(item['timestamp'])}</div>
+                <div style="font-size:14px; line-height:1.45; color:#22314a;">{escape(item['message'])}</div>
             </div>
         </div>
         """
@@ -9097,22 +9168,32 @@ def chatterfy_parser_page_html(
                 <div style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; margin-top:18px;">
                     <div style="padding:14px; border-radius:18px; background:#f8fbff; border:1px solid #dbe5f2;">
                         <div style="font-size:12px; font-weight:800; color:#6b7a90; text-transform:uppercase;">Статус</div>
-                        <div style="margin-top:8px; font-size:24px; font-weight:900; line-height:1.15; color:#1f2f4f;">{escape(status_label)}</div>
+                        <div id="chatterfyParserStatusLabel" style="margin-top:8px; font-size:24px; font-weight:900; line-height:1.15; color:#1f2f4f;">{escape(runtime_payload["status_label"])}</div>
                     </div>
                     <div style="padding:14px; border-radius:18px; background:#f8fbff; border:1px solid #dbe5f2;">
                         <div style="font-size:12px; font-weight:800; color:#6b7a90; text-transform:uppercase;">Что дальше</div>
-                        <div style="margin-top:8px; font-size:18px; font-weight:800; line-height:1.2; color:#1f2f4f;">{escape(next_run_text)}</div>
+                        <div id="chatterfyParserNextRunText" style="margin-top:8px; font-size:18px; font-weight:800; line-height:1.2; color:#1f2f4f;">{escape(runtime_payload["next_run_text"])}</div>
                     </div>
                     <div style="padding:14px; border-radius:18px; background:#f8fbff; border:1px solid #dbe5f2;">
                         <div style="font-size:12px; font-weight:800; color:#6b7a90; text-transform:uppercase;">Последняя удачная</div>
-                        <div style="margin-top:8px; font-size:18px; font-weight:800; line-height:1.2; color:#1f2f4f; word-break:break-word;">{escape(last_success_at or 'Пока не было')}</div>
+                        <div id="chatterfyParserLastSuccess" style="margin-top:8px; font-size:18px; font-weight:800; line-height:1.2; color:#1f2f4f; word-break:break-word;">{escape(runtime_payload["last_success_at"])}</div>
                     </div>
                     <div style="padding:14px; border-radius:18px; background:#f8fbff; border:1px solid #dbe5f2;">
                         <div style="font-size:12px; font-weight:800; color:#6b7a90; text-transform:uppercase;">Загружено</div>
-                        <div style="margin-top:8px; font-size:30px; font-weight:900; line-height:1; color:#1f2f4f;">{last_count}</div>
+                        <div id="chatterfyParserLastCount" style="margin-top:8px; font-size:30px; font-weight:900; line-height:1; color:#1f2f4f;">{runtime_payload["last_count"]}</div>
+                    </div>
+                    <div style="padding:14px; border-radius:18px; background:#f8fbff; border:1px solid #dbe5f2;">
+                        <div style="font-size:12px; font-weight:800; color:#6b7a90; text-transform:uppercase;">До следующей</div>
+                        <div id="chatterfyParserCountdown" data-seconds="{'' if runtime_payload['next_run_seconds'] is None else runtime_payload['next_run_seconds']}" style="margin-top:8px; font-size:24px; font-weight:900; line-height:1.1; color:#1f2f4f;">{escape(runtime_payload["countdown_text"])}</div>
+                    </div>
+                    <div style="padding:14px; border-radius:18px; background:#f8fbff; border:1px solid #dbe5f2;">
+                        <div style="font-size:12px; font-weight:800; color:#6b7a90; text-transform:uppercase;">Длилась</div>
+                        <div id="chatterfyParserLastDuration" style="margin-top:8px; font-size:24px; font-weight:900; line-height:1.1; color:#1f2f4f;">{escape(runtime_payload["last_duration_text"])}</div>
                     </div>
                 </div>
-                {f'<div class="notice notice-danger" style="margin-top:14px;">{escape(last_error)}</div>' if last_error else ''}
+                <div id="chatterfyParserLastErrorWrapper" {'style="display:none; margin-top:14px;"' if not runtime_payload['last_error'] else 'style="margin-top:14px;"'}>
+                    <div id="chatterfyParserLastError" class="notice notice-danger">{escape(runtime_payload["last_error"])}</div>
+                </div>
                 <form method="post" action="/chatterfy-parser/toggle" style="margin-top:18px; display:grid; gap:12px;">
                     <div class="panel-subtitle" style="margin-bottom:2px;">Настройки доступа и периода. Всё управление собрано здесь.</div>
                     <label style="display:grid; gap:6px;">Chatterfy Users URL
@@ -9143,7 +9224,7 @@ def chatterfy_parser_page_html(
                     </div>
                     <div style="padding:8px 12px; border-radius:999px; background:#f4f7fb; color:#60708a; font-size:12px; font-weight:800;">Последние события</div>
                 </div>
-                <div style="max-height:560px; overflow:auto;">{logs_html}</div>
+                <div id="chatterfyParserLogs" style="max-height:560px; overflow:auto;">{logs_html}</div>
             </div>
         </div>
     </div>
@@ -9201,7 +9282,112 @@ def chatterfy_parser_page_html(
         </div>
     </div>
     """
-    return page_shell("Chatterfy Parser", content, active_page="chatterfyparser", current_user=current_user)
+    extra_scripts = """
+    <script>
+        (function initChatterfyParserCountdown() {
+            const el = document.getElementById('chatterfyParserCountdown');
+            if (!el) return;
+            let seconds = null;
+            function syncSecondsFromDom() {
+                const raw = el.getAttribute('data-seconds');
+                if (raw === null || raw === '') {
+                    seconds = null;
+                    return false;
+                }
+                seconds = Math.max(0, parseInt(raw, 10) || 0);
+                return true;
+            }
+            function render(value) {
+                const total = Math.max(0, value);
+                const hours = Math.floor(total / 3600);
+                const minutes = Math.floor((total % 3600) / 60);
+                const secs = total % 60;
+                el.textContent = hours > 0
+                    ? String(hours).padStart(2, '0') + ':' + String(minutes).padStart(2, '0') + ':' + String(secs).padStart(2, '0')
+                    : String(minutes).padStart(2, '0') + ':' + String(secs).padStart(2, '0');
+            }
+            if (syncSecondsFromDom()) render(seconds);
+            window.setInterval(function() {
+                if (seconds === null) return;
+                if (seconds <= 0) {
+                    render(0);
+                    return;
+                }
+                seconds -= 1;
+                render(seconds);
+            }, 1000);
+            window.chatterfyParserCountdownSync = function(nextSeconds, nextText) {
+                if (nextSeconds === null || nextSeconds === undefined || nextSeconds === '') {
+                    seconds = null;
+                    if (typeof nextText === 'string' && nextText) el.textContent = nextText;
+                    el.setAttribute('data-seconds', '');
+                    return;
+                }
+                seconds = Math.max(0, parseInt(nextSeconds, 10) || 0);
+                el.setAttribute('data-seconds', String(seconds));
+                render(seconds);
+            };
+        })();
+        (function initChatterfyParserLiveStatus() {
+            const logsRoot = document.getElementById('chatterfyParserLogs');
+            if (!logsRoot) return;
+            function escapeHtml(value) {
+                return String(value || '')
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#39;');
+            }
+            function renderLogs(logs) {
+                if (!Array.isArray(logs) || !logs.length) {
+                    logsRoot.innerHTML = '<div style="padding:18px; color:#6b7a90;">Журнал пока пуст. После запуска здесь появятся шаги автозагрузки.</div>';
+                    return;
+                }
+                logsRoot.innerHTML = logs.map(function(item) {
+                    return '<div style="display:grid; grid-template-columns:auto 1fr; gap:10px; align-items:start; padding:12px 14px; border-bottom:1px solid #edf1f7;">'
+                        + '<div style="padding:6px 10px; border-radius:999px; font-size:12px; font-weight:800; white-space:nowrap; ' + escapeHtml(item.style) + '">' + escapeHtml(item.label) + '</div>'
+                        + '<div><div style="font-size:12px; color:#7a8699; margin-bottom:4px;">' + escapeHtml(item.timestamp) + '</div>'
+                        + '<div style="font-size:14px; line-height:1.45; color:#22314a;">' + escapeHtml(item.message) + '</div></div></div>';
+                }).join('');
+            }
+            async function refresh() {
+                try {
+                    const response = await fetch('/chatterfy-parser/status-live', { headers: { 'X-Requested-With': 'fetch' } });
+                    if (!response.ok) return;
+                    const data = await response.json();
+                    const setText = function(id, value) {
+                        const el = document.getElementById(id);
+                        if (el) el.textContent = value || '';
+                    };
+                    setText('chatterfyParserStatusLabel', data.status_label);
+                    setText('chatterfyParserNextRunText', data.next_run_text);
+                    setText('chatterfyParserLastSuccess', data.last_success_at);
+                    setText('chatterfyParserLastCount', String(data.last_count ?? ''));
+                    setText('chatterfyParserLastDuration', data.last_duration_text);
+                    const errorWrap = document.getElementById('chatterfyParserLastErrorWrapper');
+                    const errorBox = document.getElementById('chatterfyParserLastError');
+                    if (errorWrap && errorBox) {
+                        if (data.last_error) {
+                            errorWrap.style.display = '';
+                            errorBox.textContent = data.last_error;
+                        } else {
+                            errorWrap.style.display = 'none';
+                            errorBox.textContent = '';
+                        }
+                    }
+                    if (window.chatterfyParserCountdownSync) {
+                        window.chatterfyParserCountdownSync(data.next_run_seconds, data.countdown_text);
+                    }
+                    renderLogs(data.logs);
+                } catch (error) {
+                }
+            }
+            window.setInterval(refresh, 5000);
+        })();
+    </script>
+    """
+    return page_shell("Chatterfy Parser", content, active_page="chatterfyparser", current_user=current_user, extra_scripts=extra_scripts)
 
 
 @app.get("/chatterfy-parser", response_class=HTMLResponse)
@@ -9253,6 +9439,15 @@ def chatterfy_parser_page(
         per_page=per_page,
         success_text=message,
     )
+
+
+@app.get("/chatterfy-parser/status-live")
+def chatterfy_parser_status_live(request: Request):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    enforce_page_access(user, "chatterfyparser")
+    return JSONResponse(chatterfy_parser_runtime_payload())
 
 
 @app.post("/chatterfy-parser/toggle")
