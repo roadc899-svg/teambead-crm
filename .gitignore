@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.env
+*.env
+test.db
+parser_1xbet_status.json
+uploaded_data/
+onexbet_runtime/
+playwright-profile/
+*.log
+.DS_Store

@@ -5,3 +5,8 @@ sqlalchemy
 pandas
 python-multipart
 openpyxl
+psycopg2-binary
+python-dotenv
+selenium
+webdriver-manager
+playwright
