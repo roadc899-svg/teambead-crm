@@ -103,6 +103,10 @@ AUTO_IMPORT_CHECKS = set()
 RUNTIME_CACHE = {}
 LIVE_DATA_VERSION = int(time.time() * 1000)
 CHATTERFY_SYNC_LOCK = threading.Lock()
+
+
+class ChatterfySyncStopped(RuntimeError):
+    pass
 CHATTERFY_SYNC_THREAD_STARTED = False
 CHATTERFY_CONFIG_LOCK = threading.Lock()
 ONEXBET_STATUS_LOCK = threading.Lock()
@@ -5044,6 +5048,19 @@ def build_chatterfy_chat_link(bot_id="", chat_id="", fallback_url=""):
     return f"https://new.chatterfy.ai/bots/{clean_bot_id}/users/{clean_chat_id}"
 
 
+def chatterfy_parser_stop_requested():
+    config = get_chatterfy_parser_config()
+    state = safe_text(config.get("sync_state")) or "stopped"
+    if state == "pause_pending":
+        return True
+    return False
+
+
+def ensure_chatterfy_parser_not_stopped(message="Chatterfy sync stopped by user."):
+    if chatterfy_parser_stop_requested():
+        raise ChatterfySyncStopped(message)
+
+
 def chatterfy_tracker_field_map(chat_item):
     result = {}
     for item in chat_item.get("tracker_fields") or []:
@@ -5164,6 +5181,7 @@ def chatterfy_fetch_step_map(bot_id, token):
 
 
 def chatterfy_fetch_period_dataframe(bot_id, token, date_start, date_end, progress_callback=None):
+    ensure_chatterfy_parser_not_stopped()
     start_dt = parse_datetime_flexible(date_start)
     end_dt = parse_datetime_flexible(date_end)
     if not start_dt or not end_dt:
@@ -5179,6 +5197,7 @@ def chatterfy_fetch_period_dataframe(bot_id, token, date_start, date_end, progre
     scroll_id = ""
     batch_number = 0
     while True:
+        ensure_chatterfy_parser_not_stopped()
         batch_number += 1
         if progress_callback:
             progress_callback(f"Забираю пачку чатов #{batch_number} из раздела Users.")
@@ -5197,7 +5216,9 @@ def chatterfy_fetch_period_dataframe(bot_id, token, date_start, date_end, progre
         chats = response.get("chats") or []
         if not chats:
             break
-        for item in chats:
+        for index, item in enumerate(chats, 1):
+            if index == 1 or index % 25 == 0:
+                ensure_chatterfy_parser_not_stopped()
             if chatterfy_chat_matches_period(item, start_dt, end_dt):
                 records.append(chatterfy_chat_to_import_row(item, step_map=step_map, bot_id=bot_id))
         if progress_callback:
@@ -5238,8 +5259,19 @@ def update_chatterfy_parser_config(**updates):
 
 
 def chatterfy_parser_append_log(message, kind="info", config=None):
-    config = dict(config or get_chatterfy_parser_config())
-    logs = list(config.get("logs") or [])
+    latest = dict(get_chatterfy_parser_config() or {})
+    config = dict(config or latest)
+    if latest:
+        for key in (
+            "auto_sync_enabled", "sync_state", "period_view", "period_label", "date_start", "date_end",
+            "bot_url", "email", "password", "last_run_at", "last_success_at", "last_error",
+            "last_count", "last_duration_seconds",
+        ):
+            if key in latest:
+                config[key] = latest[key]
+    latest_logs = list(latest.get("logs") or [])
+    current_logs = list(config.get("logs") or [])
+    logs = latest_logs if len(latest_logs) >= len(current_logs) else current_logs
     logs.append({
         "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
         "kind": safe_text(kind) or "info",
@@ -5255,7 +5287,9 @@ def chatterfy_parser_status_label(config=None):
     state = safe_text(config.get("sync_state")) or "stopped"
     if state in {"running", "idle"} and config.get("auto_sync_enabled"):
         return "Active"
-    return "Stopping"
+    if state == "pause_pending":
+        return "Stopping"
+    return "Stopped"
 
 
 def chatterfy_parser_status_color(config=None):
@@ -5263,7 +5297,9 @@ def chatterfy_parser_status_color(config=None):
     state = safe_text(config.get("sync_state")) or "stopped"
     if state in {"running", "idle"} and config.get("auto_sync_enabled"):
         return "#16a34a"
-    return "#dc2626"
+    if state == "pause_pending":
+        return "#dc2626"
+    return "#64748b"
 
 
 def chatterfy_parser_next_run_at(config=None, now=None):
@@ -5374,6 +5410,8 @@ def chatterfy_parser_runtime_payload(config=None):
     last_success_at = last_success_dt.strftime("%d.%m.%Y %H:%M") if last_success_dt else "Never"
     sync_state = safe_text(config.get("sync_state")) or "stopped"
     next_run_seconds = chatterfy_parser_next_run_seconds(config)
+    is_active = sync_state in {"running", "idle"} and bool(config.get("auto_sync_enabled"))
+    is_stopping = sync_state == "pause_pending"
     return {
         "status_label": chatterfy_parser_status_label(config),
         "status_color": chatterfy_parser_status_color(config),
@@ -5384,6 +5422,9 @@ def chatterfy_parser_runtime_payload(config=None):
         "next_run_seconds": next_run_seconds,
         "last_error": safe_text(config.get("last_error")),
         "sync_state": sync_state,
+        "auto_sync_enabled": bool(config.get("auto_sync_enabled")),
+        "button_label": "Stop" if is_active or is_stopping else "Start",
+        "button_style": "background:#d94b4b; border-color:#d94b4b; color:#fff;" if is_active or is_stopping else "background:#2563eb; border-color:#2563eb; color:#fff;",
         "logs": chatterfy_parser_log_entries(config.get("logs") or []),
     }
 
@@ -5431,6 +5472,7 @@ def perform_chatterfy_parser_sync(config, initiated_by="manual"):
         config = dict(config or {})
         config["sync_state"] = "running"
         config = chatterfy_parser_append_log("Запуск синхронизации. Начинаю обновление данных из Chatterfy.", kind="info", config=config)
+        ensure_chatterfy_parser_not_stopped()
         bot_url = safe_text(config.get("bot_url"))
         email = safe_text(config.get("email"))
         password = safe_text(config.get("password"))
@@ -5446,6 +5488,7 @@ def perform_chatterfy_parser_sync(config, initiated_by="manual"):
         config = chatterfy_parser_append_log("Вход выполнен. Получаю структуру бота и подготавливаю выгрузку.", kind="success", config=config)
         def progress(message):
             nonlocal config
+            ensure_chatterfy_parser_not_stopped()
             config = chatterfy_parser_append_log(message, kind="info", config=config)
         df, start_dt, end_dt = chatterfy_fetch_period_dataframe(bot_id, token, date_start, date_end, progress_callback=progress)
         if df.empty:
@@ -5461,8 +5504,10 @@ def perform_chatterfy_parser_sync(config, initiated_by="manual"):
         result = {"count": int(result_count)}
         if result["count"] <= 0:
             raise RuntimeError("Chatterfy data was fetched, but import returned zero rows.")
+        latest_config = dict(get_chatterfy_parser_config() or {})
         updated_config = dict(config)
-        pause_after_sync = safe_text(updated_config.get("sync_state")) == "pause_pending"
+        updated_config.update({k: v for k, v in latest_config.items() if k != "logs"})
+        pause_after_sync = safe_text(latest_config.get("sync_state")) == "pause_pending"
         updated_config["last_run_at"] = datetime.utcnow().isoformat()
         updated_config["last_success_at"] = datetime.utcnow().isoformat()
         updated_config["last_error"] = ""
@@ -5484,6 +5529,24 @@ def perform_chatterfy_parser_sync(config, initiated_by="manual"):
             "end_dt": end_dt,
             "source_name": source_name,
             "initiated_by": initiated_by,
+        }
+    except ChatterfySyncStopped as exc:
+        latest_config = dict(get_chatterfy_parser_config() or {})
+        updated_config = dict(config or {})
+        updated_config.update({k: v for k, v in latest_config.items() if k != "logs"})
+        updated_config["auto_sync_enabled"] = False
+        updated_config["sync_state"] = "stopped"
+        updated_config["last_run_at"] = datetime.utcnow().isoformat()
+        updated_config["last_error"] = ""
+        updated_config["last_duration_seconds"] = int((datetime.utcnow() - sync_started_at).total_seconds()) if 'sync_started_at' in locals() else 0
+        save_chatterfy_parser_config(updated_config)
+        chatterfy_parser_append_log("Автосинк остановлен. Больше почасовых выгрузок не будет, пока вы снова не нажмёте Старт.", kind="info", config=updated_config)
+        return {
+            "count": 0,
+            "source_name": "",
+            "initiated_by": initiated_by,
+            "stopped": True,
+            "message": safe_text(exc),
         }
     except Exception as exc:
         updated_config = dict(config or {})
@@ -6864,6 +6927,339 @@ _domain_actions = {}
 for _binder in (bind_analytics_actions, bind_parser_actions, bind_management_actions, bind_report_actions):
     _domain_actions.update(_binder(globals()))
 
+
+_original_chatterfy_parser_page = _page_routes.get("chatterfy_parser_page")
+_original_toggle_chatterfy_parser = _domain_actions.get("toggle_chatterfy_parser")
+_original_upload_file = _domain_actions.get("upload_file")
+_original_grouped_page = _page_routes.get("show_grouped_table")
+
+
+def _inject_chatterfy_parser_live_button_refresh(html: str) -> str:
+    if not html:
+        return html
+    if isinstance(html, Response):
+        body = html.body.decode("utf-8", errors="ignore")
+        patched_body = _inject_chatterfy_parser_live_button_refresh(body)
+        if patched_body == body:
+            return html
+        headers = dict(html.headers)
+        media_type = getattr(html, "media_type", None) or headers.get("content-type", "text/html")
+        return HTMLResponse(content=patched_body, status_code=html.status_code, headers=headers, media_type=media_type)
+    update_fn_old = """            async function refresh() {
+"""
+    update_fn_new = """            function updateToggleButton(data) {
+                const form = document.querySelector('form[action="/chatterfy-parser/toggle"]');
+                if (!form) return;
+                const button = form.querySelector('button[type="submit"]');
+                if (!button) return;
+                if (data.button_label) button.textContent = data.button_label;
+                if (data.button_style) {
+                    data.button_style.split(';').forEach(function(rule) {
+                        const parts = rule.split(':');
+                        if (parts.length < 2) return;
+                        const prop = parts[0].trim();
+                        const value = parts.slice(1).join(':').trim();
+                        if (!prop) return;
+                        button.style.setProperty(prop, value);
+                    });
+                }
+            }
+            async function refresh() {
+"""
+    if update_fn_old in html and "function updateToggleButton(data)" not in html:
+        html = html.replace(update_fn_old, update_fn_new, 1)
+    html = html.replace(
+        "                    renderLogs(data.logs);\n                } catch (error) {\n",
+        "                    updateToggleButton(data);\n                    renderLogs(data.logs);\n                } catch (error) {\n",
+        1,
+    )
+    html = html.replace(
+        "            window.setInterval(refresh, 5000);\n",
+        "            refresh();\n            window.setInterval(refresh, 5000);\n",
+        1,
+    )
+    return html
+
+
+def _inject_grouped_upload_period_context(html: str) -> str:
+    if not html:
+        return html
+    if isinstance(html, Response):
+        body = html.body.decode("utf-8", errors="ignore")
+        patched_body = _inject_grouped_upload_period_context(body)
+        if patched_body == body:
+            return html
+        headers = dict(html.headers)
+        media_type = getattr(html, "media_type", None) or headers.get("content-type", "text/html")
+        return HTMLResponse(content=patched_body, status_code=html.status_code, headers=headers, media_type=media_type)
+    target = '<form method="post" action="/upload" enctype="multipart/form-data">'
+    if target not in html or 'name="period_view"' in html.split(target, 1)[1][:900]:
+        return html
+    replacement = """<form method="post" action="/upload" enctype="multipart/form-data">
+                        <input type="hidden" name="period_view" value="{escape(period_view)}">
+                        <input type="hidden" name="period_label" value="{escape(effective_period_label)}">
+                        <input type="hidden" name="brand" value="{escape(brand)}">
+                        <input type="hidden" name="manager" value="{escape(manager)}">
+                        <input type="hidden" name="geo" value="{escape(geo)}">
+                        <input type="hidden" name="ad_name" value="{escape(ad_name)}">
+                        <input type="hidden" name="adset_name" value="{escape(adset_name)}">
+                        <input type="hidden" name="creative" value="{escape(creative)}">
+                        <input type="hidden" name="search" value="{escape(search)}">
+                        <input type="hidden" name="sort_by" value="{escape(sort_by)}">
+                        <input type="hidden" name="order" value="{escape(order)}">"""
+    return html.replace(target, replacement, 1)
+
+
+def _patched_show_grouped_table(
+    request: Request,
+    buyer: str = Query(default=""),
+    brand: str = Query(default=""),
+    manager: str = Query(default=""),
+    geo: str = Query(default=""),
+    ad_name: str = Query(default=""),
+    adset_name: str = Query(default=""),
+    creative: str = Query(default=""),
+    search: str = Query(default=""),
+    period_view: str = Query(default="current"),
+    period_label: str = Query(default=""),
+    source_name: str = Query(default=""),
+    sort_by: str = Query(default="spend"),
+    order: str = Query(default="desc"),
+):
+    html = _original_grouped_page(
+        request, buyer, brand, manager, geo, ad_name, adset_name, creative, search, period_view, period_label, source_name, sort_by, order
+    )
+    return _inject_grouped_upload_period_context(html)
+
+
+async def _patched_upload_file(
+    request: Request,
+    buyer: str = Form(...),
+    file: UploadFile = File(...),
+    period_view: str = Form(default="period"),
+    period_label: str = Form(default=""),
+    brand: str = Form(default=""),
+    manager: str = Form(default=""),
+    geo: str = Form(default=""),
+    ad_name: str = Form(default=""),
+    adset_name: str = Form(default=""),
+    creative: str = Form(default=""),
+    search: str = Form(default=""),
+    sort_by: str = Form(default="spend"),
+    order: str = Form(default="desc"),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    require_any_role(user, "superadmin", "admin")
+    ensure_fb_table()
+    original_name = file.filename or ""
+    ext = os.path.splitext(original_name)[1].lower() or ".csv"
+    filename = f"temp_{uuid.uuid4()}{ext}"
+    clean_buyer = safe_text(buyer).strip()
+    effective_period_label = resolve_period_label(period_view, period_label) or get_current_period_label()
+    selected_period_data = period_label_to_dates(effective_period_label)
+
+    try:
+        with open(filename, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        if ext in [".xlsx", ".xls"]:
+            df = pd.read_excel(filename)
+        else:
+            try:
+                df = pd.read_csv(filename)
+            except Exception:
+                df = pd.read_csv(filename, sep=";")
+
+        detected_period = detect_fb_upload_period(df) or {}
+        source_name = build_fb_source_name(clean_buyer, detected_period or selected_period_data)
+        rows_to_insert = parse_uploaded_dataframe(
+            df,
+            clean_buyer,
+            source_name=source_name,
+            period_label=effective_period_label,
+            period_date_start=safe_text(selected_period_data.get("date_start")),
+            period_date_end=safe_text(selected_period_data.get("date_end")),
+        )
+        if not rows_to_insert:
+            redirect_url = (
+                f"/grouped?buyer={quote_plus(clean_buyer)}"
+                f"&period_view=period"
+                f"&period_label={quote_plus(effective_period_label)}"
+                f"&brand={quote_plus(safe_text(brand))}"
+                f"&manager={quote_plus(safe_text(manager))}"
+                f"&geo={quote_plus(safe_text(geo))}"
+                f"&ad_name={quote_plus(safe_text(ad_name))}"
+                f"&adset_name={quote_plus(safe_text(adset_name))}"
+                f"&creative={quote_plus(safe_text(creative))}"
+                f"&search={quote_plus(safe_text(search))}"
+                f"&sort_by={quote_plus(safe_text(sort_by) or 'spend')}"
+                f"&order={quote_plus(safe_text(order) or 'desc')}"
+                f"&message=FB+upload+is+empty"
+            )
+            return RedirectResponse(url=redirect_url, status_code=303)
+
+        db = SessionLocal()
+        try:
+            db.query(FBRow).filter(FBRow.source_name == source_name).delete()
+            db.commit()
+            for item in rows_to_insert:
+                db.add(item)
+            db.commit()
+        finally:
+            db.close()
+
+        redirect_url = (
+            f"/grouped?buyer={quote_plus(clean_buyer)}"
+            f"&period_view=period"
+            f"&period_label={quote_plus(effective_period_label)}"
+            f"&source_name={quote_plus(source_name)}"
+            f"&brand={quote_plus(safe_text(brand))}"
+            f"&manager={quote_plus(safe_text(manager))}"
+            f"&geo={quote_plus(safe_text(geo))}"
+            f"&ad_name={quote_plus(safe_text(ad_name))}"
+            f"&adset_name={quote_plus(safe_text(adset_name))}"
+            f"&creative={quote_plus(safe_text(creative))}"
+            f"&search={quote_plus(safe_text(search))}"
+            f"&sort_by={quote_plus(safe_text(sort_by) or 'spend')}"
+            f"&order={quote_plus(safe_text(order) or 'desc')}"
+        )
+        return RedirectResponse(url=redirect_url, status_code=303)
+    finally:
+        if os.path.exists(filename):
+            os.remove(filename)
+
+
+def _patched_chatterfy_parser_page(
+    request: Request,
+    status: str = Query(default=""),
+    search: str = Query(default=""),
+    date_filter: str = Query(default=""),
+    time_filter: str = Query(default=""),
+    telegram_id: str = Query(default=""),
+    page: int = Query(default=1),
+    bot_url: str = Query(default=""),
+    period_view: str = Query(default="period"),
+    period_label: str = Query(default=""),
+    message: str = Query(default=""),
+):
+    html = _original_chatterfy_parser_page(
+        request,
+        status,
+        search,
+        date_filter,
+        time_filter,
+        telegram_id,
+        page,
+        bot_url,
+        period_view,
+        period_label,
+        message,
+    )
+    return _inject_chatterfy_parser_live_button_refresh(html)
+
+
+def _patched_toggle_chatterfy_parser(
+    request: Request,
+    bot_url: str = Form(...),
+    period_view: str = Form(default="period"),
+    period_label: str = Form(default=""),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "chatterfyparser")
+
+    existing_config = get_chatterfy_parser_config()
+    form_data = build_chatterfy_parser_config_payload(
+        bot_url=bot_url,
+        period_view=period_view,
+        period_label=period_label,
+        auto_sync_enabled=bool(existing_config.get("auto_sync_enabled")),
+        existing_config=existing_config,
+    )
+    bot_id = extract_chatterfy_bot_id(bot_url)
+    if not bot_id:
+        return HTMLResponse(
+            chatterfy_parser_page_html(
+                user,
+                [],
+                form_data=form_data,
+                period_view=period_view,
+                period_label=form_data.get("period_label", ""),
+                error_text="Invalid Chatterfy Users URL. Expected format: /bots/<bot_id>/users",
+            ),
+            status_code=400,
+        )
+
+    try:
+        existing_state = safe_text(existing_config.get("sync_state"))
+        is_running_now = CHATTERFY_SYNC_LOCK.locked() or existing_state == "running"
+        is_active = bool(existing_config.get("auto_sync_enabled")) or existing_state in {"running", "pause_pending", "idle"}
+        if is_active:
+            updated = dict(form_data)
+            if is_running_now:
+                updated["auto_sync_enabled"] = True
+                updated["sync_state"] = "pause_pending"
+                save_chatterfy_parser_config(updated)
+                chatterfy_parser_append_log(
+                    "Нажата Пауза. Делаю последнюю выгрузку и после этого остановлю автосинк.",
+                    kind="info",
+                    config=updated,
+                )
+                success_message = "Stop accepted. The parser will finish the current sync and stop."
+            else:
+                updated["auto_sync_enabled"] = False
+                updated["sync_state"] = "stopped"
+                save_chatterfy_parser_config(updated)
+                chatterfy_parser_append_log(
+                    "Автосинк остановлен. Больше почасовых выгрузок не будет, пока вы снова не нажмёте Старт.",
+                    kind="info",
+                    config=updated,
+                )
+                success_message = "Auto sync stopped."
+        else:
+            updated = dict(form_data)
+            updated["auto_sync_enabled"] = True
+            updated["sync_state"] = "idle"
+            save_chatterfy_parser_config(updated)
+            chatterfy_parser_append_log(
+                f"Нажат Start. Включаю штатный режим для периода {updated['period_label']} и запускаю первую выгрузку.",
+                kind="success",
+                config=updated,
+            )
+            if not CHATTERFY_SYNC_LOCK.locked():
+                run_chatterfy_parser_sync_async(initiated_by="start")
+            success_message = "Auto sync is active. The first run has started, then it will continue every hour."
+        return RedirectResponse(
+            url=(
+                f"/chatterfy-parser?bot_url={quote_plus(build_chatterfy_users_url(bot_id))}"
+                f"&period_view={quote_plus(safe_text(form_data['period_view']))}"
+                f"&period_label={quote_plus(safe_text(form_data['period_label']))}"
+                f"&message={quote_plus(success_message)}"
+            ),
+            status_code=303,
+        )
+    except Exception as exc:
+        return HTMLResponse(
+            chatterfy_parser_page_html(
+                user,
+                [],
+                form_data=form_data,
+                period_view=period_view,
+                period_label=form_data.get("period_label", ""),
+                error_text=f"Could not import Chatterfy data: {exc}",
+            ),
+            status_code=400,
+        )
+
+
+_page_routes["chatterfy_parser_page"] = _patched_chatterfy_parser_page
+_page_routes["show_grouped_table"] = _patched_show_grouped_table
+_domain_actions["toggle_chatterfy_parser"] = _patched_toggle_chatterfy_parser
+_domain_actions["upload_file"] = _patched_upload_file
+
 # =========================================
 # BLOCK 7.5 — USERS
 # =========================================
@@ -6958,8 +7354,25 @@ def delete_user(request: Request, user_id: str = Form(...)):
 # BLOCK 8 — UPLOAD
 # =========================================
 @app.post("/upload")
-async def upload_file(request: Request, buyer: str = Form(...), file: UploadFile = File(...)):
-    return await _domain_actions["upload_file"](request, buyer, file)
+async def upload_file(
+    request: Request,
+    buyer: str = Form(...),
+    file: UploadFile = File(...),
+    period_view: str = Form(default="period"),
+    period_label: str = Form(default=""),
+    brand: str = Form(default=""),
+    manager: str = Form(default=""),
+    geo: str = Form(default=""),
+    ad_name: str = Form(default=""),
+    adset_name: str = Form(default=""),
+    creative: str = Form(default=""),
+    search: str = Form(default=""),
+    sort_by: str = Form(default="spend"),
+    order: str = Form(default="desc"),
+):
+    return await _domain_actions["upload_file"](
+        request, buyer, file, period_view, period_label, brand, manager, geo, ad_name, adset_name, creative, search, sort_by, order
+    )
 
 
 @app.post("/upload/partner")
