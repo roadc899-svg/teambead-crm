@@ -54,8 +54,6 @@ CHATTERFY_SIGNIN_URL = "https://new.chatterfy.ai/signin"
 CHATTERFY_PARSER_DEFAULT_START = "2026-03-16"
 CHATTERFY_PARSER_DEFAULT_END = "2026-03-31"
 CHATTERFY_PARSER_CONFIG_PATH = os.path.join(DATA_UPLOAD_DIR, "chatterfy_parser_config.json")
-CHATTERFY_PARSER_ACCOUNT_EMAIL = "roadc899@gmail.com"
-CHATTERFY_PARSER_ACCOUNT_PASSWORD = "nCjcTV0Om,W/zs/"
 ONEXBET_RUNTIME_DIR = os.path.join(DATA_UPLOAD_DIR, "onexbet_runtime")
 ONEXBET_ACCOUNTS_PATH = os.path.join(ONEXBET_RUNTIME_DIR, "accounts.json")
 ONEXBET_SESSION_DIR = os.path.join(ONEXBET_RUNTIME_DIR, "sessions")
@@ -341,7 +339,6 @@ class ChatterfyRow(Base):
     status = Column(String, default="")
     step = Column(String, default="")
     external_id = Column(String, default="")
-    chat_link = Column(String, default="")
     report_date = Column(String, default="")
     period_start = Column(String, default="")
     period_end = Column(String, default="")
@@ -1424,23 +1421,6 @@ def resolve_period_label(period_view="", period_label=""):
     if clean_view == "period":
         return clean_label
     return ""
-
-
-def period_label_to_dates(period_label=""):
-    clean_label = safe_text(period_label)
-    if not clean_label or " - " not in clean_label:
-        return {"date_start": "", "date_end": "", "period_label": ""}
-    try:
-        start_raw, end_raw = [part.strip() for part in clean_label.split(" - ", 1)]
-        start_dt = datetime.strptime(start_raw, "%d.%m.%Y")
-        end_dt = datetime.strptime(end_raw, "%d.%m.%Y")
-    except Exception:
-        return {"date_start": "", "date_end": "", "period_label": ""}
-    return {
-        "date_start": start_dt.strftime("%Y-%m-%d"),
-        "date_end": end_dt.strftime("%Y-%m-%d"),
-        "period_label": f"{start_dt.strftime('%d.%m.%Y')} - {end_dt.strftime('%d.%m.%Y')}",
-    }
 
 
 def get_previous_period_label(period_label=""):
@@ -3332,15 +3312,16 @@ def get_fb_buyer_name_options():
     options = []
     seen = set()
     for item in load_users():
-        buyer_key = safe_text(getattr(item, "buyer_name", "")).strip()
+        buyer_key = safe_text(getattr(item, "username", "")).strip()
         if not buyer_key or not getattr(item, "is_active", 1):
             continue
         key = buyer_key.lower()
         if key in seen:
             continue
         seen.add(key)
-        options.append((buyer_key, buyer_key))
-    options.sort(key=lambda item: safe_text(item[0]).lower())
+        label = safe_text(getattr(item, "display_name", "")) or safe_text(getattr(item, "username", "")) or buyer_key
+        options.append((buyer_key, label))
+    options.sort(key=lambda item: safe_text(item[1]).lower())
     return options
 
 
@@ -3872,8 +3853,6 @@ def ensure_chatterfy_parser_table():
     def sqlite_migration():
         with engine.begin() as conn:
             columns = [row[1] for row in conn.execute(text("PRAGMA table_info(chatterfy_parser_rows)")).fetchall()]
-            if "chat_link" not in columns:
-                conn.execute(text("ALTER TABLE chatterfy_parser_rows ADD COLUMN chat_link VARCHAR DEFAULT ''"))
             if "report_date" not in columns:
                 conn.execute(text("ALTER TABLE chatterfy_parser_rows ADD COLUMN report_date VARCHAR DEFAULT ''"))
             if "period_start" not in columns:
@@ -3887,8 +3866,6 @@ def ensure_chatterfy_parser_table():
         inspector = inspect(engine)
         columns = {item.get("name") for item in inspector.get_columns("chatterfy_parser_rows")}
         migration_statements = []
-        if "chat_link" not in columns:
-            migration_statements.append(text("ALTER TABLE chatterfy_parser_rows ADD COLUMN IF NOT EXISTS chat_link VARCHAR DEFAULT ''"))
         if "report_date" not in columns:
             migration_statements.append(text("ALTER TABLE chatterfy_parser_rows ADD COLUMN IF NOT EXISTS report_date VARCHAR DEFAULT ''"))
         if "period_start" not in columns:
@@ -4854,7 +4831,6 @@ def import_chatterfy_dataframe(df, source_name=""):
     status_col = resolve_normalized_dataframe_column(normalized_columns, ["Status"])
     step_col = resolve_normalized_dataframe_column(normalized_columns, ["Step"])
     external_id_col = resolve_normalized_dataframe_column(normalized_columns, ["ID", "Id", "External ID", "External Id"])
-    chat_link_col = resolve_normalized_dataframe_column(normalized_columns, ["Chat Link", "chat_link", "Link", "URL", "Url"])
 
     required_columns = [name_col, telegram_col, tags_col, started_col, status_col]
     if any(not item for item in required_columns):
@@ -4877,7 +4853,6 @@ def import_chatterfy_dataframe(df, source_name=""):
             status=safe_text(row.get(status_col)),
             step=safe_text(row.get(step_col)) if step_col else "",
             external_id=safe_text(row.get(external_id_col)) if external_id_col else "",
-            chat_link=safe_text(row.get(chat_link_col)) if chat_link_col else "",
             report_date=period_info["report_date"],
             period_start=period_info["period_start"],
             period_end=period_info["period_end"],
@@ -5027,17 +5002,6 @@ def build_chatterfy_users_url(bot_id):
     return f"https://new.chatterfy.ai/bots/{clean_bot_id}/users"
 
 
-def build_chatterfy_chat_link(bot_id="", chat_id="", fallback_url=""):
-    direct_url = safe_text(fallback_url).strip()
-    if direct_url.startswith("http"):
-        return direct_url
-    clean_bot_id = safe_text(bot_id).strip()
-    clean_chat_id = safe_text(chat_id).strip()
-    if not clean_bot_id or not clean_chat_id:
-        return ""
-    return f"https://new.chatterfy.ai/bots/{clean_bot_id}/users/{clean_chat_id}"
-
-
 def chatterfy_tracker_field_map(chat_item):
     result = {}
     for item in chat_item.get("tracker_fields") or []:
@@ -5070,24 +5034,22 @@ def chatterfy_chat_matches_period(chat_item, start_dt, end_dt):
     return start_dt <= started_at <= end_dt
 
 
-def chatterfy_chat_to_import_row(chat_item, step_map=None, bot_id=""):
+def chatterfy_chat_to_import_row(chat_item, step_map=None):
     tracker_map = chatterfy_tracker_field_map(chat_item)
-    chat_id = safe_text(chat_item.get("id"))
+    last_message = chat_item.get("last_message") or {}
+    last_bot_message = chat_item.get("last_bot_message") or {}
     row = {
         "Name": safe_text(chat_item.get("name")),
         "Telegram ID": safe_text(chat_item.get("external_id")),
         "Username": safe_text(chat_item.get("username")),
         "Tags": ", ".join(chatterfy_tag_names(chat_item)),
         "Started": safe_text(chat_item.get("created_at")),
+        "Last User Message": safe_text(last_message.get("created_at") or chat_item.get("updated_at")),
+        "Last Bot Message": safe_text(last_bot_message.get("created_at")),
         "Status": safe_text(chat_item.get("status")),
         "Step": safe_text(chat_item.get("current_step_name")) or safe_text(step_map.get(safe_text(chat_item.get("current_step_id")))),
-        "ID": chat_id,
-        "External ID": chat_id,
-        "Chat Link": build_chatterfy_chat_link(
-            bot_id=bot_id,
-            chat_id=chat_id,
-            fallback_url=chat_item.get("url") or chat_item.get("link") or chat_item.get("chat_link"),
-        ),
+        "ID": safe_text(chat_item.get("id")),
+        "External ID": safe_text(chat_item.get("id")),
     }
     for key, value in tracker_map.items():
         row[key] = value
@@ -5193,7 +5155,7 @@ def chatterfy_fetch_period_dataframe(bot_id, token, date_start, date_end, progre
             break
         for item in chats:
             if chatterfy_chat_matches_period(item, start_dt, end_dt):
-                records.append(chatterfy_chat_to_import_row(item, step_map=step_map, bot_id=bot_id))
+                records.append(chatterfy_chat_to_import_row(item, step_map=step_map))
         if progress_callback:
             progress_callback(f"Пачка #{batch_number} получена. Подходящих записей накоплено: {len(records)}.")
         scroll_id = safe_text(response.get("scroll_id"))
@@ -5247,40 +5209,28 @@ def chatterfy_parser_append_log(message, kind="info", config=None):
 def chatterfy_parser_status_label(config=None):
     config = config or {}
     state = safe_text(config.get("sync_state")) or "stopped"
-    if state in {"running", "idle"} and config.get("auto_sync_enabled"):
-        return "Active"
-    return "Stopping"
-
-
-def chatterfy_parser_status_color(config=None):
-    config = config or {}
-    state = safe_text(config.get("sync_state")) or "stopped"
-    if state in {"running", "idle"} and config.get("auto_sync_enabled"):
-        return "#16a34a"
-    return "#dc2626"
-
-
-def chatterfy_parser_next_run_at(config=None, now=None):
-    config = config or {}
-    if not config.get("auto_sync_enabled"):
-        return None
-    current = now or datetime.utcnow()
-    slot = current.replace(minute=0, second=0, microsecond=0)
-    if current >= slot:
-        slot += timedelta(hours=1)
-    return slot
+    if state == "running":
+        return "Работает"
+    if state == "pause_pending":
+        return "Останавливается"
+    if config.get("auto_sync_enabled"):
+        return "Автосинк включен"
+    return "На паузе"
 
 
 def chatterfy_parser_next_run_text(config=None):
     config = config or {}
     if safe_text(config.get("sync_state")) == "running":
-        return "Running now"
+        return "Сейчас идёт выгрузка"
+    if safe_text(config.get("sync_state")) == "pause_pending":
+        return "Сначала сделает последнюю выгрузку, потом остановится"
     if not config.get("auto_sync_enabled"):
-        return "Paused"
-    next_run = chatterfy_parser_next_run_at(config)
-    if not next_run:
-        return "Paused"
-    return next_run.strftime("%d.%m.%Y %H:%M")
+        return "Автосинк выключен"
+    last_run = parse_datetime_flexible(config.get("last_run_at"))
+    if not last_run:
+        return "После нажатия Старт начнёт выгрузку сразу"
+    next_run = last_run + timedelta(hours=1)
+    return f"Следующая выгрузка около {next_run.strftime('%d.%m.%Y %H:%M')}"
 
 
 def chatterfy_parser_next_run_seconds(config=None):
@@ -5289,9 +5239,10 @@ def chatterfy_parser_next_run_seconds(config=None):
         return None
     if not config.get("auto_sync_enabled"):
         return None
-    next_run = chatterfy_parser_next_run_at(config)
-    if not next_run:
-        return None
+    last_run = parse_datetime_flexible(config.get("last_run_at"))
+    if not last_run:
+        return 0
+    next_run = last_run + timedelta(hours=1)
     seconds = int((next_run - datetime.utcnow()).total_seconds())
     return max(0, seconds)
 
@@ -5309,53 +5260,27 @@ def chatterfy_parser_log_badge(kind):
     clean_kind = safe_text(kind) or "info"
     if clean_kind == "success":
         return {
-            "label": "OK",
-            "style": "color:#6ee7b7;",
+            "label": "Готово",
+            "style": "background:#eaf8ee; color:#1d7a42; border:1px solid #bfe4c9;",
         }
     if clean_kind == "error":
         return {
-            "label": "ERR",
-            "style": "color:#f87171;",
+            "label": "Ошибка",
+            "style": "background:#fff0f0; color:#c23d3d; border:1px solid #f1bcbc;",
         }
     return {
-        "label": "RUN",
-        "style": "color:#94a3b8;",
+        "label": "В работе",
+        "style": "background:#eef1f5; color:#52607a; border:1px solid #d5ddea;",
     }
-
-
-def chatterfy_parser_console_message(message):
-    clean = safe_text(message)
-    replacements = [
-        ("Запуск синхронизации. Начинаю обновление данных из Chatterfy.", "Starting sync"),
-        ("Проверяю доступ и вхожу в Chatterfy по вашим данным.", "Signing in to Chatterfy"),
-        ("Вход выполнен. Получаю структуру бота и подготавливаю выгрузку.", "Login ok, preparing export"),
-        ("Загружаю обновлённые записи в раздел Chatterfy Parser внутри CRM.", "Saving rows to CRM"),
-        ("Автосинк остановлен. Больше почасовых выгрузок не будет, пока вы снова не нажмёте Старт.", "Auto sync stopped"),
-        ("Пришло время почасовой выгрузки. Запускаю очередное обновление.", "Hourly sync started"),
-        ("Нажата Пауза. Делаю последнюю выгрузку и после этого остановлю автосинк.", "Stop requested, finishing current sync"),
-    ]
-    for old, new in replacements:
-        if clean == old:
-            return new
-    if clean.startswith("Нажат Start."):
-        return clean.replace("Нажат Start. Включаю штатный режим для периода ", "Start requested for ").replace(" и запускаю первую выгрузку.", "")
-    if clean.startswith("Данные получены. Отфильтровал период "):
-        return clean.replace("Данные получены. Отфильтровал период ", "Loaded period ").replace(" и подготовил ", " | rows: ").replace(" записей.", "")
-    if clean.startswith("Готово. В разделе Chatterfy Parser обновлено "):
-        return clean.replace("Готово. В разделе Chatterfy Parser обновлено ", "Completed | imported ").replace(" записей из Chatterfy.", " rows")
-    if clean.startswith("Не получилось обновить данные: "):
-        return clean.replace("Не получилось обновить данные: ", "Sync failed: ")
-    return clean
 
 
 def chatterfy_parser_log_entries(logs, limit=14):
     entries = []
-    for item in list(logs or [])[-8:][::-1]:
+    for item in list(logs or [])[-limit:][::-1]:
         badge = chatterfy_parser_log_badge(item.get("kind"))
-        timestamp = parse_datetime_flexible(item.get("timestamp"))
         entries.append({
-            "timestamp": timestamp.strftime("%H:%M:%S") if timestamp else safe_text(item.get("timestamp")),
-            "message": chatterfy_parser_console_message(item.get("message")),
+            "timestamp": safe_text(item.get("timestamp")),
+            "message": safe_text(item.get("message")),
             "label": badge["label"],
             "style": badge["style"],
         })
@@ -5365,17 +5290,24 @@ def chatterfy_parser_log_entries(logs, limit=14):
 def chatterfy_parser_runtime_payload(config=None):
     config = config or get_chatterfy_parser_config()
     last_success_dt = parse_datetime_flexible(config.get("last_success_at"))
-    last_success_at = last_success_dt.strftime("%d.%m.%Y %H:%M") if last_success_dt else "Never"
+    last_success_at = last_success_dt.strftime("%d.%m.%Y %H:%M") if last_success_dt else "Пока не было"
     sync_state = safe_text(config.get("sync_state")) or "stopped"
     auto_sync_enabled = bool(config.get("auto_sync_enabled"))
     next_run_seconds = chatterfy_parser_next_run_seconds(config)
+    countdown_text = "Идёт выгрузка"
+    if sync_state == "pause_pending":
+        countdown_text = "Ждёт остановки"
+    elif not auto_sync_enabled:
+        countdown_text = "На паузе"
+    elif next_run_seconds is not None:
+        countdown_text = format_duration_clock(next_run_seconds)
     return {
         "status_label": chatterfy_parser_status_label(config),
-        "status_color": chatterfy_parser_status_color(config),
         "next_run_text": chatterfy_parser_next_run_text(config),
         "last_success_at": last_success_at,
         "last_count": int(safe_number(config.get("last_count"))),
         "last_duration_text": format_duration_clock(config.get("last_duration_seconds")) if safe_number(config.get("last_duration_seconds")) > 0 else "Пока не было",
+        "countdown_text": countdown_text,
         "next_run_seconds": next_run_seconds,
         "last_error": safe_text(config.get("last_error")),
         "sync_state": sync_state,
@@ -5387,8 +5319,6 @@ def build_chatterfy_parser_config_payload(
     bot_url="",
     email="",
     password="",
-    period_view="",
-    period_label="",
     date_start="",
     date_end="",
     auto_sync_enabled=False,
@@ -5396,17 +5326,12 @@ def build_chatterfy_parser_config_payload(
 ):
     existing_config = existing_config or {}
     clean_password = safe_text(password)
-    clean_period_view = safe_text(period_view) or safe_text(existing_config.get("period_view")) or "period"
-    resolved_period_label = resolve_period_label(clean_period_view, period_label) or safe_text(period_label) or safe_text(existing_config.get("period_label")) or get_current_period_label()
-    period_dates = period_label_to_dates(resolved_period_label)
     return {
         "bot_url": safe_text(bot_url) or safe_text(existing_config.get("bot_url")) or build_chatterfy_users_url(extract_chatterfy_bot_id(bot_url)),
-        "email": safe_text(email) or safe_text(existing_config.get("email")) or CHATTERFY_PARSER_ACCOUNT_EMAIL,
-        "password": clean_password if clean_password else safe_text(existing_config.get("password")) or CHATTERFY_PARSER_ACCOUNT_PASSWORD,
-        "period_view": clean_period_view,
-        "period_label": safe_text(period_dates.get("period_label")) or resolved_period_label,
-        "date_start": safe_text(period_dates.get("date_start")) or safe_text(date_start) or safe_text(existing_config.get("date_start")) or CHATTERFY_PARSER_DEFAULT_START,
-        "date_end": safe_text(period_dates.get("date_end")) or safe_text(date_end) or safe_text(existing_config.get("date_end")) or CHATTERFY_PARSER_DEFAULT_END,
+        "email": safe_text(email) or safe_text(existing_config.get("email")),
+        "password": clean_password if clean_password else safe_text(existing_config.get("password")),
+        "date_start": safe_text(date_start) or safe_text(existing_config.get("date_start")) or CHATTERFY_PARSER_DEFAULT_START,
+        "date_end": safe_text(date_end) or safe_text(existing_config.get("date_end")) or CHATTERFY_PARSER_DEFAULT_END,
         "auto_sync_enabled": bool(auto_sync_enabled),
         "sync_state": safe_text(existing_config.get("sync_state")) or "stopped",
         "logs": list(existing_config.get("logs") or []),
@@ -5515,11 +5440,9 @@ def chatterfy_parser_sync_worker():
         try:
             config = get_chatterfy_parser_config()
             if config.get("auto_sync_enabled") and safe_text(config.get("sync_state")) != "running":
-                now = datetime.utcnow()
                 last_run = parse_datetime_flexible(config.get("last_run_at"))
-                current_slot = now.replace(minute=0, second=0, microsecond=0)
-                already_ran_this_slot = bool(last_run and last_run >= current_slot)
-                if now.minute == 0 and not already_ran_this_slot:
+                now = datetime.utcnow()
+                if not last_run or (now - last_run) >= timedelta(hours=1):
                     chatterfy_parser_append_log("Пришло время почасовой выгрузки. Запускаю очередное обновление.", kind="info", config=config)
                     run_chatterfy_parser_sync_async(initiated_by="auto")
         except Exception:
@@ -6795,8 +6718,9 @@ def chatterfy_parser_page(
     telegram_id: str = Query(default=""),
     page: int = Query(default=1),
     bot_url: str = Query(default=""),
-    period_view: str = Query(default="period"),
-    period_label: str = Query(default=""),
+    email: str = Query(default=""),
+    date_start: str = Query(default=CHATTERFY_PARSER_DEFAULT_START),
+    date_end: str = Query(default=CHATTERFY_PARSER_DEFAULT_END),
     message: str = Query(default=""),
 ):
     return _page_routes["chatterfy_parser_page"](
@@ -6808,8 +6732,9 @@ def chatterfy_parser_page(
         telegram_id,
         page,
         bot_url,
-        period_view,
-        period_label,
+        email,
+        date_start,
+        date_end,
         message,
     )
 
@@ -6823,10 +6748,12 @@ def chatterfy_parser_status_live(request: Request):
 def toggle_chatterfy_parser(
     request: Request,
     bot_url: str = Form(...),
-    period_view: str = Form(default="period"),
-    period_label: str = Form(default=""),
+    email: str = Form(...),
+    password: str = Form(default=""),
+    date_start: str = Form(default=CHATTERFY_PARSER_DEFAULT_START),
+    date_end: str = Form(default=CHATTERFY_PARSER_DEFAULT_END),
 ):
-    return _domain_actions["toggle_chatterfy_parser"](request, bot_url, period_view, period_label)
+    return _domain_actions["toggle_chatterfy_parser"](request, bot_url, email, password, date_start, date_end)
 
 
 # Rebind extracted view/layout functions from dedicated modules while keeping route contracts intact.
@@ -6930,25 +6857,8 @@ def delete_user(request: Request, user_id: str = Form(...)):
 # BLOCK 8 — UPLOAD
 # =========================================
 @app.post("/upload")
-async def upload_file(
-    request: Request,
-    buyer: str = Form(...),
-    file: UploadFile = File(...),
-    period_view: str = Form(default="current"),
-    period_label: str = Form(default=""),
-    brand: str = Form(default=""),
-    manager: str = Form(default=""),
-    geo: str = Form(default=""),
-    ad_name: str = Form(default=""),
-    adset_name: str = Form(default=""),
-    creative: str = Form(default=""),
-    search: str = Form(default=""),
-    sort_by: str = Form(default="spend"),
-    order: str = Form(default="desc"),
-):
-    return await _domain_actions["upload_file"](
-        request, buyer, file, period_view, period_label, brand, manager, geo, ad_name, adset_name, creative, search, sort_by, order
-    )
+async def upload_file(request: Request, buyer: str = Form(...), file: UploadFile = File(...)):
+    return await _domain_actions["upload_file"](request, buyer, file)
 
 
 @app.post("/upload/partner")
