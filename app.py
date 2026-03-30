@@ -26,7 +26,7 @@ import ssl
 import urllib.request
 import urllib.error
 from functools import lru_cache
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
 from zoneinfo import ZoneInfo
 from playwright.sync_api import sync_playwright
 from teambead_domain_actions.analytics import bind_domain_actions as bind_analytics_actions
@@ -1361,6 +1361,11 @@ def parse_datetime_flexible(value):
     text = safe_text(value)
     if not text:
         return None
+    try:
+        iso_text = text.replace("Z", "+00:00") if text.endswith("Z") else text
+        return datetime.fromisoformat(iso_text)
+    except Exception:
+        pass
     for pattern in (
         "%Y-%m-%d",
         "%d.%m.%Y",
@@ -5273,11 +5278,11 @@ def chatterfy_parser_append_log(message, kind="info", config=None):
     current_logs = list(config.get("logs") or [])
     logs = latest_logs if len(latest_logs) >= len(current_logs) else current_logs
     logs.append({
-        "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+        "timestamp": get_crm_local_now().strftime("%Y-%m-%d %H:%M:%S"),
         "kind": safe_text(kind) or "info",
         "message": safe_text(message),
     })
-    config["logs"] = logs[-200:]
+    config["logs"] = logs[-20:]
     save_chatterfy_parser_config(config)
     return config
 
@@ -5322,7 +5327,7 @@ def chatterfy_parser_next_run_text(config=None):
     next_run = chatterfy_parser_next_run_at(config)
     if not next_run:
         return "Paused"
-    return next_run.strftime("%d.%m.%Y %H:%M")
+    return next_run.astimezone(LOCAL_TIMEZONE).strftime("%d.%m.%Y\n%H:%M")
 
 
 def chatterfy_parser_next_run_seconds(config=None):
@@ -5392,11 +5397,20 @@ def chatterfy_parser_console_message(message):
 
 def chatterfy_parser_log_entries(logs, limit=14):
     entries = []
-    for item in list(logs or [])[-8:][::-1]:
+    for item in list(logs or [])[-max(1, int(limit or 20)):][::-1]:
         badge = chatterfy_parser_log_badge(item.get("kind"))
-        timestamp = parse_datetime_flexible(item.get("timestamp"))
+        raw_timestamp = safe_text(item.get("timestamp"))
+        timestamp = None
+        if raw_timestamp.endswith("UTC"):
+            utc_base = parse_datetime_flexible(raw_timestamp.replace("UTC", "").strip())
+            if utc_base:
+                timestamp = utc_base.replace(tzinfo=timezone.utc).astimezone(LOCAL_TIMEZONE)
+        else:
+            parsed_local = parse_datetime_flexible(raw_timestamp)
+            if parsed_local:
+                timestamp = parsed_local if parsed_local.tzinfo else parsed_local.replace(tzinfo=LOCAL_TIMEZONE)
         entries.append({
-            "timestamp": timestamp.strftime("%H:%M:%S") if timestamp else safe_text(item.get("timestamp")),
+            "timestamp": timestamp.strftime("%d.%m.%Y %H:%M:%S Kyiv") if timestamp else raw_timestamp,
             "message": chatterfy_parser_console_message(item.get("message")),
             "label": badge["label"],
             "style": badge["style"],
@@ -5407,7 +5421,11 @@ def chatterfy_parser_log_entries(logs, limit=14):
 def chatterfy_parser_runtime_payload(config=None):
     config = config or get_chatterfy_parser_config()
     last_success_dt = parse_datetime_flexible(config.get("last_success_at"))
-    last_success_at = last_success_dt.strftime("%d.%m.%Y %H:%M") if last_success_dt else "Never"
+    if last_success_dt and last_success_dt.tzinfo:
+        last_success_dt = last_success_dt.astimezone(LOCAL_TIMEZONE)
+    elif last_success_dt:
+        last_success_dt = last_success_dt.replace(tzinfo=LOCAL_TIMEZONE)
+    last_success_at = last_success_dt.strftime("%d.%m.%Y\n%H:%M") if last_success_dt else "Never"
     sync_state = safe_text(config.get("sync_state")) or "stopped"
     next_run_seconds = chatterfy_parser_next_run_seconds(config)
     is_active = sync_state in {"running", "idle"} and bool(config.get("auto_sync_enabled"))
@@ -5508,8 +5526,8 @@ def perform_chatterfy_parser_sync(config, initiated_by="manual"):
         updated_config = dict(config)
         updated_config.update({k: v for k, v in latest_config.items() if k != "logs"})
         pause_after_sync = safe_text(latest_config.get("sync_state")) == "pause_pending"
-        updated_config["last_run_at"] = datetime.utcnow().isoformat()
-        updated_config["last_success_at"] = datetime.utcnow().isoformat()
+        updated_config["last_run_at"] = get_crm_local_now().isoformat()
+        updated_config["last_success_at"] = get_crm_local_now().isoformat()
         updated_config["last_error"] = ""
         updated_config["last_count"] = int(result["count"])
         updated_config["last_duration_seconds"] = int((datetime.utcnow() - sync_started_at).total_seconds())
@@ -6969,6 +6987,47 @@ def _inject_chatterfy_parser_live_button_refresh(html: str) -> str:
     if update_fn_old in html and "function updateToggleButton(data)" not in html:
         html = html.replace(update_fn_old, update_fn_new, 1)
     html = html.replace(
+        'id="chatterfyParserLastSuccess" style="margin-top:8px; font-size:18px; font-weight:800; line-height:1.2; color:#1f2f4f; word-break:break-word;"',
+        'id="chatterfyParserLastSuccess" style="margin-top:8px; font-size:15px; font-weight:800; line-height:1.18; color:#1f2f4f; white-space:pre-line; word-break:normal; overflow-wrap:normal;"',
+        1,
+    )
+    html = html.replace(
+        'id="chatterfyParserNextRunText" style="margin-top:8px; font-size:18px; font-weight:800; line-height:1.2; color:#1f2f4f; word-break:break-word;"',
+        'id="chatterfyParserNextRunText" style="margin-top:8px; font-size:15px; font-weight:800; line-height:1.18; color:#1f2f4f; white-space:pre-line; word-break:normal; overflow-wrap:normal;"',
+        1,
+    )
+    html = html.replace(
+        'id="chatterfyParserLogs" style="max-height:320px; overflow:auto; background:transparent;"',
+        'id="chatterfyParserLogs" style="height:220px; max-height:420px; overflow:auto; background:transparent;"',
+        1,
+    )
+    html = html.replace(
+        """        <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:14px; flex-wrap:wrap;">
+            <div class="user-chip">{len(rows)} / {total_count}</div>
+            <div style="display:flex; gap:8px; align-items:center;">
+                {f'<a href="{prev_link}" class="ghost-btn small-btn">Prev</a>' if prev_link else '<span class="ghost-btn small-btn" style="opacity:0.45; pointer-events:none;">Prev</span>'}
+                <span class="user-chip">Page {page} / {total_pages}</span>
+                {f'<a href="{next_link}" class="ghost-btn small-btn">Next</a>' if next_link else '<span class="ghost-btn small-btn" style="opacity:0.45; pointer-events:none;">Next</span>'}
+            </div>
+        </div>
+""",
+        """        <div style="display:flex; justify-content:flex-start; align-items:center; gap:12px; margin-top:14px; flex-wrap:wrap;">
+            <div class="user-chip">{total_count} chats</div>
+        </div>
+""",
+        1,
+    )
+    html = html.replace(
+        "logsRoot.innerHTML = '<div style=\"padding:14px 12px; color:#ffffff; font-family:SFMono-Regular, Menlo, Monaco, Consolas, \\'Liberation Mono\\', \\'Courier New\\', monospace; font-size:12px;\">[idle] parser console is empty</div>';",
+        "logsRoot.style.height = '132px';\n                    logsRoot.innerHTML = '<div style=\"padding:14px 12px; color:#ffffff; font-family:SFMono-Regular, Menlo, Monaco, Consolas, \\'Liberation Mono\\', \\'Courier New\\', monospace; font-size:12px;\">[idle] parser console is empty</div>';",
+        1,
+    )
+    html = html.replace(
+        "                logsRoot.innerHTML = logs.map(function(item) {\n",
+        "                const targetHeight = Math.min(Math.max(logs.length * 42, 132), 420);\n                logsRoot.style.height = targetHeight + 'px';\n                logsRoot.innerHTML = logs.map(function(item) {\n",
+        1,
+    )
+    html = html.replace(
         "                    renderLogs(data.logs);\n                } catch (error) {\n",
         "                    updateToggleButton(data);\n                    renderLogs(data.logs);\n                } catch (error) {\n",
         1,
@@ -6979,6 +7038,26 @@ def _inject_chatterfy_parser_live_button_refresh(html: str) -> str:
         1,
     )
     return html
+
+
+def _strip_chatterfy_parser_pagination(html: str, total_count: int) -> str:
+    if not html:
+        return html
+    if isinstance(html, Response):
+        body = html.body.decode("utf-8", errors="ignore")
+        patched_body = _strip_chatterfy_parser_pagination(body, total_count)
+        if patched_body == body:
+            return html
+        headers = dict(html.headers)
+        media_type = getattr(html, "media_type", None) or headers.get("content-type", "text/html")
+        return HTMLResponse(content=patched_body, status_code=html.status_code, headers=headers, media_type=media_type)
+    return re.sub(
+        r'<div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:14px; flex-wrap:wrap;">\s*<div class="user-chip">.*?</div>\s*<div style="display:flex; gap:8px; align-items:center;">.*?</div>\s*</div>',
+        f'<div style="display:flex; justify-content:flex-start; align-items:center; gap:12px; margin-top:14px; flex-wrap:wrap;"><div class="user-chip">{int(total_count or 0)} chats</div></div>',
+        html,
+        count=1,
+        flags=re.S,
+    )
 
 
 def _inject_grouped_upload_period_context(html: str) -> str:
@@ -7144,19 +7223,40 @@ def _patched_chatterfy_parser_page(
     period_label: str = Query(default=""),
     message: str = Query(default=""),
 ):
-    html = _original_chatterfy_parser_page(
-        request,
-        status,
-        search,
-        date_filter,
-        time_filter,
-        telegram_id,
-        page,
-        bot_url,
-        period_view,
-        period_label,
-        message,
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "chatterfyparser")
+
+    rows = get_chatterfy_parser_rows(
+        status=status,
+        search=search,
+        date_filter=date_filter,
+        time_filter=time_filter,
+        telegram_id=telegram_id,
+        period_label=period_label,
     )
+    html = chatterfy_parser_page_html(
+        user,
+        rows,
+        form_data={
+            "bot_url": bot_url,
+            "period_view": period_view,
+            "period_label": period_label,
+        },
+        status=status,
+        search=search,
+        date_filter=date_filter,
+        time_filter=time_filter,
+        telegram_id=telegram_id,
+        period_view=period_view,
+        period_label=period_label,
+        page=1,
+        total_count=len(rows),
+        per_page=max(1, len(rows)),
+        success_text=message,
+    )
+    html = _strip_chatterfy_parser_pagination(html, len(rows))
     return _inject_chatterfy_parser_live_button_refresh(html)
 
 
