@@ -585,6 +585,7 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 @app.on_event("startup")
 def chatterfy_parser_startup():
     start_chatterfy_parser_sync_thread()
+    recover_chatterfy_parser_after_startup()
 
 
 @app.middleware("http")
@@ -1425,6 +1426,27 @@ def resolve_period_label(period_view="", period_label=""):
     if clean_view == "period":
         return clean_label
     return ""
+
+
+def period_label_to_dates(period_label=""):
+    clean_label = safe_text(period_label)
+    if not clean_label:
+        return get_half_month_period()
+    parts = [part.strip() for part in clean_label.split("-")]
+    if len(parts) >= 2:
+        left = parts[0]
+        right = parts[1]
+        try:
+            start_date = datetime.strptime(left, "%d.%m.%Y").strftime("%Y-%m-%d")
+            end_date = datetime.strptime(right, "%d.%m.%Y").strftime("%Y-%m-%d")
+            return {
+                "period_label": f"{left} - {right}",
+                "date_start": start_date,
+                "date_end": end_date,
+            }
+        except Exception:
+            pass
+    return get_half_month_period()
 
 
 def get_previous_period_label(period_label=""):
@@ -5516,6 +5538,30 @@ def start_chatterfy_parser_sync_thread():
     worker = threading.Thread(target=chatterfy_parser_sync_worker, name="chatterfy-parser-sync", daemon=True)
     worker.start()
     CHATTERFY_SYNC_THREAD_STARTED = True
+
+
+def recover_chatterfy_parser_after_startup():
+    config = dict(get_chatterfy_parser_config() or {})
+    if not config:
+        return
+    sync_state = safe_text(config.get("sync_state")) or "stopped"
+    if sync_state == "pause_pending":
+        config["auto_sync_enabled"] = False
+        config["sync_state"] = "stopped"
+        save_chatterfy_parser_config(config)
+        return
+    if sync_state == "running":
+        config["sync_state"] = "idle" if config.get("auto_sync_enabled") else "stopped"
+        save_chatterfy_parser_config(config)
+    if not config.get("auto_sync_enabled"):
+        return
+    now = datetime.utcnow()
+    current_slot = now.replace(minute=0, second=0, microsecond=0)
+    last_run = parse_datetime_flexible(config.get("last_run_at"))
+    if not last_run or last_run < current_slot:
+        chatterfy_parser_append_log("Приложение перезапущено. Возобновляю Chatterfy Parser и догоняю ближайший цикл.", kind="info", config=config)
+        if not CHATTERFY_SYNC_LOCK.locked():
+            run_chatterfy_parser_sync_async(initiated_by="recovery")
 
 
 def get_chatterfy_rows(status="", search="", date_filter="", time_filter="", telegram_id="", pp_player_id="", period_label=""):
