@@ -1113,8 +1113,23 @@ def parse_uploaded_dataframe(df, buyer, source_name="", period_label="", period_
 
     ad_col = get_col("Название объявления", "Ad name", "Ad Name")
     adset_col = get_col("Название группы объявлений", "Ad set name", "Ad Set Name")
-    campaign_col = get_col("Название компании", "Campaign name", "Campaign Name")
-    budget_col = get_col("Budget", "Бюджет", "Ad set budget", "Ad Set Budget")
+    campaign_col = get_col("Название кампании", "Название компании", "Campaign name", "Campaign Name")
+    budget_col = get_col(
+        "Budget",
+        "Бюджет",
+        "Бюджет группы объявлений",
+        "Ad set budget",
+        "Ad Set Budget",
+        "Ad group budget",
+        "Ad Group Budget",
+    )
+    budget_type_col = get_col(
+        "Тип бюджета группы объявлений",
+        "Ad set budget type",
+        "Ad Set Budget Type",
+        "Ad group budget type",
+        "Ad Group Budget Type",
+    )
     account_id_col = get_col("Идентификатор аккаунта", "Account ID", "Account id")
     material_views_col = get_col("Просмотры материалов", "Content views")
     leads_col = get_col("Лиды", "Leads")
@@ -1139,6 +1154,14 @@ def parse_uploaded_dataframe(df, buyer, source_name="", period_label="", period_
         row_date_start = normalize_fb_date_value(row.get(ds_col)) if ds_col else ""
         row_date_end = normalize_fb_date_value(row.get(de_col)) if de_col else ""
 
+        raw_budget = row.get(budget_col) if budget_col else ""
+        budget_value = safe_number(raw_budget) if budget_col else 0
+        budget_type = safe_text(row.get(budget_type_col)) if budget_type_col else ""
+        if not budget_value and isinstance(raw_budget, str):
+            raw_budget_text = safe_text(raw_budget).strip().lower()
+            if raw_budget_text in {"using campaign budget", "campaign budget", "бюджет кампании"}:
+                budget_value = 0
+
         items.append(
             FBRow(
                 uploader=buyer,
@@ -1147,7 +1170,7 @@ def parse_uploaded_dataframe(df, buyer, source_name="", period_label="", period_
                 ad_name=ad_name,
                 adset_name=adset_name,
                 campaign_name=campaign_name,
-                budget=safe_number(row.get(budget_col)) if budget_col else 0,
+                budget=budget_value,
                 account_id=safe_text(row.get(account_id_col)) if account_id_col else "",
                 launch_date=parsed["launch_date"],
                 platform=parsed["platform"],
@@ -4932,6 +4955,7 @@ def import_chatterfy_parser_dataframe(df, source_name=""):
     status_col = resolve_normalized_dataframe_column(normalized_columns, ["Status"])
     step_col = resolve_normalized_dataframe_column(normalized_columns, ["Step"])
     external_id_col = resolve_normalized_dataframe_column(normalized_columns, ["ID", "Id", "External ID", "External Id"])
+    chat_link_col = resolve_normalized_dataframe_column(normalized_columns, ["Chat Link", "chat_link", "chatlink", "Link", "URL", "Url"])
 
     required_columns = [name_col, telegram_col, tags_col, started_col, status_col]
     if any(not item for item in required_columns):
@@ -4954,6 +4978,7 @@ def import_chatterfy_parser_dataframe(df, source_name=""):
             status=safe_text(row.get(status_col)),
             step=safe_text(row.get(step_col)) if step_col else "",
             external_id=safe_text(row.get(external_id_col)) if external_id_col else "",
+            chat_link=safe_text(row.get(chat_link_col)) if chat_link_col else "",
             report_date=period_info["report_date"],
             period_start=period_info["period_start"],
             period_end=period_info["period_end"],
@@ -5700,6 +5725,8 @@ def get_chatterfy_rows(status="", search="", date_filter="", time_filter="", tel
         if key:
             id_map[key] = item
     filtered = []
+    saved_config = get_chatterfy_parser_config()
+    parser_bot_id = extract_chatterfy_bot_id(safe_text(saved_config.get("bot_url")))
     search_lower = safe_text(search).lower()
     for row in rows:
         linked = id_map.get(safe_text(row.telegram_id))
@@ -5708,6 +5735,10 @@ def get_chatterfy_rows(status="", search="", date_filter="", time_filter="", tel
         started_time = started_dt.strftime("%H:%M") if started_dt else ""
         linked_pp = safe_text(linked.pp_player_id) if linked else ""
         linked_chat = safe_text(linked.chat_link) if linked else ""
+        chat_link = linked_chat or build_chatterfy_chat_link(
+            bot_id=parser_bot_id,
+            chat_id=safe_text(getattr(row, "external_id", "")),
+        )
         row_period_label = chatterfy_row_period_label(row)
         row_report_date = safe_text(getattr(row, "report_date", "")) or (started_dt.strftime("%Y-%m-%d") if started_dt else "")
         if date_filter and date_filter != started_date:
@@ -5729,18 +5760,19 @@ def get_chatterfy_rows(status="", search="", date_filter="", time_filter="", tel
                 row.manager or "",
                 row.geo or "",
                 linked_pp,
-                linked_chat,
+                chat_link,
                 started_date,
                 started_time,
             ]).lower()
             if search_lower not in haystack:
                 continue
+        row.chat_link = chat_link
         filtered.append({
             "row": row,
             "started_date": started_date,
             "started_time": started_time,
             "pp_player_id": linked_pp,
-            "chat_link": linked_chat,
+            "chat_link": chat_link,
             "report_date": row_report_date,
             "period_label": row_period_label,
         })
@@ -5774,6 +5806,8 @@ def get_chatterfy_parser_rows(status="", search="", date_filter="", time_filter=
     finally:
         db.close()
     filtered = []
+    saved_config = get_chatterfy_parser_config()
+    parser_bot_id = extract_chatterfy_bot_id(safe_text(saved_config.get("bot_url")))
     search_lower = safe_text(search).lower()
     for row in rows:
         started_dt = parse_chatterfy_datetime(row.started)
@@ -5798,17 +5832,23 @@ def get_chatterfy_parser_rows(status="", search="", date_filter="", time_filter=
                 row.geo or "",
                 row.step or "",
                 row.external_id or "",
+                row.chat_link or "",
                 started_date,
                 started_time,
             ]).lower()
             if search_lower not in haystack:
                 continue
+        chat_link = safe_text(getattr(row, "chat_link", "")) or build_chatterfy_chat_link(
+            bot_id=parser_bot_id,
+            chat_id=safe_text(getattr(row, "external_id", "")),
+        )
         filtered.append({
             "row": row,
             "started_date": started_date,
             "started_time": started_time,
             "report_date": row_report_date,
             "period_label": safe_text(getattr(row, "period_label", "")),
+            "chat_link": chat_link,
         })
     return filtered
 
@@ -6487,6 +6527,7 @@ def aggregate_totals(rows):
         "reg": sum(r["reg"] for r in rows),
         "ftd": sum(r["ftd"] for r in rows),
         "spend": sum(r["spend"] for r in rows),
+        "active_budget": sum(safe_number(r.get("budget", 0)) for r in rows),
         "stat_chatterfy": sum(r.get("stat_chatterfy", 0) for r in rows),
         "stat_total_ftd": sum(r.get("stat_total_ftd", 0) for r in rows),
         "stat_qual_ftd": sum(r.get("stat_qual_ftd", 0) for r in rows),
@@ -6499,6 +6540,7 @@ def aggregate_totals(rows):
     totals["stat_rate"] = totals["stat_income"] / totals["stat_qual_ftd"] if totals["stat_qual_ftd"] > 0 else 0
     totals["stat_cap_fill"] = cap_fill_percent(totals["stat_total_ftd"], totals["stat_cap_limit"])
     totals.update(calc_metrics(totals["clicks"], totals["reg"], totals["ftd"], totals["spend"], totals["leads"]))
+    totals["cost_reg"] = totals["spend"] / totals["reg"] if totals["reg"] > 0 else 0
     return totals
 
 
@@ -7007,16 +7049,28 @@ def _patched_sidebar_html(active_page, current_user=None):
     </svg>
     """
     parser_links_pattern = (
-        r'(<a href="/chatterfy-parser" class="sidebar-standalone[^"]*"><span class="side-emoji">.*?</span><span class="side-label">Chatterfy Parser</span></a>)'
-        r'(<a href="/1x-parser" class="sidebar-standalone[^"]*"><span class="side-emoji">.*?</span><span class="side-label">1x Parser</span></a>)'
+        r'(<a href="/chatterfy-parser" class="[^"]*"><span class="side-emoji[^"]*">.*?</span><span class="side-label">Chatterfy Parser</span></a>)'
+        r'(<a href="/1x-parser" class="[^"]*"><span class="side-emoji[^"]*">.*?</span><span class="side-label">1x Parser</span></a>)'
     )
     parsers_open = " open" if active_page in {"chatterfyparser", "onexparser"} else ""
-    parsers_group = (
-        f'<details class="sidebar-group" data-sidebar-group="parsers"{parsers_open}>'
-        f'<summary><span class="side-emoji">{parsers_icon}</span><span class="side-label">Parsers</span></summary>'
-        f'<div class="sidebar-links">\\1\\2</div></details>'
-    )
-    html = re.sub(parser_links_pattern, parsers_group, html, count=1, flags=re.S)
+    parser_match = re.search(parser_links_pattern, html, flags=re.S)
+    if parser_match:
+        chatterfy_link = parser_match.group(1)
+        onex_link = parser_match.group(2)
+        chatterfy_link = re.sub(r'class="[^"]*"', lambda m: 'class="active-link"' if 'active-link' in m.group(0) else '', chatterfy_link, count=1)
+        onex_link = re.sub(r'class="[^"]*"', lambda m: 'class="active-link"' if 'active-link' in m.group(0) else '', onex_link, count=1)
+        chatterfy_link = chatterfy_link.replace('<span class="side-emoji side-sub-emoji">', '<span class="side-emoji side-sub-emoji">', 1)
+        onex_link = onex_link.replace('<span class="side-emoji side-sub-emoji">', '<span class="side-emoji side-sub-emoji">', 1)
+        chatterfy_link = chatterfy_link.replace('<span class="side-emoji">', '<span class="side-emoji side-sub-emoji">', 1)
+        onex_link = onex_link.replace('<span class="side-emoji">', '<span class="side-emoji side-sub-emoji">', 1)
+        chatterfy_link = chatterfy_link.replace('<a  ', '<a ').replace('class=""', '')
+        onex_link = onex_link.replace('<a  ', '<a ').replace('class=""', '')
+        parsers_group = (
+            f'<details class="sidebar-group" data-sidebar-group="parsers"{parsers_open}>'
+            f'<summary><span class="side-emoji">{parsers_icon}</span><span class="side-label">Parsers</span></summary>'
+            f'<div class="sidebar-links">{chatterfy_link}{onex_link}</div></details>'
+        )
+        html = re.sub(parser_links_pattern, lambda _m: parsers_group, html, count=1, flags=re.S)
     return html
 
 sidebar_html = _patched_sidebar_html
@@ -7031,6 +7085,28 @@ _original_chatterfy_parser_page = _page_routes.get("chatterfy_parser_page")
 _original_toggle_chatterfy_parser = _domain_actions.get("toggle_chatterfy_parser")
 _original_upload_file = _domain_actions.get("upload_file")
 _original_grouped_page = _page_routes.get("show_grouped_table")
+_original_render_stats_cards = render_stats_cards
+
+
+def _patched_render_stats_cards(totals):
+    totals = totals or {}
+    cards = [
+        ("Spend", format_money(totals.get("spend", 0))),
+        ("Leads", format_int_or_float(totals.get("leads", 0))),
+        ("Reg", format_int_or_float(totals.get("reg", 0))),
+        ("FTD", format_int_or_float(totals.get("ftd", 0))),
+        ("Cost Reg", format_money(totals.get("cost_reg", 0))),
+        ("CPA", format_money(totals.get("cpa_real", 0))),
+        ("Budget", format_money(totals.get("active_budget", 0))),
+    ]
+    cards_html = "".join(
+        f'<div class="stat-card"><div class="name">{escape(name)}</div><div class="value">{escape(value)}</div></div>'
+        for name, value in cards
+    )
+    return f'<div class="panel compact-panel"><div class="stats-grid">{cards_html}</div></div>'
+
+
+render_stats_cards = _patched_render_stats_cards
 
 
 def _inject_chatterfy_parser_live_button_refresh(html: str) -> str:
@@ -7069,7 +7145,26 @@ def _inject_chatterfy_parser_live_button_refresh(html: str) -> str:
         html = html.replace(update_fn_old, update_fn_new, 1)
     html = html.replace(
         'grid-template-columns:minmax(320px, 420px) minmax(360px, 1fr); gap:18px; align-items:stretch;',
-        'grid-template-columns:minmax(320px, 420px) minmax(360px, 1fr); gap:18px; align-items:start;',
+        'grid-template-columns:minmax(300px, 360px) minmax(360px, 1fr); gap:14px; align-items:start;',
+        1,
+    )
+    html = html.replace(
+        'border:1px solid #dbe5f2; border-radius:24px; padding:18px 20px; background:linear-gradient(180deg, rgba(255,255,255,0.98), rgba(245,249,255,0.96)); box-shadow:0 18px 40px rgba(27,55,102,0.08);',
+        'border:1px solid #dbe5f2; border-radius:22px; padding:14px 16px; background:linear-gradient(180deg, rgba(255,255,255,0.98), rgba(245,249,255,0.96)); box-shadow:0 18px 40px rgba(27,55,102,0.08);',
+        1,
+    )
+    html = html.replace(
+        'display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:8px; margin-top:14px;',
+        'display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:6px; margin-top:10px;',
+        1,
+    )
+    html = html.replace(
+        'padding:12px; border-radius:18px; background:#f8fbff; border:1px solid #dbe5f2; min-height:104px; overflow:hidden;',
+        'padding:10px 11px; border-radius:16px; background:#f8fbff; border:1px solid #dbe5f2; min-height:88px; overflow:hidden;',
+    )
+    html = html.replace(
+        'margin-top:14px; display:grid; gap:10px;',
+        'margin-top:10px; display:grid; gap:8px;',
         1,
     )
     html = html.replace(
@@ -7087,6 +7182,16 @@ def _inject_chatterfy_parser_live_button_refresh(html: str) -> str:
         'id="chatterfyParserLogs" style="min-height:132px; max-height:320px; overflow:auto; background:transparent;"',
         1,
     )
+    html = html.replace(
+        '<table style="min-width:1800px;">',
+        '<table style="min-width:1560px; width:100%; table-layout:fixed;"><colgroup><col style="width:88px;"><col style="width:84px;"><col style="width:180px;"><col style="width:126px;"><col style="width:150px;"><col style="width:360px;"><col style="width:86px;"><col style="width:78px;"><col style="width:110px;"><col style="width:84px;"><col style="width:102px;"><col style="width:98px;"><col style="width:210px;"><col style="width:210px;"><col style="width:96px;"></colgroup>',
+        1,
+    )
+    html = html.replace('<th>Name</th>', '<th style="width:180px;">Name</th>', 1)
+    html = html.replace('<th>Username</th>', '<th style="width:150px;">Username</th>', 1)
+    html = html.replace('<th>Tags</th>', '<th style="width:360px;">Tags</th>', 1)
+    html = html.replace('<th>Step</th>', '<th style="width:210px;">Step</th>', 1)
+    html = html.replace('<th>External ID</th>', '<th style="width:210px;">External ID</th>', 1)
     html = html.replace(
         """        <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-top:14px; flex-wrap:wrap;">
             <div class="user-chip">{len(rows)} / {total_count}</div>
@@ -7195,6 +7300,10 @@ def _patched_show_grouped_table(
         request, buyer, brand, manager, geo, ad_name, adset_name, creative, search, period_view, period_label, source_name, sort_by, order
     )
     return _inject_grouped_upload_period_context(html)
+
+
+if _original_grouped_page is not None:
+    _original_grouped_page.__globals__["render_stats_cards"] = _patched_render_stats_cards
 
 
 async def _patched_upload_file(
