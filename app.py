@@ -7834,6 +7834,7 @@ def _render_dashboard_page_v2(
         return html
 
     rows_html = render_tree_rows(tree, variant="caret")
+    total_metrics = aggregate_dashboard_metrics(rows)
 
     matrix_metric_fields = [
         ("budget", "Budget"),
@@ -8094,6 +8095,68 @@ def _render_dashboard_page_v2(
             f'<div class="dashboard-matrix-metric"><div class="dashboard-matrix-metric-label">{escape(label)}</div><div class="dashboard-matrix-metric-value">{escape(matrix_focus_metrics.get(field, "—"))}</div></div>'
             for field, label in matrix_metric_fields
         ]) + '</div>'
+
+    def render_inline_matrix_items(items, level_key, selected_value, reset_after=None, is_ad_level=False):
+        if not items:
+            return '<div class="dashboard-inline-list-empty">—</div>'
+        rendered = []
+        for item in items:
+            if is_ad_level:
+                label = safe_text(item.get("ad_name")) or "—"
+                metrics = serialize_metric_values(item)
+                href = make_matrix_link(matrix_ad=label)
+            else:
+                label = safe_text(item.get("label")) or "—"
+                metrics = item.get("metrics", {})
+                overrides = {level_key: label}
+                for key in (reset_after or []):
+                    overrides[key] = ""
+                href = make_matrix_link(**overrides)
+            active_class = " is-active" if safe_text(selected_value) == label else ""
+            rendered.append(
+                f'<a class="dashboard-inline-list-item{active_class}" href="{escape(href)}">'
+                f'<span class="dashboard-inline-list-label">{escape(label)}</span>'
+                f'<span class="dashboard-inline-list-meta">{escape(safe_text(metrics.get("spend", "—")) or "—")}</span>'
+                f'</a>'
+            )
+        return "".join(rendered)
+
+    matrix_display_metrics = matrix_focus_metrics or serialize_metric_values(total_metrics)
+    matrix_detail_row = matrix_selected_ad_row or (selected_adset_node["rows"][0] if selected_adset_node and selected_adset_node.get("rows") else None)
+    matrix_table_rows_html = f"""
+        <tr class="dashboard-inline-matrix-row" data-row-key="matrix-root" onclick="window.dashboardHandleRowClick && window.dashboardHandleRowClick(this, event)">
+            <td data-col="platform"><div class="dashboard-inline-list">{render_inline_matrix_items(tree, "matrix_brand", matrix_brand, reset_after=["matrix_geo", "matrix_cabinet", "matrix_campaign", "matrix_adset", "matrix_ad"])}</div></td>
+            <td data-col="geo"><div class="dashboard-inline-list">{render_inline_matrix_items(selected_brand_node["children"] if selected_brand_node else [], "matrix_geo", matrix_geo, reset_after=["matrix_cabinet", "matrix_campaign", "matrix_adset", "matrix_ad"])}</div></td>
+            <td data-col="manager"><div class="dashboard-inline-list">{render_inline_matrix_items(selected_geo_node["children"] if selected_geo_node else [], "matrix_cabinet", matrix_cabinet, reset_after=["matrix_campaign", "matrix_adset", "matrix_ad"])}</div></td>
+            <td data-col="campaign_name"><div class="dashboard-inline-list">{render_inline_matrix_items(selected_cabinet_node["children"] if selected_cabinet_node else [], "matrix_campaign", matrix_campaign, reset_after=["matrix_adset", "matrix_ad"])}</div></td>
+            <td data-col="adset_name"><div class="dashboard-inline-list">{render_inline_matrix_items(selected_campaign_node["children"] if selected_campaign_node else [], "matrix_adset", matrix_adset, reset_after=["matrix_ad"])}</div></td>
+            <td data-col="ad_name"><div class="dashboard-inline-list">{render_inline_matrix_items(_dashboard_sort_rows(selected_adset_node["rows"], sort_by=sort_by, order=order) if selected_adset_node else [], "matrix_ad", matrix_ad, is_ad_level=True)}</div></td>
+            <td data-col="buyer">{escape(safe_text(matrix_detail_row.get("buyer")) if matrix_detail_row else "—")}</td>
+            <td data-col="offer">{escape(safe_text(matrix_detail_row.get("offer")) if matrix_detail_row else "—")}</td>
+            <td data-col="cabinet_text">{escape(safe_text(matrix_detail_row.get("cabinet_text")) if matrix_detail_row else "—")}</td>
+            <td data-col="advertiser_text">{escape(safe_text(matrix_detail_row.get("advertiser_text")) if matrix_detail_row else "—")}</td>
+            <td data-col="account_id">{escape(safe_text(matrix_detail_row.get("account_id")) if matrix_detail_row else "—")}</td>
+            <td data-col="budget">{escape(safe_text(matrix_display_metrics.get("budget", "—")) or "—")}</td>
+            <td data-col="spend">{escape(safe_text(matrix_display_metrics.get("spend", "—")) or "—")}</td>
+            <td data-col="clicks">{escape(safe_text(matrix_display_metrics.get("clicks", "—")) or "—")}</td>
+            <td data-col="leads">{escape(safe_text(matrix_display_metrics.get("leads", "—")) or "—")}</td>
+            <td data-col="reg">{escape(safe_text(matrix_display_metrics.get("reg", "—")) or "—")}</td>
+            <td data-col="rate">{escape(safe_text(matrix_display_metrics.get("rate", "—")) or "—")}</td>
+            <td data-col="cost_reg">{escape(safe_text(matrix_display_metrics.get("cost_reg", "—")) or "—")}</td>
+            <td data-col="fb_ftd">{escape(safe_text(matrix_display_metrics.get("fb_ftd", "—")) or "—")}</td>
+            <td data-col="cpa">{escape(safe_text(matrix_display_metrics.get("cpa", "—")) or "—")}</td>
+            <td data-col="chatterfy">{escape(safe_text(matrix_display_metrics.get("chatterfy", "—")) or "—")}</td>
+            <td data-col="players_ftd">{escape(safe_text(matrix_display_metrics.get("players_ftd", "—")) or "—")}</td>
+            <td data-col="qual_ftd">{escape(safe_text(matrix_display_metrics.get("qual_ftd", "—")) or "—")}</td>
+            <td data-col="hold_count">{escape(safe_text(matrix_display_metrics.get("hold_count", "—")) or "—")}</td>
+            <td data-col="hold_split">{escape(safe_text(matrix_detail_row.get("hold_split")) if matrix_detail_row else "0B / 0W")}</td>
+            <td data-col="cap_total">{escape(safe_text(matrix_display_metrics.get("cap_total", "—")) or "—")}</td>
+            <td data-col="cap_fill">{escape(safe_text(matrix_display_metrics.get("cap_fill", "—")) or "—")}</td>
+            <td data-col="income">{escape(safe_text(matrix_display_metrics.get("income", "—")) or "—")}</td>
+            <td data-col="profit">{escape(safe_text(matrix_display_metrics.get("profit", "—")) or "—")}</td>
+            <td data-col="roi">{escape(safe_text(matrix_display_metrics.get("roi", "—")) or "—")}</td>
+        </tr>
+    """
 
     buyer_filter_html = ""
     if is_admin_role(user) or user.get("role") == "operator":
@@ -8437,6 +8500,56 @@ def _render_dashboard_page_v2(
         background:#ffffff;
         user-select:none;
         -webkit-user-select:none;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-inline-matrix-row td {{
+        height:auto;
+        min-height:15px;
+        padding-top:6px;
+        padding-bottom:6px;
+        vertical-align:top;
+        white-space:normal;
+        overflow:visible;
+        text-overflow:clip;
+    }}
+    .dashboard-v2 .dashboard-inline-list {{
+        display:flex;
+        flex-direction:column;
+        gap:4px;
+        min-height:24px;
+    }}
+    .dashboard-v2 .dashboard-inline-list-item {{
+        display:flex;
+        flex-direction:column;
+        align-items:flex-start;
+        gap:2px;
+        padding:4px 6px;
+        border:1px solid transparent;
+        border-radius:8px;
+        text-decoration:none;
+        color:#243b67;
+        transition:background .15s ease, border-color .15s ease;
+    }}
+    .dashboard-v2 .dashboard-inline-list-item:hover {{
+        background:rgba(173, 204, 247, 0.18);
+        border-color:rgba(144, 186, 241, 0.35);
+    }}
+    .dashboard-v2 .dashboard-inline-list-item.is-active {{
+        background:rgba(143, 191, 248, 0.34);
+        border-color:rgba(106, 159, 227, 0.55);
+    }}
+    .dashboard-v2 .dashboard-inline-list-label {{
+        font-weight:700;
+        line-height:1.15;
+        word-break:break-word;
+    }}
+    .dashboard-v2 .dashboard-inline-list-meta {{
+        font-size:11px;
+        line-height:1.1;
+        color:#5d77a4;
+    }}
+    .dashboard-v2 .dashboard-inline-list-empty {{
+        color:#8ea0bf;
+        padding:4px 2px;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td {{
         background:#f6faff;
@@ -8979,27 +9092,7 @@ def _render_dashboard_page_v2(
     <div class="panel compact-panel dashboard-table-panel">
         <div class="dashboard-table-header">
             <div class="dashboard-table-title">
-                <div class="panel-title">CRM Analytics Matrix</div>
-            </div>
-        </div>
-        <div class="dashboard-matrix-wrap">
-            <div class="dashboard-matrix-path">{render_matrix_path_html()}</div>
-            <div class="dashboard-matrix-board">{matrix_columns_html}</div>
-            <div class="dashboard-matrix-detail">
-                <div class="dashboard-matrix-detail-head">
-                    <div class="dashboard-matrix-detail-title">{escape(matrix_focus_title)}</div>
-                    <div class="dashboard-matrix-detail-subtitle">{escape(matrix_focus_subtitle)}</div>
-                </div>
-                {matrix_metrics_html}
-                {matrix_ads_table_html}
-            </div>
-        </div>
-    </div>
-
-    <div class="panel compact-panel dashboard-table-panel">
-        <div class="dashboard-table-header">
-            <div class="dashboard-table-title">
-                <div class="panel-title">CRM Analytics Table</div>
+                <div class="panel-title">CRM Analytics</div>
             </div>
             <details class="upload-menu upload-menu-right" id="dashboardColumnsMenu">
                 <summary class="ghost-btn small-btn">Columns</summary>
@@ -9017,7 +9110,7 @@ def _render_dashboard_page_v2(
         <div class="dashboard-table-wrap">
             <table id="dashboardUnifiedTable" data-dashboard-tree-table>
                 <thead><tr>{head_html}</tr></thead>
-                <tbody>{rows_html if rows_html else '<tr><td colspan="31">No dashboard rows for the selected filters</td></tr>'}</tbody>
+                <tbody>{matrix_table_rows_html if rows else '<tr><td colspan="31">No dashboard rows for the selected filters</td></tr>'}</tbody>
             </table>
         </div>
     </div>
