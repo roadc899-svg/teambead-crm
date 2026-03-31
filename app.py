@@ -7820,9 +7820,6 @@ def _render_dashboard_page_v2(
         return html
 
     rows_html = render_tree_rows(tree, variant="caret")
-    rows_html_plus = render_tree_rows(tree, variant="plus")
-
-    stats_html = build_dashboard_summary_cards(rows)
 
     buyer_filter_html = ""
     if is_admin_role(user) or user.get("role") == "operator":
@@ -8434,10 +8431,6 @@ def _render_dashboard_page_v2(
         </form>
     </div>
 
-    <div class="dashboard-summary-wrap">
-        {stats_html}
-    </div>
-
     <div class="panel compact-panel dashboard-table-panel">
         <div class="dashboard-table-header">
             <div class="dashboard-table-title">
@@ -8461,21 +8454,6 @@ def _render_dashboard_page_v2(
             <table id="dashboardUnifiedTable" data-dashboard-tree-table>
                 <thead><tr>{head_html}</tr></thead>
                 <tbody>{rows_html if rows_html else '<tr><td colspan="31">No dashboard rows for the selected filters</td></tr>'}</tbody>
-            </table>
-        </div>
-    </div>
-
-    <div class="panel compact-panel dashboard-table-panel">
-        <div class="dashboard-table-header">
-            <div class="dashboard-table-title">
-                <div class="panel-title">CRM Analytics 2</div>
-                <div class="panel-subtitle">Same dashboard data with plus-style hierarchical expansion inside the table.</div>
-            </div>
-        </div>
-        <div class="dashboard-table-wrap">
-            <table id="dashboardUnifiedTable2" data-dashboard-tree-table>
-                <thead><tr>{head_html}</tr></thead>
-                <tbody>{rows_html_plus if rows_html_plus else '<tr><td colspan="31">No dashboard rows for the selected filters</td></tr>'}</tbody>
             </table>
         </div>
     </div>
