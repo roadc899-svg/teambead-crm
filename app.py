@@ -7983,9 +7983,9 @@ def _render_dashboard_page_v2(
                 f'<a class="dashboard-matrix-item{active_class}" href="{escape(href)}">'
                 f'<div class="dashboard-matrix-item-label">{escape(label)}</div>'
                 f'<div class="dashboard-matrix-item-sub">'
-                f'<span>{escape(metrics.get("spend", "—"))} spend</span>'
-                f'<span>{escape(metrics.get("leads", "—"))} leads</span>'
-                f'<span>{escape(metrics.get("clicks", "—"))} clicks</span>'
+                f'<span>{escape(safe_text(metrics.get("spend", "—")) or "—")} spend</span>'
+                f'<span>{escape(safe_text(metrics.get("leads", "—")) or "—")} leads</span>'
+                f'<span>{escape(safe_text(metrics.get("clicks", "—")) or "—")} clicks</span>'
                 f'</div>'
                 f'</a>'
             )
