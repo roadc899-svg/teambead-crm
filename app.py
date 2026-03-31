@@ -7609,6 +7609,7 @@ def _render_dashboard_page_v2(
         ("geo", "geo"),
         ("manager", "manager"),
         ("adset_name", "adset_name"),
+        ("ad_name", "ad_name"),
     ]
 
     def aggregate_dashboard_metrics(items):
@@ -7689,14 +7690,13 @@ def _render_dashboard_page_v2(
         ("geo", "Geo"),
         ("manager", "Cabinet"),
         ("adset_name", "Adset"),
-        ("launch_date", "Start"),
+        ("ad_name", "Ad"),
         ("buyer", "Buyer"),
         ("offer", "Offer"),
         ("cabinet_text", "Cabinets"),
         ("advertiser_text", "Advertiser"),
         ("account_id", "Account"),
         ("campaign_name", "Campaign"),
-        ("ad_name", "Ad"),
         ("budget", "Budget"),
         ("spend", "Spend"),
         ("clicks", "Clicks"),
@@ -7738,14 +7738,13 @@ def _render_dashboard_page_v2(
             <td data-col="geo"></td>
             <td data-col="manager"></td>
             <td data-col="adset_name"></td>
-            <td data-col="launch_date">{escape(row.get("launch_date") or "—")}</td>
+            <td data-col="ad_name">{escape(row.get("ad_name") or "—")}</td>
             <td data-col="buyer">{escape(row.get("buyer") or "—")}</td>
             <td data-col="offer">{escape(row.get("offer") or "—")}</td>
             <td data-col="cabinet_text">{escape(row.get("cabinet_text") or "—")}</td>
             <td data-col="advertiser_text">{escape(row.get("advertiser_text") or "—")}</td>
             <td data-col="account_id">{escape(row.get("account_id") or "—")}</td>
             <td data-col="campaign_name">{escape(row.get("campaign_name") or "—")}</td>
-            <td data-col="ad_name">{escape(row.get("ad_name") or "—")}</td>
             <td data-col="budget">{format_money(row.get("budget", 0))}</td>
             <td data-col="spend">{format_money(row.get("spend", 0))}</td>
             <td data-col="clicks">{format_int_or_float(row.get("clicks", 0))}</td>
@@ -7780,14 +7779,13 @@ def _render_dashboard_page_v2(
                 <td data-col="geo">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "geo" else ""}</td>
                 <td data-col="manager">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "manager" else ""}</td>
                 <td data-col="adset_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "adset_name" else ""}</td>
-                <td data-col="launch_date">—</td>
+                <td data-col="ad_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "ad_name" else "—"}</td>
                 <td data-col="buyer">—</td>
                 <td data-col="offer">—</td>
                 <td data-col="cabinet_text">—</td>
                 <td data-col="advertiser_text">—</td>
                 <td data-col="account_id">—</td>
                 <td data-col="campaign_name">—</td>
-                <td data-col="ad_name">—</td>
                 {render_dashboard_metric_cells(node["metrics"])}
             </tr>
             """
@@ -7996,6 +7994,9 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-3 td {{
         background:#fcfdff;
     }}
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-4 td {{
+        background:#ffffff;
+    }}
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-cell {{
         display:flex;
         align-items:center;
@@ -8009,6 +8010,9 @@ def _render_dashboard_page_v2(
     }}
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-level-3 {{
         padding-left:30px;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-level-4 {{
+        padding-left:40px;
     }}
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-toggle {{
         display:inline-flex;
@@ -8061,12 +8065,6 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-label {{
         overflow:hidden;
         text-overflow:ellipsis;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="launch_date"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="launch_date"] {{
-        width:64px;
-        min-width:64px;
-        max-width:64px;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="buyer"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="buyer"] {{
@@ -8122,9 +8120,9 @@ def _render_dashboard_page_v2(
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="ad_name"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="ad_name"] {{
-        width:210px;
-        min-width:210px;
-        max-width:210px;
+        width:220px;
+        min-width:220px;
+        max-width:220px;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="budget"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="budget"],
@@ -8184,8 +8182,6 @@ def _render_dashboard_page_v2(
         max-width:72px;
         text-align:right;
     }}
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="launch_date"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="launch_date"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="platform"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="platform"] {{
         background:#ecf5ff;
@@ -8429,8 +8425,18 @@ def _render_dashboard_page_v2(
         }});
 
         document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
+            const tableId = table.id || 'dashboard-tree-table';
+            const expandedKey = window.teambeadStorageKey(`dashboard-expanded:${tableId}`);
             const treeButtons = Array.from(table.querySelectorAll('.dashboard-tree-toggle'));
             const treeRows = Array.from(table.querySelectorAll('tbody tr'));
+            const buttonMap = new Map(treeButtons.map((button) => [button.dataset.target || '', button]));
+            let expandedNodes = [];
+            try {{
+                expandedNodes = JSON.parse(localStorage.getItem(expandedKey) || '[]');
+                if (!Array.isArray(expandedNodes)) expandedNodes = [];
+            }} catch (_error) {{
+                expandedNodes = [];
+            }}
             const hideDescendants = (nodeId) => {{
                 treeRows.forEach((row) => {{
                     const ancestors = (row.dataset.ancestors || '').split(',').filter(Boolean);
@@ -8442,6 +8448,19 @@ def _render_dashboard_page_v2(
                     }}
                 }});
             }};
+            const saveExpandedState = () => {{
+                const openNodes = treeButtons
+                    .filter((button) => button.getAttribute('aria-expanded') === 'true')
+                    .map((button) => button.dataset.target || '')
+                    .filter(Boolean);
+                localStorage.setItem(expandedKey, JSON.stringify(openNodes));
+            }};
+            const showDirectChildren = (nodeId) => {{
+                treeRows.forEach((row) => {{
+                    if ((row.dataset.parentId || '') !== nodeId) return;
+                    row.hidden = false;
+                }});
+            }};
             treeButtons.forEach((button) => {{
                 button.addEventListener('click', () => {{
                     const nodeId = button.dataset.target || '';
@@ -8450,14 +8469,22 @@ def _render_dashboard_page_v2(
                     if (expanded) {{
                         button.setAttribute('aria-expanded', 'false');
                         hideDescendants(nodeId);
+                        saveExpandedState();
                         return;
                     }}
                     button.setAttribute('aria-expanded', 'true');
-                    treeRows.forEach((row) => {{
-                        if ((row.dataset.parentId || '') !== nodeId) return;
-                        row.hidden = false;
-                    }});
+                    showDirectChildren(nodeId);
+                    saveExpandedState();
                 }});
+            }});
+            expandedNodes.forEach((nodeId) => {{
+                const button = buttonMap.get(nodeId);
+                if (!button) return;
+                const parentRow = button.closest('tr');
+                const parentId = parentRow?.dataset.parentId || '';
+                if (parentId) showDirectChildren(parentId);
+                button.setAttribute('aria-expanded', 'true');
+                showDirectChildren(nodeId);
             }});
         }});
 
