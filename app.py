@@ -7993,6 +7993,8 @@ def _render_dashboard_page_v2(
         text-overflow:ellipsis;
         color:#1e2d4a;
         background:#ffffff;
+        user-select:none;
+        -webkit-user-select:none;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td {{
         background:#f6faff;
@@ -8001,11 +8003,15 @@ def _render_dashboard_page_v2(
         cursor:pointer;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-row-selected td {{
-        background:#beddff !important;
+        background:#8fcbff !important;
+        color:#10284a !important;
+        box-shadow:inset 0 0 0 1px rgba(39, 113, 214, 0.35);
         opacity:1 !important;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-row-selected:hover td {{
-        background:#beddff !important;
+        background:#8fcbff !important;
+        color:#10284a !important;
+        box-shadow:inset 0 0 0 1px rgba(39, 113, 214, 0.35);
         opacity:1 !important;
     }}
     .dashboard-v2 table[data-dashboard-tree-table].dashboard-has-row-selection tbody tr:not(.dashboard-row-selected) td {{
@@ -8081,6 +8087,8 @@ def _render_dashboard_page_v2(
         font:inherit;
         cursor:pointer;
         justify-content:flex-start;
+        user-select:none;
+        -webkit-user-select:none;
     }}
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-caret {{
         width:10px;
