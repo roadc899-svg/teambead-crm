@@ -7669,10 +7669,15 @@ def _render_dashboard_page_v2(
             f'<td data-col="roi">{format_percent(values.get("roi", 0))}</td>',
         ])
 
-    def render_hierarchy_label(node, level):
+    def render_hierarchy_label(node, level, variant="caret"):
+        icon_html = (
+            '<span class="dashboard-tree-caret">▸</span>'
+            if variant == "caret"
+            else '<span class="dashboard-tree-plus"></span>'
+        )
         toggle = (
-            f'<button type="button" class="dashboard-tree-toggle" data-target="{escape(node["id"])}" '
-            f'aria-expanded="false"><span class="dashboard-tree-caret">▸</span>'
+            f'<button type="button" class="dashboard-tree-toggle dashboard-tree-toggle-{escape(variant)}" '
+            f'data-target="{escape(node["id"])}" aria-expanded="false">{icon_html}'
             f'<span class="dashboard-tree-label">{escape(node["label"])}</span></button>'
         )
         return f'<div class="dashboard-tree-cell dashboard-tree-level-{level}">{toggle}</div>'
@@ -7763,7 +7768,7 @@ def _render_dashboard_page_v2(
         </tr>
         """
 
-    def render_tree_rows(nodes, parent_id="", ancestors=None, level=0):
+    def render_tree_rows(nodes, parent_id="", ancestors=None, level=0, variant="caret"):
         ancestors = ancestors or []
         html = ""
         for node in nodes:
@@ -7771,10 +7776,10 @@ def _render_dashboard_page_v2(
             current_ancestors = [*ancestors, node["id"]]
             html += f"""
             <tr class="dashboard-tree-row dashboard-tree-row-level-{level}" data-node-id="{escape(node["id"])}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}"{hidden_attr}>
-                <td data-col="platform">{render_hierarchy_label(node, level) if node["column"] == "platform" else ""}</td>
-                <td data-col="geo">{render_hierarchy_label(node, level) if node["column"] == "geo" else ""}</td>
-                <td data-col="manager">{render_hierarchy_label(node, level) if node["column"] == "manager" else ""}</td>
-                <td data-col="adset_name">{render_hierarchy_label(node, level) if node["column"] == "adset_name" else ""}</td>
+                <td data-col="platform">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "platform" else ""}</td>
+                <td data-col="geo">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "geo" else ""}</td>
+                <td data-col="manager">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "manager" else ""}</td>
+                <td data-col="adset_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "adset_name" else ""}</td>
                 <td data-col="launch_date">—</td>
                 <td data-col="buyer">—</td>
                 <td data-col="offer">—</td>
@@ -7787,13 +7792,14 @@ def _render_dashboard_page_v2(
             </tr>
             """
             if node["children"]:
-                html += render_tree_rows(node["children"], parent_id=node["id"], ancestors=current_ancestors, level=level + 1)
+                html += render_tree_rows(node["children"], parent_id=node["id"], ancestors=current_ancestors, level=level + 1, variant=variant)
             else:
                 for leaf_row in _dashboard_sort_rows(node["rows"], sort_by=sort_by, order=order):
                     html += render_leaf_row(leaf_row, parent_id=node["id"], ancestors=current_ancestors)
         return html
 
-    rows_html = render_tree_rows(tree)
+    rows_html = render_tree_rows(tree, variant="caret")
+    rows_html_plus = render_tree_rows(tree, variant="plus")
 
     stats_html = build_dashboard_summary_cards(rows)
 
@@ -8025,6 +8031,32 @@ def _render_dashboard_page_v2(
     }}
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-toggle[aria-expanded="true"] .dashboard-tree-caret {{
         transform:rotate(90deg);
+    }}
+    .dashboard-v2 .dashboard-tree-plus {{
+        width:14px;
+        height:14px;
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        border:1px solid rgba(95, 120, 165, 0.35);
+        border-radius:4px;
+        color:#4e6ba1;
+        font-size:11px;
+        font-weight:900;
+        line-height:1;
+        background:#ffffff;
+    }}
+    .dashboard-v2 .dashboard-tree-toggle[aria-expanded="true"] .dashboard-tree-plus {{
+        font-size:13px;
+    }}
+    .dashboard-v2 .dashboard-tree-toggle[aria-expanded="true"] .dashboard-tree-plus::before {{
+        content:"−";
+    }}
+    .dashboard-v2 .dashboard-tree-toggle-plus .dashboard-tree-plus {{
+        position:relative;
+    }}
+    .dashboard-v2 .dashboard-tree-toggle-plus .dashboard-tree-plus::before {{
+        content:"+";
     }}
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-label {{
         overflow:hidden;
@@ -8355,9 +8387,24 @@ def _render_dashboard_page_v2(
             </details>
         </div>
         <div class="dashboard-table-wrap">
-            <table id="dashboardUnifiedTable">
+            <table id="dashboardUnifiedTable" data-dashboard-tree-table>
                 <thead><tr>{head_html}</tr></thead>
                 <tbody>{rows_html if rows_html else '<tr><td colspan="31">No dashboard rows for the selected filters</td></tr>'}</tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="panel compact-panel dashboard-table-panel">
+        <div class="dashboard-table-header">
+            <div class="dashboard-table-title">
+                <div class="panel-title">CRM Analytics 2</div>
+                <div class="panel-subtitle">Same dashboard data with plus-style hierarchical expansion inside the table.</div>
+            </div>
+        </div>
+        <div class="dashboard-table-wrap">
+            <table id="dashboardUnifiedTable2" data-dashboard-tree-table>
+                <thead><tr>{head_html}</tr></thead>
+                <tbody>{rows_html_plus if rows_html_plus else '<tr><td colspan="31">No dashboard rows for the selected filters</td></tr>'}</tbody>
             </table>
         </div>
     </div>
@@ -8381,33 +8428,35 @@ def _render_dashboard_page_v2(
             }});
         }});
 
-        const treeButtons = Array.from(document.querySelectorAll('.dashboard-tree-toggle'));
-        const treeRows = Array.from(document.querySelectorAll('#dashboardUnifiedTable tbody tr'));
-        const hideDescendants = (nodeId) => {{
-            treeRows.forEach((row) => {{
-                const ancestors = (row.dataset.ancestors || '').split(',').filter(Boolean);
-                if (!ancestors.includes(nodeId)) return;
-                row.hidden = true;
-                if (row.dataset.nodeId) {{
-                    const button = row.querySelector('.dashboard-tree-toggle');
-                    if (button) button.setAttribute('aria-expanded', 'false');
-                }}
-            }});
-        }};
-        treeButtons.forEach((button) => {{
-            button.addEventListener('click', () => {{
-                const nodeId = button.dataset.target || '';
-                if (!nodeId) return;
-                const expanded = button.getAttribute('aria-expanded') === 'true';
-                if (expanded) {{
-                    button.setAttribute('aria-expanded', 'false');
-                    hideDescendants(nodeId);
-                    return;
-                }}
-                button.setAttribute('aria-expanded', 'true');
+        document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
+            const treeButtons = Array.from(table.querySelectorAll('.dashboard-tree-toggle'));
+            const treeRows = Array.from(table.querySelectorAll('tbody tr'));
+            const hideDescendants = (nodeId) => {{
                 treeRows.forEach((row) => {{
-                    if ((row.dataset.parentId || '') !== nodeId) return;
-                    row.hidden = false;
+                    const ancestors = (row.dataset.ancestors || '').split(',').filter(Boolean);
+                    if (!ancestors.includes(nodeId)) return;
+                    row.hidden = true;
+                    if (row.dataset.nodeId) {{
+                        const button = row.querySelector('.dashboard-tree-toggle');
+                        if (button) button.setAttribute('aria-expanded', 'false');
+                    }}
+                }});
+            }};
+            treeButtons.forEach((button) => {{
+                button.addEventListener('click', () => {{
+                    const nodeId = button.dataset.target || '';
+                    if (!nodeId) return;
+                    const expanded = button.getAttribute('aria-expanded') === 'true';
+                    if (expanded) {{
+                        button.setAttribute('aria-expanded', 'false');
+                        hideDescendants(nodeId);
+                        return;
+                    }}
+                    button.setAttribute('aria-expanded', 'true');
+                    treeRows.forEach((row) => {{
+                        if ((row.dataset.parentId || '') !== nodeId) return;
+                        row.hidden = false;
+                    }});
                 }});
             }});
         }});
@@ -8424,7 +8473,7 @@ def _render_dashboard_page_v2(
             toggles.forEach((toggle) => {{
                 toggle.checked = !hidden.includes(toggle.value);
             }});
-            document.querySelectorAll('#dashboardUnifiedTable [data-col]').forEach((cell) => {{
+            document.querySelectorAll('[data-dashboard-tree-table] [data-col]').forEach((cell) => {{
                 cell.style.display = hidden.includes(cell.dataset.col) ? 'none' : '';
             }});
         }};
