@@ -7608,6 +7608,7 @@ def _render_dashboard_page_v2(
         ("platform", "platform"),
         ("geo", "geo"),
         ("manager", "manager"),
+        ("campaign_name", "campaign_name"),
         ("adset_name", "adset_name"),
         ("ad_name", "ad_name"),
     ]
@@ -7689,6 +7690,7 @@ def _render_dashboard_page_v2(
         ("platform", "Brand"),
         ("geo", "Geo"),
         ("manager", "Cabinet"),
+        ("campaign_name", "Campaign"),
         ("adset_name", "Adset"),
         ("ad_name", "Ad"),
         ("buyer", "Buyer"),
@@ -7696,7 +7698,6 @@ def _render_dashboard_page_v2(
         ("cabinet_text", "Cabinets"),
         ("advertiser_text", "Advertiser"),
         ("account_id", "Account"),
-        ("campaign_name", "Campaign"),
         ("budget", "Budget"),
         ("spend", "Spend"),
         ("clicks", "Clicks"),
@@ -7737,6 +7738,7 @@ def _render_dashboard_page_v2(
             <td data-col="platform"></td>
             <td data-col="geo"></td>
             <td data-col="manager"></td>
+            <td data-col="campaign_name"></td>
             <td data-col="adset_name"></td>
             <td data-col="ad_name">{escape(row.get("ad_name") or "—")}</td>
             <td data-col="buyer">{escape(row.get("buyer") or "—")}</td>
@@ -7744,7 +7746,6 @@ def _render_dashboard_page_v2(
             <td data-col="cabinet_text">{escape(row.get("cabinet_text") or "—")}</td>
             <td data-col="advertiser_text">{escape(row.get("advertiser_text") or "—")}</td>
             <td data-col="account_id">{escape(row.get("account_id") or "—")}</td>
-            <td data-col="campaign_name">{escape(row.get("campaign_name") or "—")}</td>
             <td data-col="budget">{format_money(row.get("budget", 0))}</td>
             <td data-col="spend">{format_money(row.get("spend", 0))}</td>
             <td data-col="clicks">{format_int_or_float(row.get("clicks", 0))}</td>
@@ -7778,6 +7779,7 @@ def _render_dashboard_page_v2(
                 <td data-col="platform">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "platform" else ""}</td>
                 <td data-col="geo">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "geo" else ""}</td>
                 <td data-col="manager">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "manager" else ""}</td>
+                <td data-col="campaign_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "campaign_name" else "—"}</td>
                 <td data-col="adset_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "adset_name" else ""}</td>
                 <td data-col="ad_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "ad_name" else "—"}</td>
                 <td data-col="buyer">—</td>
@@ -7785,7 +7787,6 @@ def _render_dashboard_page_v2(
                 <td data-col="cabinet_text">—</td>
                 <td data-col="advertiser_text">—</td>
                 <td data-col="account_id">—</td>
-                <td data-col="campaign_name">—</td>
                 {render_dashboard_metric_cells(node["metrics"])}
             </tr>
             """
@@ -7997,6 +7998,9 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-4 td {{
         background:#ffffff;
     }}
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-5 td {{
+        background:#ffffff;
+    }}
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-cell {{
         display:flex;
         align-items:center;
@@ -8013,6 +8017,9 @@ def _render_dashboard_page_v2(
     }}
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-level-4 {{
         padding-left:40px;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-level-5 {{
+        padding-left:50px;
     }}
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-toggle {{
         display:inline-flex;
@@ -8426,7 +8433,7 @@ def _render_dashboard_page_v2(
 
         document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
             const tableId = table.id || 'dashboard-tree-table';
-            const expandedKey = window.teambeadStorageKey(`dashboard-expanded:${tableId}`);
+            const expandedKey = window.teambeadStorageKey(`dashboard-expanded:${{tableId}}`);
             const treeButtons = Array.from(table.querySelectorAll('.dashboard-tree-toggle'));
             const treeRows = Array.from(table.querySelectorAll('tbody tr'));
             const buttonMap = new Map(treeButtons.map((button) => [button.dataset.target || '', button]));
