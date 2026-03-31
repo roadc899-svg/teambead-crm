@@ -8840,64 +8840,6 @@ def _render_dashboard_page_v2(
         min-width:0 !important;
         max-width:none !important;
     }}
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="platform"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="platform"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="geo"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="geo"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="manager"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="manager"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="campaign_name"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="campaign_name"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="adset_name"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="adset_name"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="ad_name"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="ad_name"] {{
-        position:sticky;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="platform"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="platform"] {{
-        left:var(--sticky-left-platform, 0px);
-        z-index:7;
-        box-shadow:none;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="geo"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="geo"] {{
-        left:var(--sticky-left-geo, 0px);
-        z-index:7;
-        box-shadow:none;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="manager"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="manager"] {{
-        left:var(--sticky-left-manager, 0px);
-        z-index:7;
-        box-shadow:none;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="campaign_name"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="campaign_name"] {{
-        left:var(--sticky-left-campaign_name, 0px);
-        z-index:7;
-        box-shadow:none;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="adset_name"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="adset_name"] {{
-        left:var(--sticky-left-adset_name, 0px);
-        z-index:7;
-        box-shadow:none;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="ad_name"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="ad_name"] {{
-        left:var(--sticky-left-ad_name, 0px);
-        z-index:7;
-        box-shadow:none;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable thead th[data-col="platform"],
-    .dashboard-v2 #dashboardUnifiedTable thead th[data-col="geo"],
-    .dashboard-v2 #dashboardUnifiedTable thead th[data-col="manager"],
-    .dashboard-v2 #dashboardUnifiedTable thead th[data-col="campaign_name"],
-    .dashboard-v2 #dashboardUnifiedTable thead th[data-col="adset_name"],
-    .dashboard-v2 #dashboardUnifiedTable thead th[data-col="ad_name"] {{
-        z-index:9;
-    }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td[data-col="platform"],
     .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td[data-col="geo"],
     .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td[data-col="manager"],
@@ -9146,12 +9088,11 @@ def _render_dashboard_page_v2(
                     const ancestors = (row.dataset.ancestors || '').split(',').filter(Boolean);
                     const ancestorsExpanded = ancestors.every((ancestorId) => expandedNodes.has(ancestorId));
                     if (!parentId) {{
-                        row.hidden = nodeRowId ? expandedNodes.has(nodeRowId) : false;
+                        row.hidden = false;
                         return;
                     }}
                     const parentExpanded = expandedNodes.has(parentId);
-                    const selfExpanded = nodeRowId ? expandedNodes.has(nodeRowId) : false;
-                    row.hidden = !(ancestorsExpanded && parentExpanded) || selfExpanded;
+                    row.hidden = !(ancestorsExpanded && parentExpanded);
                 }});
             }};
             const syncExpandedSummaryRows = () => {{
@@ -9209,7 +9150,6 @@ def _render_dashboard_page_v2(
                 'platform', 'geo', 'manager', 'campaign_name', 'adset_name', 'ad_name',
                 'buyer', 'offer', 'cabinet_text', 'advertiser_text', 'account_id',
             ];
-            const stickyCols = ['platform', 'geo', 'manager', 'campaign_name', 'adset_name', 'ad_name'];
             autoCols.forEach((col) => {{
                 const allCells = Array.from(table.querySelectorAll(`[data-col="${{col}}"]`));
                 allCells.forEach((cell) => {{
@@ -9247,11 +9187,6 @@ def _render_dashboard_page_v2(
                         cell.style.minWidth = `${{measuredWidth}}px`;
                         cell.style.maxWidth = `${{measuredWidth}}px`;
                     }});
-                }});
-                let currentLeft = 0;
-                stickyCols.forEach((col) => {{
-                    table.style.setProperty(`--sticky-left-${{col}}`, `${{currentLeft}}px`);
-                    currentLeft += widths[col] || 0;
                 }});
             }});
         }};
@@ -9439,12 +9374,11 @@ def _render_dashboard_page_v2(
                     const ancestors = (row.dataset.ancestors || '').split(',').filter(Boolean);
                     const ancestorsExpanded = ancestors.every((ancestorId) => expandedNodes.has(ancestorId));
                     if (!parentId) {{
-                        row.hidden = nodeRowId ? expandedNodes.has(nodeRowId) : false;
+                        row.hidden = false;
                         return;
                     }}
                     const parentExpanded = expandedNodes.has(parentId);
-                    const selfExpanded = nodeRowId ? expandedNodes.has(nodeRowId) : false;
-                    row.hidden = !(ancestorsExpanded && parentExpanded) || selfExpanded;
+                    row.hidden = !(ancestorsExpanded && parentExpanded);
                 }});
             }};
                 getTreeButtons().forEach((button) => {{
