@@ -908,7 +908,9 @@ def format_plain_number_text(value):
 
 def format_money(value):
     try:
-        return f"${float(value or 0):,.2f}"
+        if value is None:
+            return ""
+        return f"${float(value):,.2f}"
     except Exception:
         return "$0.00"
 
@@ -1155,12 +1157,14 @@ def parse_uploaded_dataframe(df, buyer, source_name="", period_label="", period_
         row_date_end = normalize_fb_date_value(row.get(de_col)) if de_col else ""
 
         raw_budget = row.get(budget_col) if budget_col else ""
-        budget_value = safe_number(raw_budget) if budget_col else 0
+        budget_value = safe_number(raw_budget) if budget_col else None
         budget_type = safe_text(row.get(budget_type_col)) if budget_type_col else ""
-        if not budget_value and isinstance(raw_budget, str):
+        if isinstance(raw_budget, str):
             raw_budget_text = safe_text(raw_budget).strip().lower()
             if raw_budget_text in {"using campaign budget", "campaign budget", "бюджет кампании"}:
-                budget_value = 0
+                budget_value = None
+            elif not raw_budget_text:
+                budget_value = None
 
         items.append(
             FBRow(
@@ -6470,7 +6474,7 @@ def aggregate_grouped_rows(rows):
                 "ad_name": row.ad_name or "",
                 "adset_name": row.adset_name or "",
                 "campaign_name": row.campaign_name or "",
-                "budget": row.budget or 0,
+                "budget": row.budget if row.budget is not None else None,
                 "account_id": row.account_id or "",
                 "launch_date": row.launch_date or "",
                 "platform": row.platform or "",
@@ -6501,7 +6505,9 @@ def aggregate_grouped_rows(rows):
         grouped[key]["contacts"] += row.contacts or 0
         grouped[key]["ftd"] += row.ftd or 0
         grouped[key]["spend"] += row.spend or 0
-        grouped[key]["budget"] = max(grouped[key]["budget"], row.budget or 0)
+        if row.budget is not None:
+            current_budget = grouped[key]["budget"]
+            grouped[key]["budget"] = max(current_budget, row.budget) if current_budget is not None else row.budget
         grouped[key]["frequency_total"] += row.frequency or 0
         grouped[key]["ctr_total"] += row.ctr or 0
         grouped[key]["rows_combined"] += 1
@@ -7085,6 +7091,9 @@ _original_chatterfy_parser_page = _page_routes.get("chatterfy_parser_page")
 _original_toggle_chatterfy_parser = _domain_actions.get("toggle_chatterfy_parser")
 _original_upload_file = _domain_actions.get("upload_file")
 _original_grouped_page = _page_routes.get("show_grouped_table")
+_original_dashboard_page = _page_routes.get("render_dashboard_page")
+_original_show_dashboard = _page_routes.get("show_dashboard")
+_original_show_hierarchy = _page_routes.get("show_hierarchy")
 _original_render_stats_cards = render_stats_cards
 
 
@@ -7107,6 +7116,540 @@ def _patched_render_stats_cards(totals):
 
 
 render_stats_cards = _patched_render_stats_cards
+
+
+def normalize_dashboard_platform(value):
+    raw = safe_text(value).strip().lower()
+    if raw.startswith("1x"):
+        return "1x"
+    if raw in {"cellxpert", "cell xpert"}:
+        return "cellxpert"
+    return raw
+
+
+def dashboard_offer_matches_cabinet(cabinet_row, offer_value):
+    clean_offer = safe_text(offer_value).strip().lower()
+    if not clean_offer:
+        return True
+    brand_tokens = [safe_text(item).strip().lower() for item in split_list_tokens(getattr(cabinet_row, "brands", ""))]
+    if not brand_tokens:
+        return True
+    return clean_offer in brand_tokens
+
+
+def build_dashboard_cabinet_flow_map():
+    result = {}
+    for row in get_cabinet_rows():
+        platform_key = normalize_dashboard_platform(getattr(row, "platform", ""))
+        manager_key = safe_text(getattr(row, "manager_name", ""))
+        advertisers = safe_text(getattr(row, "advertiser", ""))
+        geos = split_geo_tokens(getattr(row, "geo_list", "")) or [normalize_geo_value(getattr(row, "geo_list", ""))]
+        for geo_code in geos:
+            if not platform_key or not manager_key or not geo_code:
+                continue
+            flow_key = build_flow_key(platform_key, manager_key, geo_code)
+            result.setdefault(flow_key, []).append(row)
+    return result
+
+
+def build_dashboard_caps_flow_map(period_label=""):
+    ensure_caps_table()
+    db = SessionLocal()
+    try:
+        query = db.query(CapRow)
+        if period_label:
+            query = query.filter(CapRow.period_label == period_label)
+        caps = query.all()
+    finally:
+        db.close()
+
+    result = {}
+    for cap in caps:
+        flow_parts = [part.strip() for part in safe_text(cap.flow).split("/") if part.strip()]
+        platform_key = normalize_dashboard_platform(flow_parts[0] if len(flow_parts) > 0 else "")
+        manager_key = flow_parts[1] if len(flow_parts) > 1 else safe_text(cap.owner_name)
+        geo_key = normalize_geo_value(flow_parts[2] if len(flow_parts) > 2 else (cap.code or cap.geo))
+        if not platform_key or not manager_key or not geo_key:
+            continue
+        flow_key = build_flow_key(platform_key, manager_key, geo_key)
+        bucket = result.setdefault(flow_key, {
+            "caps_count": 0,
+            "cap_total": 0.0,
+            "cap_current_ftd": 0.0,
+            "cap_promos": set(),
+            "cabinet_names": set(),
+        })
+        bucket["caps_count"] += 1
+        bucket["cap_total"] += safe_number(cap.cap_value)
+        bucket["cap_current_ftd"] += safe_number(cap.current_ftd)
+        if safe_text(cap.promo_code):
+            bucket["cap_promos"].add(safe_text(cap.promo_code))
+        if safe_text(cap.cabinet_name):
+            bucket["cabinet_names"].add(safe_text(cap.cabinet_name))
+    for bucket in result.values():
+        bucket["cap_fill"] = cap_fill_percent(bucket["cap_current_ftd"], bucket["cap_total"])
+    return result
+
+
+def build_dashboard_hold_flow_map(period_label=""):
+    result = {}
+    for item in get_hold_wager_rows(period_label=period_label):
+        flow_parts = [part.strip() for part in safe_text(item.get("flow")).split("/") if part.strip()]
+        platform_key = normalize_dashboard_platform(flow_parts[0] if len(flow_parts) > 0 else "")
+        manager_key = flow_parts[1] if len(flow_parts) > 1 else ""
+        geo_key = normalize_geo_value(flow_parts[2] if len(flow_parts) > 2 else item.get("country"))
+        if not platform_key or not manager_key or not geo_key:
+            continue
+        flow_key = build_flow_key(platform_key, manager_key, geo_key)
+        bucket = result.setdefault(flow_key, {
+            "hold_count": 0,
+            "baseline_fail_count": 0,
+            "wager_fail_count": 0,
+            "hold_cabinets": set(),
+        })
+        bucket["hold_count"] += 1
+        reason = safe_text(item.get("reason")).lower()
+        if "baseline" in reason:
+            bucket["baseline_fail_count"] += 1
+        if "wager" in reason:
+            bucket["wager_fail_count"] += 1
+        if safe_text(item.get("cabinet_name")):
+            bucket["hold_cabinets"].add(safe_text(item.get("cabinet_name")))
+    return result
+
+
+def build_dashboard_rows_v2(user, buyer="", period_label=""):
+    buyer_scope = resolve_effective_buyer(user, buyer)
+    fb_rows = aggregate_grouped_rows(get_filtered_data(buyer=buyer_scope, period_label=period_label))
+    fb_rows = enrich_statistic_rows(fb_rows, period_label=period_label)
+    cabinet_map = build_dashboard_cabinet_flow_map()
+    caps_map = build_dashboard_caps_flow_map(period_label=period_label)
+    hold_map = build_dashboard_hold_flow_map(period_label=period_label)
+
+    rows = []
+    seen_flow_placeholder_keys = set()
+
+    for item in fb_rows:
+        platform_key = normalize_dashboard_platform(item.get("platform"))
+        flow_key = build_flow_key(platform_key, item.get("manager"), item.get("geo"))
+        related_cabinets = cabinet_map.get(flow_key, [])
+        matched_cabinets = [cab for cab in related_cabinets if dashboard_offer_matches_cabinet(cab, item.get("offer"))]
+        if matched_cabinets:
+            related_cabinets = matched_cabinets
+
+        cabinet_names = sorted({safe_text(cab.name) for cab in related_cabinets if safe_text(cab.name)})
+        advertiser_names = sorted({safe_text(cab.advertiser) for cab in related_cabinets if safe_text(cab.advertiser)})
+        active_cabinets = [cab for cab in related_cabinets if safe_text(getattr(cab, "status", "")).lower() == "active"]
+        cap_info = caps_map.get(flow_key, {})
+        hold_info = hold_map.get(flow_key, {})
+
+        row = {
+            "buyer": safe_text(item.get("buyer")),
+            "platform": safe_text(item.get("platform")),
+            "manager": safe_text(item.get("manager")),
+            "geo": safe_text(item.get("geo")),
+            "offer": safe_text(item.get("offer")),
+            "cabinet_names": cabinet_names,
+            "cabinet_text": ", ".join(cabinet_names) if cabinet_names else "—",
+            "advertiser_names": advertiser_names,
+            "advertiser_text": ", ".join(advertiser_names) if advertiser_names else "—",
+            "campaign_name": safe_text(item.get("campaign_name")),
+            "adset_name": safe_text(item.get("adset_name")),
+            "ad_name": safe_text(item.get("ad_name")),
+            "budget": safe_number(item.get("budget", 0)),
+            "spend": safe_number(item.get("spend", 0)),
+            "leads": safe_number(item.get("leads", 0)),
+            "reg": safe_number(item.get("reg", 0)),
+            "cost_reg": safe_number(item.get("cost_per_completed_registration", 0)),
+            "fb_ftd": safe_number(item.get("ftd", 0)),
+            "cpa": safe_number(item.get("cpa_real", 0)),
+            "chatterfy": safe_number(item.get("stat_chatterfy", 0)),
+            "players_ftd": safe_number(item.get("stat_total_ftd", 0)),
+            "qual_ftd": safe_number(item.get("stat_qual_ftd", 0)),
+            "income": safe_number(item.get("stat_income", 0)),
+            "profit": safe_number(item.get("stat_profit", 0)),
+            "roi": safe_number(item.get("stat_roi", 0)),
+            "caps_count": safe_number(cap_info.get("caps_count", 0)),
+            "cap_total": safe_number(cap_info.get("cap_total", 0)),
+            "cap_current_ftd": safe_number(cap_info.get("cap_current_ftd", 0)),
+            "cap_fill": safe_number(cap_info.get("cap_fill", 0)),
+            "hold_count": safe_number(hold_info.get("hold_count", 0)),
+            "hold_split": f'{format_int_or_float(hold_info.get("baseline_fail_count", 0))}B / {format_int_or_float(hold_info.get("wager_fail_count", 0))}W' if hold_info else "0B / 0W",
+            "active_cabinets": len(active_cabinets),
+            "flow_key": flow_key,
+            "flow_label": " / ".join(filter(None, [safe_text(item.get("platform")), safe_text(item.get("manager")), safe_text(item.get("geo"))])),
+            "source_name": safe_text(item.get("source_name")),
+            "row_kind": "fb",
+        }
+        rows.append(row)
+        seen_flow_placeholder_keys.add(flow_key)
+
+    for flow_key, related_cabinets in cabinet_map.items():
+        if flow_key in seen_flow_placeholder_keys:
+            continue
+        platform_key, manager_key, geo_key = flow_key
+        advertiser_names = sorted({safe_text(cab.advertiser) for cab in related_cabinets if safe_text(cab.advertiser)})
+        cabinet_names = sorted({safe_text(cab.name) for cab in related_cabinets if safe_text(cab.name)})
+        active_cabinets = [cab for cab in related_cabinets if safe_text(getattr(cab, "status", "")).lower() == "active"]
+        cap_info = caps_map.get(flow_key, {})
+        hold_info = hold_map.get(flow_key, {})
+        rows.append({
+            "buyer": buyer_scope,
+            "platform": platform_key,
+            "manager": manager_key,
+            "geo": geo_key,
+            "offer": "",
+            "cabinet_names": cabinet_names,
+            "cabinet_text": ", ".join(cabinet_names) if cabinet_names else "—",
+            "advertiser_names": advertiser_names,
+            "advertiser_text": ", ".join(advertiser_names) if advertiser_names else "—",
+            "campaign_name": "",
+            "adset_name": "",
+            "ad_name": "",
+            "budget": 0.0,
+            "spend": 0.0,
+            "leads": 0.0,
+            "reg": 0.0,
+            "cost_reg": 0.0,
+            "fb_ftd": 0.0,
+            "cpa": 0.0,
+            "chatterfy": 0.0,
+            "players_ftd": 0.0,
+            "qual_ftd": 0.0,
+            "income": 0.0,
+            "profit": 0.0,
+            "roi": 0.0,
+            "caps_count": safe_number(cap_info.get("caps_count", 0)),
+            "cap_total": safe_number(cap_info.get("cap_total", 0)),
+            "cap_current_ftd": safe_number(cap_info.get("cap_current_ftd", 0)),
+            "cap_fill": safe_number(cap_info.get("cap_fill", 0)),
+            "hold_count": safe_number(hold_info.get("hold_count", 0)),
+            "hold_split": f'{format_int_or_float(hold_info.get("baseline_fail_count", 0))}B / {format_int_or_float(hold_info.get("wager_fail_count", 0))}W' if hold_info else "0B / 0W",
+            "active_cabinets": len(active_cabinets),
+            "flow_key": flow_key,
+            "flow_label": " / ".join(filter(None, [platform_key, manager_key, geo_key])),
+            "source_name": "",
+            "row_kind": "flow",
+        })
+
+    return rows
+
+
+def build_dashboard_summary_cards(rows):
+    totals = {
+        "rows": len(rows),
+        "spend": sum(safe_number(row.get("spend", 0)) for row in rows),
+        "reg": sum(safe_number(row.get("reg", 0)) for row in rows),
+        "players_ftd": sum(safe_number(row.get("players_ftd", 0)) for row in rows),
+        "chatterfy": sum(safe_number(row.get("chatterfy", 0)) for row in rows),
+        "hold": sum(safe_number(row.get("hold_count", 0)) for row in rows),
+    }
+    cards = [
+        ("Rows", format_int_or_float(totals["rows"])),
+        ("Spend", format_money(totals["spend"])),
+        ("Reg", format_int_or_float(totals["reg"])),
+        ("Players FTD", format_int_or_float(totals["players_ftd"])),
+        ("Chatterfy", format_int_or_float(totals["chatterfy"])),
+        ("Hold", format_int_or_float(totals["hold"])),
+    ]
+    cards_html = "".join(
+        f'<div class="stat-card"><div class="name">{escape(name)}</div><div class="value">{escape(value)}</div></div>'
+        for name, value in cards
+    )
+    return f'<div class="panel compact-panel"><div class="stats-grid">{cards_html}</div></div>'
+
+
+def _dashboard_filter_rows(rows, platform="", manager="", geo="", offer="", cabinet_name="", advertiser="", search=""):
+    clean_platform = normalize_dashboard_platform(platform)
+    clean_manager = safe_text(manager).strip().lower()
+    clean_geo = normalize_geo_value(geo)
+    clean_offer = safe_text(offer).strip().lower()
+    clean_cabinet = safe_text(cabinet_name).strip().lower()
+    clean_advertiser = safe_text(advertiser).strip().lower()
+    clean_search = safe_text(search).strip().lower()
+    filtered = []
+    for row in rows:
+        if clean_platform and normalize_dashboard_platform(row.get("platform")) != clean_platform:
+            continue
+        if clean_manager and safe_text(row.get("manager")).strip().lower() != clean_manager:
+            continue
+        if clean_geo and normalize_geo_value(row.get("geo")) != clean_geo:
+            continue
+        if clean_offer and safe_text(row.get("offer")).strip().lower() != clean_offer:
+            continue
+        if clean_cabinet and clean_cabinet not in [safe_text(item).strip().lower() for item in row.get("cabinet_names", [])]:
+            continue
+        if clean_advertiser and clean_advertiser not in [safe_text(item).strip().lower() for item in row.get("advertiser_names", [])]:
+            continue
+        if clean_search:
+            haystack = " | ".join([
+                safe_text(row.get("buyer")),
+                safe_text(row.get("platform")),
+                safe_text(row.get("manager")),
+                safe_text(row.get("geo")),
+                safe_text(row.get("offer")),
+                safe_text(row.get("cabinet_text")),
+                safe_text(row.get("advertiser_text")),
+                safe_text(row.get("campaign_name")),
+                safe_text(row.get("adset_name")),
+                safe_text(row.get("ad_name")),
+                safe_text(row.get("flow_label")),
+                safe_text(row.get("source_name")),
+            ]).lower()
+            if clean_search not in haystack:
+                continue
+        filtered.append(row)
+    return filtered
+
+
+def _dashboard_sort_rows(rows, sort_by="spend", order="desc"):
+    numeric_fields = {
+        "budget", "spend", "leads", "reg", "cost_reg", "fb_ftd", "cpa", "chatterfy",
+        "players_ftd", "qual_ftd", "income", "profit", "roi", "caps_count",
+        "cap_total", "cap_current_ftd", "cap_fill", "hold_count", "active_cabinets",
+    }
+    reverse = safe_text(order).lower() != "asc"
+    if sort_by in numeric_fields:
+        return sorted(rows, key=lambda item: safe_number(item.get(sort_by, 0)), reverse=reverse)
+    return sorted(rows, key=lambda item: safe_text(item.get(sort_by, "")).lower(), reverse=reverse)
+
+
+def _dashboard_sort_link(label, field, **params):
+    current_sort = safe_text(params.get("sort_by") or "spend")
+    current_order = safe_text(params.get("order") or "desc")
+    next_order = "asc" if current_sort != field or current_order == "desc" else "desc"
+    arrow = ""
+    if current_sort == field:
+        arrow = " ↑" if current_order == "asc" else " ↓"
+    qs = build_query_string(**{**params, "sort_by": field, "order": next_order})
+    return f'<a href="/dashboard?{qs}">{escape(label)}{arrow}</a>'
+
+
+def _render_dashboard_page_v2(
+    request: Request,
+    buyer: str = "",
+    manager: str = "",
+    geo: str = "",
+    offer: str = "",
+    search: str = "",
+    period_view: str = "current",
+    period_label: str = "",
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "hierarchy")
+
+    buyer = resolve_effective_buyer(user, safe_text(buyer))
+    effective_period_label = resolve_period_label("period", safe_text(period_label)) or get_current_period_label()
+    platform = safe_text(request.query_params.get("platform"))
+    cabinet_name = safe_text(request.query_params.get("cabinet_name"))
+    advertiser = safe_text(request.query_params.get("advertiser"))
+    sort_by = safe_text(request.query_params.get("sort_by") or "spend")
+    order = safe_text(request.query_params.get("order") or "desc")
+
+    base_rows = build_dashboard_rows_v2(user, buyer=buyer, period_label=effective_period_label)
+    buyer_values = [value for value, _label in get_fb_buyer_name_options()] or sorted({safe_text(row.get("buyer")) for row in base_rows if safe_text(row.get("buyer"))})
+    platform_values = sorted({safe_text(row.get("platform")) for row in base_rows if safe_text(row.get("platform"))})
+    manager_values = sorted({safe_text(row.get("manager")) for row in base_rows if safe_text(row.get("manager"))})
+    geo_values = sorted({safe_text(row.get("geo")) for row in base_rows if safe_text(row.get("geo"))})
+    offer_values = sorted({safe_text(row.get("offer")) for row in base_rows if safe_text(row.get("offer"))})
+    cabinet_values = sorted({safe_text(item) for row in base_rows for item in row.get("cabinet_names", []) if safe_text(item)})
+    advertiser_values = sorted({safe_text(item) for row in base_rows for item in row.get("advertiser_names", []) if safe_text(item)})
+
+    rows = _dashboard_filter_rows(
+        base_rows,
+        platform=platform,
+        manager=manager,
+        geo=geo,
+        offer=offer,
+        cabinet_name=cabinet_name,
+        advertiser=advertiser,
+        search=search,
+    )
+    rows = _dashboard_sort_rows(rows, sort_by=sort_by, order=order)
+
+    buyer_options = "".join(
+        f'<option value="{escape(value)}" {"selected" if safe_text(buyer) == safe_text(value) else ""}>{escape(value)}</option>'
+        for value in buyer_values
+    )
+    period_options = "".join(
+        f'<option value="{escape(value)}" {"selected" if safe_text(effective_period_label) == safe_text(value) else ""}>{escape(value)}</option>'
+        for value in build_period_options()
+    )
+    platform_options = make_options(platform_values, platform)
+    manager_options = make_options(manager_values, manager)
+    geo_options = make_options(geo_values, geo)
+    offer_options = make_options(offer_values, offer)
+    cabinet_options = make_options(cabinet_values, cabinet_name)
+    advertiser_options = make_options(advertiser_values, advertiser)
+
+    filter_params = {
+        "buyer": buyer,
+        "platform": platform,
+        "manager": manager,
+        "geo": geo,
+        "offer": offer,
+        "cabinet_name": cabinet_name,
+        "advertiser": advertiser,
+        "search": search,
+        "period_view": "period",
+        "period_label": effective_period_label,
+        "sort_by": sort_by,
+        "order": order,
+    }
+
+    table_headers = [
+        ("buyer", "Buyer"),
+        ("platform", "Platform"),
+        ("manager", "Manager"),
+        ("geo", "Geo"),
+        ("offer", "Offer"),
+        ("cabinet_text", "Cabinets"),
+        ("advertiser_text", "Advertiser"),
+        ("campaign_name", "Campaign"),
+        ("adset_name", "Ad Group"),
+        ("ad_name", "Ad"),
+        ("budget", "Budget"),
+        ("spend", "Spend"),
+        ("leads", "Leads"),
+        ("reg", "Reg"),
+        ("cost_reg", "Cost Reg"),
+        ("fb_ftd", "FB FTD"),
+        ("cpa", "CPA"),
+        ("chatterfy", "Chatterfy"),
+        ("players_ftd", "Players FTD"),
+        ("qual_ftd", "Qual FTD"),
+        ("hold_count", "Hold"),
+        ("hold_split", "Hold Split"),
+        ("cap_total", "Cap"),
+        ("cap_fill", "Cap Fill"),
+        ("income", "Income"),
+        ("profit", "Profit"),
+        ("roi", "ROI"),
+    ]
+
+    head_html = "".join(
+        f"<th>{_dashboard_sort_link(label, field, **filter_params)}</th>"
+        for field, label in table_headers
+    )
+
+    rows_html = ""
+    for row in rows:
+        row_class = "soft-green" if safe_number(row.get("profit", 0)) > 0 else ("soft-red" if safe_number(row.get("profit", 0)) < 0 else "")
+        rows_html += f"""
+        <tr class="{row_class}">
+            <td>{escape(row.get("buyer") or "—")}</td>
+            <td>{escape(row.get("platform") or "—")}</td>
+            <td>{escape(row.get("manager") or "—")}</td>
+            <td>{escape(row.get("geo") or "—")}</td>
+            <td>{escape(row.get("offer") or "—")}</td>
+            <td>{escape(row.get("cabinet_text") or "—")}</td>
+            <td>{escape(row.get("advertiser_text") or "—")}</td>
+            <td>{escape(row.get("campaign_name") or "—")}</td>
+            <td>{escape(row.get("adset_name") or "—")}</td>
+            <td>{escape(row.get("ad_name") or "—")}</td>
+            <td>{format_money(row.get("budget", 0))}</td>
+            <td>{format_money(row.get("spend", 0))}</td>
+            <td>{format_int_or_float(row.get("leads", 0))}</td>
+            <td>{format_int_or_float(row.get("reg", 0))}</td>
+            <td>{format_money(row.get("cost_reg", 0))}</td>
+            <td>{format_int_or_float(row.get("fb_ftd", 0))}</td>
+            <td>{format_money(row.get("cpa", 0))}</td>
+            <td>{format_int_or_float(row.get("chatterfy", 0))}</td>
+            <td>{format_int_or_float(row.get("players_ftd", 0))}</td>
+            <td>{format_int_or_float(row.get("qual_ftd", 0))}</td>
+            <td>{format_int_or_float(row.get("hold_count", 0))}</td>
+            <td>{escape(row.get("hold_split") or "0B / 0W")}</td>
+            <td>{format_int_or_float(row.get("cap_total", 0))}</td>
+            <td>{format_percent(row.get("cap_fill", 0))}</td>
+            <td>{format_money(row.get("income", 0))}</td>
+            <td>{format_money(row.get("profit", 0))}</td>
+            <td>{format_percent(row.get("roi", 0))}</td>
+        </tr>
+        """
+
+    stats_html = build_dashboard_summary_cards(rows)
+
+    buyer_filter_html = ""
+    if is_admin_role(user) or user.get("role") == "operator":
+        buyer_filter_html = f'<label>Buyer<select name="buyer"><option value="">Все</option>{buyer_options}</select></label>'
+    else:
+        buyer_filter_html = f'<input type="hidden" name="buyer" value="{escape(buyer)}">'
+
+    content = f"""
+    {render_active_period_banner(effective_period_label)}
+
+    <div class="panel compact-panel">
+        <div class="toolbar-actions">
+            <div class="panel compact-panel filters" style="width:100%;">
+                <form method="get" action="/dashboard" data-persist-filters="dashboard-v2" style="display:grid; grid-template-columns:repeat(8, minmax(0, 1fr)); gap:12px; align-items:end;">
+                    {buyer_filter_html}
+                    <input type="hidden" name="period_view" value="period">
+                    <div class="period-picker" style="display:flex; align-items:end; gap:6px; min-width:0;">
+                        <button type="button" class="ghost-btn small-btn period-jump-btn" data-period-jump="-1" aria-label="Previous period">‹</button>
+                        <label style="display:grid; gap:6px; min-width:0; flex:1 1 auto;">Period
+                            <select name="period_label" id="dashboardPeriodSelect">{period_options}</select>
+                        </label>
+                        <button type="button" class="ghost-btn small-btn period-jump-btn" data-period-jump="1" aria-label="Next period">›</button>
+                    </div>
+                    <label>Platform<select name="platform">{platform_options}</select></label>
+                    <label>Manager<select name="manager">{manager_options}</select></label>
+                    <label>Geo<select name="geo">{geo_options}</select></label>
+                    <label>Offer<select name="offer">{offer_options}</select></label>
+                    <label>Cabinet<select name="cabinet_name">{cabinet_options}</select></label>
+                    <label>Advertiser<select name="advertiser">{advertiser_options}</select></label>
+                    <label style="grid-column:span 2;">Search<input type="text" name="search" value="{escape(search)}" placeholder="Campaign, ad, cabinet, advertiser, geo..."></label>
+                    <input type="hidden" name="sort_by" value="{escape(sort_by)}">
+                    <input type="hidden" name="order" value="{escape(order)}">
+                    <div style="display:flex; gap:10px; align-items:end;">
+                        <button type="submit" class="btn small-btn">Filter</button>
+                        <a href="/dashboard?period_view=period&period_label={quote_plus(effective_period_label)}" class="ghost-btn small-btn" data-reset-filters="dashboard-v2">Reset</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    {stats_html}
+
+    <div class="panel compact-panel">
+        <div class="panel-title">CRM Unified Table</div>
+        <div class="panel-subtitle">FB is the base campaign layer. Players, Chatterfy, Caps, Cabinets and Hold are linked on top through flow, cabinet, geo, promo and tagged offer relations.</div>
+        <div class="table-wrap" style="margin-top:14px;">
+            <table style="min-width:2500px;">
+                <thead><tr>{head_html}</tr></thead>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="27">No dashboard rows for the selected filters</td></tr>'}</tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+    (() => {{
+        const periodSelect = document.getElementById("dashboardPeriodSelect");
+        if (!periodSelect) return;
+        const form = periodSelect.closest('form');
+        document.querySelectorAll('.period-jump-btn').forEach((button) => {{
+            button.addEventListener('click', () => {{
+                const direction = Number(button.dataset.periodJump || '0');
+                const options = Array.from(periodSelect.options).filter(option => option.value);
+                const currentIndex = options.findIndex(option => option.value === periodSelect.value);
+                if (currentIndex < 0) return;
+                const targetIndex = currentIndex + direction;
+                if (targetIndex < 0 || targetIndex >= options.length) return;
+                periodSelect.value = options[targetIndex].value;
+                if (form) form.requestSubmit();
+            }});
+        }});
+    }})();
+    </script>
+    """
+    return page_shell("Dashboard", content, active_page="dashboard", current_user=user)
+
+
+_page_routes["render_dashboard_page"] = _render_dashboard_page_v2
+_page_routes["show_dashboard"] = _render_dashboard_page_v2
+_page_routes["show_hierarchy"] = _render_dashboard_page_v2
 
 
 def _inject_chatterfy_parser_live_button_refresh(html: str) -> str:
