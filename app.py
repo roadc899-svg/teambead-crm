@@ -8263,29 +8263,33 @@ def _render_dashboard_page_v2(
         cursor:pointer;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-row-selected td {{
-        background:#8fcbff !important;
-        color:#10284a !important;
-        box-shadow:inset 0 0 0 1px rgba(39, 113, 214, 0.35);
+        background:#b7f0c2 !important;
+        color:#153726 !important;
+        box-shadow:inset 0 0 0 1px rgba(39, 148, 84, 0.42);
         opacity:1 !important;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-row-selected:hover td {{
-        background:#8fcbff !important;
-        color:#10284a !important;
-        box-shadow:inset 0 0 0 1px rgba(39, 113, 214, 0.35);
+        background:#b7f0c2 !important;
+        color:#153726 !important;
+        box-shadow:inset 0 0 0 1px rgba(39, 148, 84, 0.42);
         opacity:1 !important;
     }}
     .dashboard-v2 table[data-dashboard-tree-table].dashboard-has-row-selection tbody tr:not(.dashboard-row-selected) td {{
         opacity:.2;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] td.dashboard-cell-selected {{
-        background:#cfe8ff !important;
+        background:#9ae6ae !important;
+        color:#143523 !important;
+        box-shadow:inset 0 0 0 1px rgba(28, 135, 71, 0.45);
     }}
     .dashboard-v2 table[data-dashboard-tree-table] th.dashboard-column-selected,
     .dashboard-v2 table[data-dashboard-tree-table] td.dashboard-column-selected {{
-        background:#dff0ff !important;
+        background:#c7f3d1 !important;
+        color:#163726 !important;
+        box-shadow:inset 0 0 0 1px rgba(33, 138, 74, 0.35);
     }}
     .dashboard-v2 table[data-dashboard-tree-table] td.dashboard-cell-selected.dashboard-column-selected {{
-        background:#c7e3ff !important;
+        background:#8de0a3 !important;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] td.dashboard-cell-selected .dashboard-tree-toggle,
     .dashboard-v2 table[data-dashboard-tree-table] td.dashboard-column-selected .dashboard-tree-toggle {{
@@ -9507,7 +9511,7 @@ def _render_dashboard_page_v2(
                 const selectedId = path[index] || '';
                 return `
                     <div class="dashboard-matrix-column">
-                        <div class="dashboard-matrix-column-head">${column.label}</div>
+                        <div class="dashboard-matrix-column-head">${{column.label}}</div>
                         <div class="dashboard-matrix-column-body">
                             ${{items.length ? items.map((item) => `
                                 <button
