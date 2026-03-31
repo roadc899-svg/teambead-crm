@@ -8196,125 +8196,113 @@ def _render_dashboard_page_v2(
             for field, _label in descriptor_fields
         }
 
-    focus_rows = rows
-    focus_profit_value = safe_number(total_metrics.get("profit", 0))
-    focus_metrics = serialize_metric_values(total_metrics)
-    focus_descriptors = summarize_dashboard_descriptors(rows)
+    hierarchy_field_names = ["platform", "geo", "manager", "campaign_name", "adset_name", "ad_name"]
+    cascade_sources = {
+        "platform": {
+            "items": tree,
+            "level_key": "matrix_brand",
+            "selected": matrix_brand,
+            "empty_message": "No brands for these filters",
+            "reset_after": ["matrix_geo", "matrix_cabinet", "matrix_campaign", "matrix_adset", "matrix_ad"],
+        },
+        "geo": {
+            "items": selected_brand_node["children"] if selected_brand_node else [],
+            "level_key": "matrix_geo",
+            "selected": matrix_geo,
+            "empty_message": "Select Brand first",
+            "reset_after": ["matrix_cabinet", "matrix_campaign", "matrix_adset", "matrix_ad"],
+        },
+        "manager": {
+            "items": selected_geo_node["children"] if selected_geo_node else [],
+            "level_key": "matrix_cabinet",
+            "selected": matrix_cabinet,
+            "empty_message": "Select GEO first",
+            "reset_after": ["matrix_campaign", "matrix_adset", "matrix_ad"],
+        },
+        "campaign_name": {
+            "items": selected_cabinet_node["children"] if selected_cabinet_node else [],
+            "level_key": "matrix_campaign",
+            "selected": matrix_campaign,
+            "empty_message": "Select Cabinet first",
+            "reset_after": ["matrix_adset", "matrix_ad"],
+        },
+        "adset_name": {
+            "items": selected_campaign_node["children"] if selected_campaign_node else [],
+            "level_key": "matrix_adset",
+            "selected": matrix_adset,
+            "empty_message": "Select Campaign first",
+            "reset_after": ["matrix_ad"],
+        },
+        "ad_name": {
+            "items": selected_ad_items,
+            "level_key": "matrix_ad",
+            "selected": matrix_ad,
+            "empty_message": "Select Adset first",
+            "reset_after": [],
+        },
+    }
+    cascade_row_count = max(1, *[len(config["items"]) for config in cascade_sources.values()])
+    descriptor_field_names = {field for field, _label in descriptor_fields}
 
-    if selected_brand_node:
-        focus_rows = selected_brand_node["rows"]
-        focus_profit_value = safe_number(selected_brand_node["metrics"].get("profit", 0))
-        focus_metrics = serialize_metric_values(selected_brand_node["metrics"])
-        focus_descriptors = summarize_dashboard_descriptors(focus_rows)
-    if selected_geo_node:
-        focus_rows = selected_geo_node["rows"]
-        focus_profit_value = safe_number(selected_geo_node["metrics"].get("profit", 0))
-        focus_metrics = serialize_metric_values(selected_geo_node["metrics"])
-        focus_descriptors = summarize_dashboard_descriptors(focus_rows)
-    if selected_cabinet_node:
-        focus_rows = selected_cabinet_node["rows"]
-        focus_profit_value = safe_number(selected_cabinet_node["metrics"].get("profit", 0))
-        focus_metrics = serialize_metric_values(selected_cabinet_node["metrics"])
-        focus_descriptors = summarize_dashboard_descriptors(focus_rows)
-    if selected_campaign_node:
-        focus_rows = selected_campaign_node["rows"]
-        focus_profit_value = safe_number(selected_campaign_node["metrics"].get("profit", 0))
-        focus_metrics = serialize_metric_values(selected_campaign_node["metrics"])
-        focus_descriptors = summarize_dashboard_descriptors(focus_rows)
-    if selected_adset_node:
-        focus_rows = selected_adset_node["rows"]
-        focus_profit_value = safe_number(selected_adset_node["metrics"].get("profit", 0))
-        focus_metrics = serialize_metric_values(selected_adset_node["metrics"])
-        focus_descriptors = summarize_dashboard_descriptors(focus_rows)
-    if selected_ad_node:
-        focus_rows = selected_ad_node["rows"]
-        focus_profit_value = safe_number(selected_ad_node["metrics"].get("profit", 0))
-        focus_metrics = serialize_metric_values(selected_ad_node["metrics"])
-        focus_descriptors = {
-            field: summarize_unique_dashboard_value(focus_rows, field)
-            for field, _label in descriptor_fields
+    def render_dashboard_cascade_cell(field, row_index):
+        config = cascade_sources[field]
+        items = config["items"]
+        if row_index >= len(items):
+            if row_index == 0 and not items:
+                return f'<span class="dashboard-cascade-empty">{escape(config["empty_message"])}</span>'
+            return ""
+        item = items[row_index]
+        label = safe_text(item.get("label") or item.get("ad_name")).strip() or "—"
+        if field == "ad_name":
+            href = make_matrix_link(matrix_ad=label)
+        else:
+            overrides = {config["level_key"]: label}
+            for key in config["reset_after"]:
+                overrides[key] = ""
+            href = make_matrix_link(**overrides)
+        active_class = " is-active" if safe_text(config["selected"]) == label else ""
+        return (
+            f'<a class="dashboard-cascade-item{active_class}" href="{escape(href)}">'
+            f'<span class="dashboard-cascade-item-text">{escape(label)}</span></a>'
+        )
+
+    def row_context_payload(row_index):
+        for field in reversed(hierarchy_field_names):
+            items = cascade_sources[field]["items"]
+            if row_index < len(items):
+                item = items[row_index]
+                payload_rows = item.get("rows") or rows
+                payload_metrics = item.get("metrics") or total_metrics
+                return {
+                    "descriptors": summarize_dashboard_descriptors(payload_rows),
+                    "metrics": serialize_metric_values(payload_metrics),
+                    "profit_value": safe_number(payload_metrics.get("profit", 0)),
+                }
+        return {
+            "descriptors": summarize_dashboard_descriptors(rows),
+            "metrics": serialize_metric_values(total_metrics),
+            "profit_value": safe_number(total_metrics.get("profit", 0)),
         }
 
-    def render_dashboard_cascade_items(items, level_key, selected_value, empty_message, reset_after=None, is_ad_level=False):
-        if not items:
-            return f'<div class="dashboard-cascade-empty">{escape(empty_message)}</div>'
-        rendered = []
-        for item in items:
-            if is_ad_level:
-                label = safe_text(item.get("label") or item.get("ad_name")).strip() or "—"
-                href = make_matrix_link(matrix_ad=label)
+    row_html_parts = []
+    for row_index in range(cascade_row_count):
+        row_context = row_context_payload(row_index)
+        row_class = "soft-green" if row_context["profit_value"] > 0 else ("soft-red" if row_context["profit_value"] < 0 else "")
+        cell_html = []
+        for field, _label in table_headers:
+            if field in cascade_sources:
+                content = render_dashboard_cascade_cell(field, row_index)
+                cell_class = "dashboard-cascade-cell"
+            elif field in descriptor_field_names:
+                content = escape(row_context["descriptors"].get(field, "") or "")
+                cell_class = "dashboard-cascade-summary-cell"
             else:
-                label = safe_text(item.get("label")).strip() or "—"
-                overrides = {level_key: label}
-                for key in (reset_after or []):
-                    overrides[key] = ""
-                href = make_matrix_link(**overrides)
-            active_class = " is-active" if safe_text(selected_value) == label else ""
-            rendered.append(
-                f'<a class="dashboard-cascade-item{active_class}" href="{escape(href)}">{escape(label)}</a>'
-            )
-        return "".join(rendered)
+                content = escape(safe_text(row_context["metrics"].get(field, "")) or "")
+                cell_class = "dashboard-cascade-summary-cell"
+            cell_html.append(f'<td data-col="{escape(field)}" class="{cell_class}">{content}</td>')
+        row_html_parts.append(f'<tr class="dashboard-cascade-row {row_class}">{"".join(cell_html)}</tr>')
 
-    cascade_lists = {
-        "platform": render_dashboard_cascade_items(
-            tree,
-            "matrix_brand",
-            matrix_brand,
-            "No brands for these filters",
-            reset_after=["matrix_geo", "matrix_cabinet", "matrix_campaign", "matrix_adset", "matrix_ad"],
-        ),
-        "geo": render_dashboard_cascade_items(
-            selected_brand_node["children"] if selected_brand_node else [],
-            "matrix_geo",
-            matrix_geo,
-            "Select Brand first",
-            reset_after=["matrix_cabinet", "matrix_campaign", "matrix_adset", "matrix_ad"],
-        ),
-        "manager": render_dashboard_cascade_items(
-            selected_geo_node["children"] if selected_geo_node else [],
-            "matrix_cabinet",
-            matrix_cabinet,
-            "Select GEO first",
-            reset_after=["matrix_campaign", "matrix_adset", "matrix_ad"],
-        ),
-        "campaign_name": render_dashboard_cascade_items(
-            selected_cabinet_node["children"] if selected_cabinet_node else [],
-            "matrix_campaign",
-            matrix_campaign,
-            "Select Cabinet first",
-            reset_after=["matrix_adset", "matrix_ad"],
-        ),
-        "adset_name": render_dashboard_cascade_items(
-            selected_campaign_node["children"] if selected_campaign_node else [],
-            "matrix_adset",
-            matrix_adset,
-            "Select Campaign first",
-            reset_after=["matrix_ad"],
-        ),
-        "ad_name": render_dashboard_cascade_items(
-            selected_ad_items,
-            "matrix_ad",
-            matrix_ad,
-            "Select Adset first",
-            is_ad_level=True,
-        ),
-    }
-
-    def render_dashboard_summary_cell(field):
-        if field in cascade_lists:
-            return f'<div class="dashboard-cascade-list">{cascade_lists[field]}</div>'
-        if field in {name for name, _label in descriptor_fields}:
-            return escape(focus_descriptors.get(field, "") or "")
-        return escape(safe_text(focus_metrics.get(field, "")) or "")
-
-    rows_html = f"""
-    <tr class="dashboard-cascade-row {'soft-green' if focus_profit_value > 0 else ('soft-red' if focus_profit_value < 0 else '')}">
-        {''.join(
-            f'<td data-col="{escape(field)}" class="{"dashboard-cascade-cell" if field in cascade_lists else "dashboard-cascade-summary-cell"}">{render_dashboard_summary_cell(field)}</td>'
-            for field, _label in table_headers
-        )}
-    </tr>
-    """
+    rows_html = "".join(row_html_parts)
 
     def render_dashboard_table_panel(title, table_id):
         body_html = rows_html if rows else f'<tr><td colspan="{len(table_headers)}">No dashboard rows for the selected filters</td></tr>'
@@ -9086,57 +9074,60 @@ def _render_dashboard_page_v2(
         -webkit-user-select:none;
     }}
     .dashboard-v2 table[data-dashboard-cascade-table] tbody tr.dashboard-cascade-row {{
-        height:auto;
+        height:15px;
     }}
     .dashboard-v2 table[data-dashboard-cascade-table] tbody tr.dashboard-cascade-row td {{
-        height:auto;
-        vertical-align:top;
-        padding:10px 8px;
-        white-space:normal;
-        overflow:visible;
-        text-overflow:clip;
+        height:15px;
+        vertical-align:middle;
+        padding:0 7px;
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
     }}
     .dashboard-v2 table[data-dashboard-cascade-table] td.dashboard-cascade-cell {{
-        padding:0;
-    }}
-    .dashboard-v2 .dashboard-cascade-list {{
-        display:grid;
-        gap:4px;
-        min-height:220px;
-        max-height:420px;
-        padding:8px;
-        overflow:auto;
+        color:#20385f;
     }}
     .dashboard-v2 .dashboard-cascade-item {{
-        display:block;
-        padding:8px 10px;
-        border-radius:12px;
+        display:inline-flex;
+        align-items:center;
+        min-height:15px;
+        padding:0;
+        border-radius:0;
+        border-bottom:0;
         color:#20385f;
-        font-size:13px;
+        font-size:12px;
         font-weight:600;
-        line-height:1.2;
+        line-height:1.05;
         text-decoration:none;
         background:transparent;
-        transition:background .14s ease, box-shadow .14s ease;
+        transition:color .14s ease;
     }}
     .dashboard-v2 .dashboard-cascade-item:hover {{
-        background:#f5f9ff;
+        color:#2a5da8;
     }}
     .dashboard-v2 .dashboard-cascade-item.is-active {{
-        background:#beddff;
-        box-shadow:inset 0 0 0 1px rgba(54, 116, 209, 0.26);
+        color:#18345d;
+        font-weight:700;
+    }}
+    .dashboard-v2 .dashboard-cascade-item-text {{
+        display:inline-block;
+        max-width:100%;
+        overflow:hidden;
+        text-overflow:ellipsis;
+        white-space:nowrap;
     }}
     .dashboard-v2 .dashboard-cascade-empty {{
-        padding:12px 10px;
+        display:inline-block;
+        padding:0;
         color:#8da0bf;
         font-size:12px;
-        line-height:1.35;
+        line-height:1.05;
     }}
     .dashboard-v2 table[data-dashboard-cascade-table] td.dashboard-cascade-summary-cell {{
         color:#20385f;
-        font-size:13px;
+        font-size:12px;
         font-weight:600;
-        line-height:1.3;
+        line-height:1.05;
     }}
     .dashboard-v2 table[data-dashboard-flat-table] tbody tr:hover td {{
         background:#f6faff;
