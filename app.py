@@ -5095,6 +5095,18 @@ def chatterfy_chat_matches_period(chat_item, start_dt, end_dt):
     started_at = chatterfy_chat_started_at(chat_item)
     if not started_at:
         return False
+    if started_at.tzinfo:
+        started_at = started_at.astimezone(LOCAL_TIMEZONE)
+    else:
+        started_at = started_at.replace(tzinfo=LOCAL_TIMEZONE)
+    if start_dt.tzinfo:
+        start_dt = start_dt.astimezone(LOCAL_TIMEZONE)
+    else:
+        start_dt = start_dt.replace(tzinfo=LOCAL_TIMEZONE)
+    if end_dt.tzinfo:
+        end_dt = end_dt.astimezone(LOCAL_TIMEZONE)
+    else:
+        end_dt = end_dt.replace(tzinfo=LOCAL_TIMEZONE)
     return start_dt <= started_at <= end_dt
 
 
