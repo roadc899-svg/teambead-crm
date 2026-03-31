@@ -8006,6 +8006,16 @@ def _render_dashboard_page_v2(
     .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-row-selected:hover td {{
         background:#d9edff !important;
     }}
+    .dashboard-v2 table[data-dashboard-tree-table] td.dashboard-cell-selected {{
+        background:#cfe8ff !important;
+    }}
+    .dashboard-v2 table[data-dashboard-tree-table] th.dashboard-column-selected,
+    .dashboard-v2 table[data-dashboard-tree-table] td.dashboard-column-selected {{
+        background:#dff0ff !important;
+    }}
+    .dashboard-v2 table[data-dashboard-tree-table] td.dashboard-cell-selected.dashboard-column-selected {{
+        background:#c7e3ff !important;
+    }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row td {{
         font-weight:700;
         border-top:1px solid rgba(138, 159, 194, 0.22);
@@ -8304,18 +8314,6 @@ def _render_dashboard_page_v2(
         overflow:visible;
         text-overflow:clip;
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="platform"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="platform"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="geo"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="geo"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="manager"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="manager"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="campaign_name"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="campaign_name"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="adset_name"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="adset_name"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="ad_name"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="ad_name"],
     .dashboard-v2 table[data-dashboard-tree-table] th[data-col="buyer"],
     .dashboard-v2 table[data-dashboard-tree-table] td[data-col="buyer"],
     .dashboard-v2 table[data-dashboard-tree-table] th[data-col="offer"],
@@ -8329,6 +8327,64 @@ def _render_dashboard_page_v2(
         width:auto !important;
         min-width:0 !important;
         max-width:none !important;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="platform"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="platform"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="geo"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="geo"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="manager"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="manager"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="campaign_name"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="campaign_name"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="adset_name"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="adset_name"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="ad_name"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="ad_name"] {{
+        position:sticky;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="platform"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="platform"] {{
+        left:0;
+        z-index:7;
+        box-shadow:1px 0 0 rgba(191, 212, 244, 0.9);
+    }}
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="geo"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="geo"] {{
+        left:96px;
+        z-index:7;
+        box-shadow:1px 0 0 rgba(191, 212, 244, 0.9);
+    }}
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="manager"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="manager"] {{
+        left:160px;
+        z-index:7;
+        box-shadow:1px 0 0 rgba(191, 212, 244, 0.9);
+    }}
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="campaign_name"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="campaign_name"] {{
+        left:270px;
+        z-index:7;
+        box-shadow:1px 0 0 rgba(191, 212, 244, 0.9);
+    }}
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="adset_name"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="adset_name"] {{
+        left:458px;
+        z-index:7;
+        box-shadow:1px 0 0 rgba(191, 212, 244, 0.9);
+    }}
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="ad_name"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="ad_name"] {{
+        left:646px;
+        z-index:7;
+        box-shadow:2px 0 0 rgba(173, 198, 234, 0.95);
+    }}
+    .dashboard-v2 #dashboardUnifiedTable thead th[data-col="platform"],
+    .dashboard-v2 #dashboardUnifiedTable thead th[data-col="geo"],
+    .dashboard-v2 #dashboardUnifiedTable thead th[data-col="manager"],
+    .dashboard-v2 #dashboardUnifiedTable thead th[data-col="campaign_name"],
+    .dashboard-v2 #dashboardUnifiedTable thead th[data-col="adset_name"],
+    .dashboard-v2 #dashboardUnifiedTable thead th[data-col="ad_name"] {{
+        z-index:9;
     }}
     @media (max-width: 1500px) {{
         .dashboard-v2 .dashboard-filter-grid {{
@@ -8604,6 +8660,76 @@ def _render_dashboard_page_v2(
             row.classList.toggle('dashboard-row-selected');
             window.dashboardPersistSelectedRows(table);
         }};
+        window.dashboardApplySelectedColumns = (table) => {{
+            if (!table) return;
+            const state = window.dashboardReadState();
+            const selectedColumns = state.selectedColumns || {{}};
+            const selectedCols = new Set(
+                Array.isArray(selectedColumns[table.id || 'dashboard-tree-table'])
+                    ? selectedColumns[table.id || 'dashboard-tree-table']
+                    : []
+            );
+            Array.from(table.querySelectorAll('[data-col]')).forEach((cell) => {{
+                cell.classList.toggle('dashboard-column-selected', selectedCols.has(cell.dataset.col || ''));
+            }});
+        }};
+        window.dashboardPersistSelectedColumns = (table) => {{
+            if (!table) return;
+            const state = window.dashboardReadState();
+            state.selectedColumns = state.selectedColumns || {{}};
+            const uniqueCols = Array.from(new Set(
+                Array.from(table.querySelectorAll('.dashboard-column-selected[data-col]'))
+                    .map((cell) => cell.dataset.col || '')
+                    .filter(Boolean)
+            ));
+            state.selectedColumns[table.id || 'dashboard-tree-table'] = uniqueCols;
+            window.dashboardWriteState(state);
+        }};
+        window.dashboardToggleColumnSelection = (table, columnName) => {{
+            if (!table || !columnName) return;
+            const columnCells = Array.from(table.querySelectorAll(`[data-col="${{columnName}}"]`));
+            const shouldSelect = !columnCells.every((cell) => cell.classList.contains('dashboard-column-selected'));
+            columnCells.forEach((cell) => {{
+                cell.classList.toggle('dashboard-column-selected', shouldSelect);
+            }});
+            window.dashboardPersistSelectedColumns(table);
+        }};
+        window.dashboardApplySelectedCells = (table) => {{
+            if (!table) return;
+            const state = window.dashboardReadState();
+            const selectedCells = state.selectedCells || {{}};
+            const selectedKeys = new Set(
+                Array.isArray(selectedCells[table.id || 'dashboard-tree-table'])
+                    ? selectedCells[table.id || 'dashboard-tree-table']
+                    : []
+            );
+            Array.from(table.querySelectorAll('tbody td[data-col]')).forEach((cell) => {{
+                const row = cell.closest('tr[data-row-key]');
+                const rowKey = row?.dataset.rowKey || '';
+                const cellKey = rowKey && cell.dataset.col ? `${{rowKey}}::${{cell.dataset.col}}` : '';
+                cell.classList.toggle('dashboard-cell-selected', selectedKeys.has(cellKey));
+            }});
+        }};
+        window.dashboardPersistSelectedCells = (table) => {{
+            if (!table) return;
+            const state = window.dashboardReadState();
+            state.selectedCells = state.selectedCells || {{}};
+            state.selectedCells[table.id || 'dashboard-tree-table'] = Array.from(
+                table.querySelectorAll('tbody td.dashboard-cell-selected[data-col]')
+            ).map((cell) => {{
+                const row = cell.closest('tr[data-row-key]');
+                const rowKey = row?.dataset.rowKey || '';
+                return rowKey && cell.dataset.col ? `${{rowKey}}::${{cell.dataset.col}}` : '';
+            }}).filter(Boolean);
+            window.dashboardWriteState(state);
+        }};
+        window.dashboardToggleCellSelection = (cell) => {{
+            if (!cell) return;
+            const table = cell.closest('[data-dashboard-tree-table]');
+            if (!table) return;
+            cell.classList.toggle('dashboard-cell-selected');
+            window.dashboardPersistSelectedCells(table);
+        }};
         window.restoreDashboardUiState = () => {{
             document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
             const getTreeButtons = () => Array.from(table.querySelectorAll('.dashboard-tree-toggle'));
@@ -8674,6 +8800,8 @@ def _render_dashboard_page_v2(
                 }});
                 window.dashboardTreeAutoSize(table);
                 if (window.dashboardApplySelectedRows) window.dashboardApplySelectedRows(table);
+                if (window.dashboardApplySelectedColumns) window.dashboardApplySelectedColumns(table);
+                if (window.dashboardApplySelectedCells) window.dashboardApplySelectedCells(table);
             }});
         }};
         const scheduleDashboardUiRestore = () => {{
@@ -8775,11 +8903,22 @@ def _render_dashboard_page_v2(
         document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
             table.addEventListener('click', (event) => {{
                 if (event.target.closest('.dashboard-tree-toggle, a, input, select, label, summary, button')) return;
-                const row = event.target.closest('tbody tr[data-row-key]');
-                if (!row || !table.contains(row)) return;
-                if (window.dashboardToggleRowSelection) window.dashboardToggleRowSelection(row);
+                const cell = event.target.closest('tbody td[data-col]');
+                if (cell && table.contains(cell)) {{
+                    if (window.dashboardToggleCellSelection) window.dashboardToggleCellSelection(cell);
+                    return;
+                }}
+            }});
+            table.addEventListener('dblclick', (event) => {{
+                if (event.target.closest('.dashboard-tree-toggle, a, input, select, label, summary, button')) return;
+                const cell = event.target.closest('[data-col]');
+                const columnName = cell?.dataset.col || '';
+                if (!columnName || !table.contains(cell)) return;
+                if (window.dashboardToggleColumnSelection) window.dashboardToggleColumnSelection(table, columnName);
             }});
             if (window.dashboardApplySelectedRows) window.dashboardApplySelectedRows(table);
+            if (window.dashboardApplySelectedColumns) window.dashboardApplySelectedColumns(table);
+            if (window.dashboardApplySelectedCells) window.dashboardApplySelectedCells(table);
         }});
         requestAnimationFrame(() => {{
             scheduleDashboardUiRestore();
