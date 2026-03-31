@@ -7679,7 +7679,8 @@ def _render_dashboard_page_v2(
         )
         toggle = (
             f'<button type="button" class="dashboard-tree-toggle dashboard-tree-toggle-{escape(variant)}" '
-            f'data-target="{escape(node["id"])}" aria-expanded="false">{icon_html}'
+            f'data-target="{escape(node["id"])}" aria-expanded="false" '
+            f'onclick="window.dashboardTreeToggle && window.dashboardTreeToggle(this); return false;">{icon_html}'
             f'<span class="dashboard-tree-label">{escape(node["label"])}</span></button>'
         )
         return f'<div class="dashboard-tree-cell dashboard-tree-level-{level}">{toggle}</div>'
@@ -8265,6 +8266,41 @@ def _render_dashboard_page_v2(
         color:#d84c57;
         font-weight:800;
     }}
+    .dashboard-v2 table[data-dashboard-tree-table] {{
+        table-layout:auto;
+        width:max-content;
+        min-width:100%;
+    }}
+    .dashboard-v2 table[data-dashboard-tree-table] tbody td {{
+        overflow:visible;
+        text-overflow:clip;
+    }}
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="platform"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="platform"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="geo"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="geo"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="manager"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="manager"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="campaign_name"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="campaign_name"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="adset_name"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="adset_name"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="ad_name"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="ad_name"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="buyer"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="buyer"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="offer"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="offer"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="cabinet_text"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="cabinet_text"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="advertiser_text"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="advertiser_text"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="account_id"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="account_id"] {{
+        width:auto;
+        min-width:0;
+        max-width:none;
+    }}
     @media (max-width: 1500px) {{
         .dashboard-v2 .dashboard-filter-grid {{
             grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));
@@ -8431,6 +8467,49 @@ def _render_dashboard_page_v2(
             }});
         }});
 
+        window.dashboardTreeToggle = (button) => {{
+            if (!button) return false;
+            const table = button.closest('[data-dashboard-tree-table]');
+            if (!table) return false;
+            const tableId = table.id || 'dashboard-tree-table';
+            const expandedKey = window.teambeadStorageKey(`dashboard-expanded:${{tableId}}`);
+            const nodeId = button.dataset.target || '';
+            if (!nodeId) return false;
+            const treeRows = Array.from(table.querySelectorAll('tbody tr'));
+            const treeButtons = Array.from(table.querySelectorAll('.dashboard-tree-toggle'));
+            const hideDescendants = (currentNodeId) => {{
+                treeRows.forEach((row) => {{
+                    const ancestors = (row.dataset.ancestors || '').split(',').filter(Boolean);
+                    if (!ancestors.includes(currentNodeId)) return;
+                    row.hidden = true;
+                    if (row.dataset.nodeId) {{
+                        const nestedButton = row.querySelector('.dashboard-tree-toggle');
+                        if (nestedButton) nestedButton.setAttribute('aria-expanded', 'false');
+                    }}
+                }});
+            }};
+            const showDirectChildren = (currentNodeId) => {{
+                treeRows.forEach((row) => {{
+                    if ((row.dataset.parentId || '') !== currentNodeId) return;
+                    row.hidden = false;
+                }});
+            }};
+            const expanded = button.getAttribute('aria-expanded') === 'true';
+            if (expanded) {{
+                button.setAttribute('aria-expanded', 'false');
+                hideDescendants(nodeId);
+            }} else {{
+                button.setAttribute('aria-expanded', 'true');
+                showDirectChildren(nodeId);
+            }}
+            const openNodes = treeButtons
+                .filter((item) => item.getAttribute('aria-expanded') === 'true')
+                .map((item) => item.dataset.target || '')
+                .filter(Boolean);
+            localStorage.setItem(expandedKey, JSON.stringify(openNodes));
+            return false;
+        }};
+
         document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
             const tableId = table.id || 'dashboard-tree-table';
             const expandedKey = window.teambeadStorageKey(`dashboard-expanded:${{tableId}}`);
@@ -8486,18 +8565,6 @@ def _render_dashboard_page_v2(
                 button.setAttribute('aria-expanded', 'false');
                 hideDescendants(nodeId);
             }};
-            table.addEventListener('click', (event) => {{
-                const button = event.target.closest('.dashboard-tree-toggle');
-                if (!button || !table.contains(button)) return;
-                const expanded = button.getAttribute('aria-expanded') === 'true';
-                if (expanded) {{
-                    collapseNode(button);
-                    saveExpandedState();
-                    return;
-                }}
-                expandNode(button);
-                saveExpandedState();
-            }});
             readExpandedNodes().forEach((nodeId) => {{
                 const button = getButtonMap().get(nodeId);
                 if (!button) return;
