@@ -8434,18 +8434,24 @@ def _render_dashboard_page_v2(
         document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
             const tableId = table.id || 'dashboard-tree-table';
             const expandedKey = window.teambeadStorageKey(`dashboard-expanded:${{tableId}}`);
-            const treeButtons = Array.from(table.querySelectorAll('.dashboard-tree-toggle'));
-            const treeRows = Array.from(table.querySelectorAll('tbody tr'));
-            const buttonMap = new Map(treeButtons.map((button) => [button.dataset.target || '', button]));
-            let expandedNodes = [];
-            try {{
-                expandedNodes = JSON.parse(localStorage.getItem(expandedKey) || '[]');
-                if (!Array.isArray(expandedNodes)) expandedNodes = [];
-            }} catch (_error) {{
-                expandedNodes = [];
-            }}
+            const getTreeButtons = () => Array.from(table.querySelectorAll('.dashboard-tree-toggle'));
+            const getTreeRows = () => Array.from(table.querySelectorAll('tbody tr'));
+            const getButtonMap = () => new Map(getTreeButtons().map((button) => [button.dataset.target || '', button]));
+            const readExpandedNodes = () => {{
+                try {{
+                    const parsed = JSON.parse(localStorage.getItem(expandedKey) || '[]');
+                    return Array.isArray(parsed) ? parsed : [];
+                }} catch (_error) {{
+                    return [];
+                }}
+            }};
+            const writeExpandedNodes = (items) => {{
+                try {{
+                    localStorage.setItem(expandedKey, JSON.stringify(items));
+                }} catch (_error) {{}}
+            }};
             const hideDescendants = (nodeId) => {{
-                treeRows.forEach((row) => {{
+                getTreeRows().forEach((row) => {{
                     const ancestors = (row.dataset.ancestors || '').split(',').filter(Boolean);
                     if (!ancestors.includes(nodeId)) return;
                     row.hidden = true;
@@ -8456,42 +8462,52 @@ def _render_dashboard_page_v2(
                 }});
             }};
             const saveExpandedState = () => {{
-                const openNodes = treeButtons
+                const openNodes = getTreeButtons()
                     .filter((button) => button.getAttribute('aria-expanded') === 'true')
                     .map((button) => button.dataset.target || '')
                     .filter(Boolean);
-                localStorage.setItem(expandedKey, JSON.stringify(openNodes));
+                writeExpandedNodes(openNodes);
             }};
             const showDirectChildren = (nodeId) => {{
-                treeRows.forEach((row) => {{
+                getTreeRows().forEach((row) => {{
                     if ((row.dataset.parentId || '') !== nodeId) return;
                     row.hidden = false;
                 }});
             }};
-            treeButtons.forEach((button) => {{
-                button.addEventListener('click', () => {{
-                    const nodeId = button.dataset.target || '';
-                    if (!nodeId) return;
-                    const expanded = button.getAttribute('aria-expanded') === 'true';
-                    if (expanded) {{
-                        button.setAttribute('aria-expanded', 'false');
-                        hideDescendants(nodeId);
-                        saveExpandedState();
-                        return;
-                    }}
-                    button.setAttribute('aria-expanded', 'true');
-                    showDirectChildren(nodeId);
-                    saveExpandedState();
-                }});
-            }});
-            expandedNodes.forEach((nodeId) => {{
-                const button = buttonMap.get(nodeId);
-                if (!button) return;
-                const parentRow = button.closest('tr');
-                const parentId = parentRow?.dataset.parentId || '';
-                if (parentId) showDirectChildren(parentId);
+            const expandNode = (button) => {{
+                const nodeId = button.dataset.target || '';
+                if (!nodeId) return;
                 button.setAttribute('aria-expanded', 'true');
                 showDirectChildren(nodeId);
+            }};
+            const collapseNode = (button) => {{
+                const nodeId = button.dataset.target || '';
+                if (!nodeId) return;
+                button.setAttribute('aria-expanded', 'false');
+                hideDescendants(nodeId);
+            }};
+            table.addEventListener('click', (event) => {{
+                const button = event.target.closest('.dashboard-tree-toggle');
+                if (!button || !table.contains(button)) return;
+                const expanded = button.getAttribute('aria-expanded') === 'true';
+                if (expanded) {{
+                    collapseNode(button);
+                    saveExpandedState();
+                    return;
+                }}
+                expandNode(button);
+                saveExpandedState();
+            }});
+            readExpandedNodes().forEach((nodeId) => {{
+                const button = getButtonMap().get(nodeId);
+                if (!button) return;
+                const parentRow = button.closest('tr');
+                const ancestors = (parentRow?.dataset.ancestors || '').split(',').filter(Boolean);
+                ancestors.forEach((ancestorId) => {{
+                    const ancestorButton = getButtonMap().get(ancestorId);
+                    if (ancestorButton) expandNode(ancestorButton);
+                }});
+                expandNode(button);
             }});
         }});
 
