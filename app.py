@@ -7507,6 +7507,12 @@ def _render_dashboard_page_v2(
     account_id = safe_text(request.query_params.get("account_id"))
     ad_name = safe_text(request.query_params.get("ad_name"))
     source_name = safe_text(request.query_params.get("source_name"))
+    matrix_brand = safe_text(request.query_params.get("matrix_brand"))
+    matrix_geo = safe_text(request.query_params.get("matrix_geo"))
+    matrix_cabinet = safe_text(request.query_params.get("matrix_cabinet"))
+    matrix_campaign = safe_text(request.query_params.get("matrix_campaign"))
+    matrix_adset = safe_text(request.query_params.get("matrix_adset"))
+    matrix_ad = safe_text(request.query_params.get("matrix_ad"))
     has_caps = safe_text(request.query_params.get("has_caps"))
     has_hold = safe_text(request.query_params.get("has_hold"))
     has_chatterfy = safe_text(request.query_params.get("has_chatterfy"))
@@ -7598,6 +7604,12 @@ def _render_dashboard_page_v2(
         "sort_by": sort_by,
         "order": order,
         "dashboard_state": dashboard_state_param,
+        "matrix_brand": matrix_brand,
+        "matrix_geo": matrix_geo,
+        "matrix_cabinet": matrix_cabinet,
+        "matrix_campaign": matrix_campaign,
+        "matrix_adset": matrix_adset,
+        "matrix_ad": matrix_ad,
     }
 
     dashboard_numeric_fields = [
@@ -7912,6 +7924,176 @@ def _render_dashboard_page_v2(
 
     matrix_tree_json = json.dumps(serialize_tree_payload(tree), ensure_ascii=False)
     matrix_metric_fields_json = json.dumps(matrix_metric_fields, ensure_ascii=False)
+
+    def make_matrix_link(label, **overrides):
+        params = {**filter_params, **overrides}
+        return f'/dashboard?{build_query_string(**params)}'
+
+    def find_node(nodes, label):
+        clean_label = safe_text(label)
+        if not clean_label:
+            return None
+        for node in nodes or []:
+            if safe_text(node.get("label")) == clean_label:
+                return node
+        return None
+
+    selected_brand_node = find_node(tree, matrix_brand)
+    selected_geo_node = find_node(selected_brand_node["children"], matrix_geo) if selected_brand_node else None
+    selected_cabinet_node = find_node(selected_geo_node["children"], matrix_cabinet) if selected_geo_node else None
+    selected_campaign_node = find_node(selected_cabinet_node["children"], matrix_campaign) if selected_cabinet_node else None
+    selected_adset_node = find_node(selected_campaign_node["children"], matrix_adset) if selected_campaign_node else None
+
+    matrix_selected_ad_row = None
+    if selected_adset_node and matrix_ad:
+        for row in _dashboard_sort_rows(selected_adset_node["rows"], sort_by=sort_by, order=order):
+            if safe_text(row.get("ad_name")) == matrix_ad:
+                matrix_selected_ad_row = row
+                break
+
+    def render_matrix_path_html():
+        chips = []
+        for value in [matrix_brand, matrix_geo, matrix_cabinet, matrix_campaign, matrix_adset, matrix_ad]:
+            if safe_text(value):
+                chips.append(f'<span class="dashboard-matrix-path-chip">{escape(value)}</span>')
+        return "".join(chips) if chips else '<span class="dashboard-matrix-path-chip">Choose Brand to start drill-down</span>'
+
+    def render_matrix_items(items, level_key, selected_value, reset_after=None, is_ad_level=False):
+        if not items:
+            return '<div class="dashboard-matrix-empty">No items on this level yet</div>'
+        rendered = []
+        for item in items:
+            if is_ad_level:
+                label = safe_text(item.get("ad_name")) or "—"
+                metrics = serialize_metric_values(item)
+                href = make_matrix_link(
+                    matrix_ad=label,
+                )
+            else:
+                label = safe_text(item.get("label")) or "—"
+                metrics = item.get("metrics", {})
+                overrides = {
+                    level_key: label,
+                }
+                for key in (reset_after or []):
+                    overrides[key] = ""
+                href = make_matrix_link(**overrides)
+            active_class = " is-active" if safe_text(selected_value) == label else ""
+            rendered.append(
+                f'<a class="dashboard-matrix-item{active_class}" href="{escape(href)}">'
+                f'<div class="dashboard-matrix-item-label">{escape(label)}</div>'
+                f'<div class="dashboard-matrix-item-sub">'
+                f'<span>{escape(metrics.get("spend", "—"))} spend</span>'
+                f'<span>{escape(metrics.get("leads", "—"))} leads</span>'
+                f'<span>{escape(metrics.get("clicks", "—"))} clicks</span>'
+                f'</div>'
+                f'</a>'
+            )
+        return "".join(rendered)
+
+    matrix_columns_html = "".join([
+        f'''
+        <div class="dashboard-matrix-column">
+            <div class="dashboard-matrix-column-head">Brand</div>
+            <div class="dashboard-matrix-column-body">
+                {render_matrix_items(tree, "matrix_brand", matrix_brand, reset_after=["matrix_geo", "matrix_cabinet", "matrix_campaign", "matrix_adset", "matrix_ad"])}
+            </div>
+        </div>
+        ''',
+        f'''
+        <div class="dashboard-matrix-column">
+            <div class="dashboard-matrix-column-head">Geo</div>
+            <div class="dashboard-matrix-column-body">
+                {render_matrix_items(selected_brand_node["children"] if selected_brand_node else [], "matrix_geo", matrix_geo, reset_after=["matrix_cabinet", "matrix_campaign", "matrix_adset", "matrix_ad"])}
+            </div>
+        </div>
+        ''',
+        f'''
+        <div class="dashboard-matrix-column">
+            <div class="dashboard-matrix-column-head">Cabinet</div>
+            <div class="dashboard-matrix-column-body">
+                {render_matrix_items(selected_geo_node["children"] if selected_geo_node else [], "matrix_cabinet", matrix_cabinet, reset_after=["matrix_campaign", "matrix_adset", "matrix_ad"])}
+            </div>
+        </div>
+        ''',
+        f'''
+        <div class="dashboard-matrix-column">
+            <div class="dashboard-matrix-column-head">Campaign</div>
+            <div class="dashboard-matrix-column-body">
+                {render_matrix_items(selected_cabinet_node["children"] if selected_cabinet_node else [], "matrix_campaign", matrix_campaign, reset_after=["matrix_adset", "matrix_ad"])}
+            </div>
+        </div>
+        ''',
+        f'''
+        <div class="dashboard-matrix-column">
+            <div class="dashboard-matrix-column-head">Adset</div>
+            <div class="dashboard-matrix-column-body">
+                {render_matrix_items(selected_campaign_node["children"] if selected_campaign_node else [], "matrix_adset", matrix_adset, reset_after=["matrix_ad"])}
+            </div>
+        </div>
+        ''',
+        f'''
+        <div class="dashboard-matrix-column">
+            <div class="dashboard-matrix-column-head">Ad</div>
+            <div class="dashboard-matrix-column-body">
+                {render_matrix_items(_dashboard_sort_rows(selected_adset_node["rows"], sort_by=sort_by, order=order) if selected_adset_node else [], "matrix_ad", matrix_ad, is_ad_level=True)}
+            </div>
+        </div>
+        ''',
+    ])
+
+    matrix_focus_metrics = None
+    matrix_focus_title = "No selection"
+    matrix_focus_subtitle = "Choose Brand, then keep drilling to the right."
+    matrix_ads_table_html = ""
+
+    if matrix_selected_ad_row:
+        matrix_focus_metrics = serialize_metric_values(matrix_selected_ad_row)
+        matrix_focus_title = safe_text(matrix_selected_ad_row.get("ad_name")) or "Ad"
+        matrix_focus_subtitle = "Ad metrics"
+    elif selected_adset_node:
+        matrix_focus_metrics = serialize_metric_values(selected_adset_node["metrics"])
+        matrix_focus_title = selected_adset_node["label"]
+        matrix_focus_subtitle = "Adset metrics"
+        ads_rows = _dashboard_sort_rows(selected_adset_node["rows"], sort_by=sort_by, order=order)
+        ads_table_rows = "".join([
+            f"<tr><td>{escape(row.get('ad_name') or '—')}</td><td>{escape(row.get('account_id') or '—')}</td><td>{escape(row.get('buyer') or '—')}</td><td>{escape(row.get('offer') or '—')}</td><td>{format_money(row.get('spend', 0))}</td><td>{format_int_or_float(row.get('clicks', 0))}</td><td>{format_int_or_float(row.get('leads', 0))}</td><td>{format_int_or_float(row.get('reg', 0))}</td></tr>"
+            for row in ads_rows
+        ])
+        matrix_ads_table_html = f'''
+        <div class="dashboard-matrix-ads">
+            <div class="dashboard-matrix-ads-title">Ads inside selected branch</div>
+            <table class="dashboard-matrix-ads-table">
+                <thead>
+                    <tr><th>Ad</th><th>Account</th><th>Buyer</th><th>Offer</th><th>Spend</th><th>Clicks</th><th>Leads</th><th>Reg</th></tr>
+                </thead>
+                <tbody>{ads_table_rows}</tbody>
+            </table>
+        </div>
+        '''
+    elif selected_campaign_node:
+        matrix_focus_metrics = serialize_metric_values(selected_campaign_node["metrics"])
+        matrix_focus_title = selected_campaign_node["label"]
+        matrix_focus_subtitle = "Campaign metrics"
+    elif selected_cabinet_node:
+        matrix_focus_metrics = serialize_metric_values(selected_cabinet_node["metrics"])
+        matrix_focus_title = selected_cabinet_node["label"]
+        matrix_focus_subtitle = "Cabinet metrics"
+    elif selected_geo_node:
+        matrix_focus_metrics = serialize_metric_values(selected_geo_node["metrics"])
+        matrix_focus_title = selected_geo_node["label"]
+        matrix_focus_subtitle = "Geo metrics"
+    elif selected_brand_node:
+        matrix_focus_metrics = serialize_metric_values(selected_brand_node["metrics"])
+        matrix_focus_title = selected_brand_node["label"]
+        matrix_focus_subtitle = "Brand metrics"
+
+    matrix_metrics_html = ""
+    if matrix_focus_metrics:
+        matrix_metrics_html = '<div class="dashboard-matrix-metrics">' + "".join([
+            f'<div class="dashboard-matrix-metric"><div class="dashboard-matrix-metric-label">{escape(label)}</div><div class="dashboard-matrix-metric-value">{escape(matrix_focus_metrics.get(field, "—"))}</div></div>'
+            for field, label in matrix_metric_fields
+        ]) + '</div>'
 
     buyer_filter_html = ""
     if is_admin_role(user) or user.get("role") == "operator":
@@ -8798,13 +8980,19 @@ def _render_dashboard_page_v2(
         <div class="dashboard-table-header">
             <div class="dashboard-table-title">
                 <div class="panel-title">CRM Analytics Matrix</div>
-                <div class="panel-subtitle">Power BI style analytical drill-down across Brand, GEO, Cabinet, Campaign, Adset and Ad.</div>
             </div>
         </div>
         <div class="dashboard-matrix-wrap">
-            <div class="dashboard-matrix-path" id="dashboardMatrixPath"></div>
-            <div class="dashboard-matrix-board" id="dashboardMatrixBoard"></div>
-            <div class="dashboard-matrix-detail" id="dashboardMatrixDetail"></div>
+            <div class="dashboard-matrix-path">{render_matrix_path_html()}</div>
+            <div class="dashboard-matrix-board">{matrix_columns_html}</div>
+            <div class="dashboard-matrix-detail">
+                <div class="dashboard-matrix-detail-head">
+                    <div class="dashboard-matrix-detail-title">{escape(matrix_focus_title)}</div>
+                    <div class="dashboard-matrix-detail-subtitle">{escape(matrix_focus_subtitle)}</div>
+                </div>
+                {matrix_metrics_html}
+                {matrix_ads_table_html}
+            </div>
         </div>
     </div>
 
@@ -9377,219 +9565,6 @@ def _render_dashboard_page_v2(
         requestAnimationFrame(() => {{
             scheduleDashboardUiRestore();
         }});
-    }})();
-    </script>
-    <script>
-    (() => {{
-        const treeData = {matrix_tree_json};
-        const metricFields = {matrix_metric_fields_json};
-        const stateKey = window.teambeadStorageKey('dashboard-matrix-state');
-        const pathEl = document.getElementById('dashboardMatrixPath');
-        const boardEl = document.getElementById('dashboardMatrixBoard');
-        const detailEl = document.getElementById('dashboardMatrixDetail');
-        if (!pathEl || !boardEl || !detailEl) return;
-
-        const columns = [
-            {{ key: 'platform', label: 'Brand' }},
-            {{ key: 'geo', label: 'Geo' }},
-            {{ key: 'manager', label: 'Cabinet' }},
-            {{ key: 'campaign_name', label: 'Campaign' }},
-            {{ key: 'adset_name', label: 'Adset' }},
-            {{ key: 'ad_name', label: 'Ad' }},
-        ];
-
-        const readState = () => {{
-            try {{
-                const parsed = JSON.parse(localStorage.getItem(stateKey) || '{{}}');
-                return parsed && typeof parsed === 'object' ? parsed : {{}};
-            }} catch (_error) {{
-                return {{}};
-            }}
-        }};
-
-        const writeState = (state) => {{
-            try {{
-                localStorage.setItem(stateKey, JSON.stringify(state || {{}}));
-            }} catch (_error) {{}}
-        }};
-
-        const savePath = (path) => {{
-            const state = readState();
-            state.path = Array.isArray(path) ? path : [];
-            writeState(state);
-        }};
-
-        const loadPath = () => {{
-            const state = readState();
-            return Array.isArray(state.path) ? state.path.filter(Boolean).slice(0, 6) : [];
-        }};
-
-        const findNodeByPath = (path) => {{
-            let branch = treeData;
-            let current = null;
-            for (const id of path) {{
-                current = (branch || []).find((item) => item.id === id) || null;
-                if (!current) break;
-                branch = current.children || [];
-            }}
-            return current;
-        }};
-
-        const getBranchItems = (path, levelIndex) => {{
-            if (levelIndex === 0) return treeData;
-            let branch = treeData;
-            for (let i = 0; i < levelIndex; i += 1) {{
-                const currentId = path[i];
-                const currentNode = (branch || []).find((item) => item.id === currentId);
-                if (!currentNode) return [];
-                if (i === levelIndex - 1) return currentNode.children || [];
-                branch = currentNode.children || [];
-            }}
-            return [];
-        }};
-
-        const clearNode = (node) => {{
-            while (node.firstChild) node.removeChild(node.firstChild);
-        }};
-
-        const make = (tag, className, text) => {{
-            const node = document.createElement(tag);
-            if (className) node.className = className;
-            if (typeof text === 'string') node.textContent = text;
-            return node;
-        }};
-
-        const renderPath = (path) => {{
-            clearNode(pathEl);
-            if (!path.length) {{
-                pathEl.appendChild(make('span', 'dashboard-matrix-path-chip', 'Choose Brand to start drill-down'));
-                return;
-            }}
-            let branch = treeData;
-            path.forEach((id) => {{
-                const node = (branch || []).find((item) => item.id === id);
-                if (!node) return;
-                pathEl.appendChild(make('span', 'dashboard-matrix-path-chip', node.label));
-                branch = node.children || [];
-            }});
-        }};
-
-        const renderMetrics = (container, metrics) => {{
-            const metricsWrap = make('div', 'dashboard-matrix-metrics');
-            metricFields.forEach(([field, label]) => {{
-                const metric = make('div', 'dashboard-matrix-metric');
-                metric.appendChild(make('div', 'dashboard-matrix-metric-label', label));
-                metric.appendChild(make('div', 'dashboard-matrix-metric-value', (metrics && metrics[field]) ? String(metrics[field]) : '—'));
-                metricsWrap.appendChild(metric);
-            }});
-            container.appendChild(metricsWrap);
-        }};
-
-        const renderAdsTable = (container, ads) => {{
-            const adsWrap = make('div', 'dashboard-matrix-ads');
-            adsWrap.appendChild(make('div', 'dashboard-matrix-ads-title', 'Ads inside selected branch'));
-            const table = make('table', 'dashboard-matrix-ads-table');
-            const thead = document.createElement('thead');
-            const headRow = document.createElement('tr');
-            ['Ad', 'Account', 'Buyer', 'Offer', 'Spend', 'Clicks', 'Leads', 'Reg'].forEach((label) => {{
-                headRow.appendChild(make('th', '', label));
-            }});
-            thead.appendChild(headRow);
-            table.appendChild(thead);
-            const tbody = document.createElement('tbody');
-            (ads || []).forEach((ad) => {{
-                const row = document.createElement('tr');
-                [
-                    ad.label,
-                    ad.account_id,
-                    ad.buyer,
-                    ad.offer,
-                    ad.metrics?.spend || '—',
-                    ad.metrics?.clicks || '—',
-                    ad.metrics?.leads || '—',
-                    ad.metrics?.reg || '—',
-                ].forEach((value) => row.appendChild(make('td', '', String(value || '—'))));
-                tbody.appendChild(row);
-            }});
-            table.appendChild(tbody);
-            adsWrap.appendChild(table);
-            container.appendChild(adsWrap);
-        }};
-
-        const renderDetail = (path) => {{
-            clearNode(detailEl);
-            const currentNode = findNodeByPath(path);
-            const head = make('div', 'dashboard-matrix-detail-head');
-            if (!currentNode) {{
-                head.appendChild(make('div', 'dashboard-matrix-detail-title', 'No selection'));
-                head.appendChild(make('div', 'dashboard-matrix-detail-subtitle', 'Choose Brand, then keep drilling to the right.'));
-                detailEl.appendChild(head);
-                return;
-            }}
-
-            head.appendChild(make('div', 'dashboard-matrix-detail-title', currentNode.label));
-            const currentColumn = columns.find((item) => item.key === currentNode.column);
-            head.appendChild(make('div', 'dashboard-matrix-detail-subtitle', ((currentColumn && currentColumn.label) || 'Level') + ' metrics'));
-            detailEl.appendChild(head);
-            renderMetrics(detailEl, currentNode.metrics);
-            if (Array.isArray(currentNode.ads) && currentNode.ads.length) {{
-                renderAdsTable(detailEl, currentNode.ads);
-            }}
-        }};
-
-        const renderBoard = (path) => {{
-            clearNode(boardEl);
-            columns.forEach((column, levelIndex) => {{
-                const colEl = make('div', 'dashboard-matrix-column');
-                colEl.appendChild(make('div', 'dashboard-matrix-column-head', column.label));
-                const bodyEl = make('div', 'dashboard-matrix-column-body');
-                let items = [];
-                if (column.key === 'ad_name') {{
-                    const currentNode = findNodeByPath(path);
-                    items = currentNode && Array.isArray(currentNode.ads) ? currentNode.ads : [];
-                }} else {{
-                    items = getBranchItems(path, levelIndex);
-                }}
-                if (!items.length) {{
-                    bodyEl.appendChild(make('div', 'dashboard-matrix-empty', 'No items on this level yet'));
-                }} else {{
-                    items.forEach((item) => {{
-                        const button = make('button', 'dashboard-matrix-item' + ((path[levelIndex] || '') === item.id ? ' is-active' : ''));
-                        button.type = 'button';
-                        button.dataset.matrixLevel = String(levelIndex);
-                        button.dataset.matrixId = item.id;
-                        button.appendChild(make('div', 'dashboard-matrix-item-label', item.label));
-                        const sub = make('div', 'dashboard-matrix-item-sub');
-                        sub.appendChild(make('span', '', String((item.metrics && item.metrics.spend) || '—') + ' spend'));
-                        sub.appendChild(make('span', '', String((item.metrics && item.metrics.leads) || '—') + ' leads'));
-                        sub.appendChild(make('span', '', String((item.metrics && item.metrics.clicks) || '—') + ' clicks'));
-                        button.appendChild(sub);
-                        bodyEl.appendChild(button);
-                    }});
-                }}
-                colEl.appendChild(bodyEl);
-                boardEl.appendChild(colEl);
-            }});
-        }};
-
-        const rerender = (path) => {{
-            renderPath(path);
-            renderBoard(path);
-            renderDetail(path);
-            savePath(path);
-        }};
-
-        boardEl.addEventListener('click', (event) => {{
-            const button = event.target.closest('[data-matrix-level][data-matrix-id]');
-            if (!button) return;
-            const level = Number(button.dataset.matrixLevel || '0');
-            const id = button.dataset.matrixId || '';
-            const nextPath = loadPath().slice(0, level);
-            if (id) nextPath[level] = id;
-            rerender(nextPath);
-        }});
-
-        rerender(loadPath());
     }})();
     </script>
     """
