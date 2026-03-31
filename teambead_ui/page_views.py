@@ -10,5 +10,10 @@ def bind_page_views(ctx):
     scope = dict(ctx)
     scope.setdefault("escape", default_escape)
     scope.setdefault("json", default_json)
-    exec(PAGE_VIEWS_SOURCE, scope)
+    page_views_source = PAGE_VIEWS_SOURCE.replace(
+        "if (!activePage) return;",
+        "if (!activePage || activePage === \\'dashboard\\') return;",
+        1,
+    )
+    exec(page_views_source, scope)
     return {name: scope[name] for name in TARGET_FUNCTIONS}

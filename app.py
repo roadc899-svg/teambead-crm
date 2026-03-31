@@ -7806,7 +7806,8 @@ def _render_dashboard_page_v2(
     .dashboard-v2 .dashboard-table-wrap {{
         border:1px solid rgba(191, 212, 244, 0.9);
         border-radius:16px;
-        overflow:auto;
+        overflow-x:auto;
+        overflow-y:visible;
         background:#fdfefe;
         width:100%;
         min-width:0;
@@ -7817,15 +7818,15 @@ def _render_dashboard_page_v2(
         table-layout:fixed;
         border-collapse:separate;
         border-spacing:0;
-        font-size:12px;
+        font-size:11px;
     }}
     .dashboard-v2 #dashboardUnifiedTable thead th {{
         position:sticky;
         top:0;
-        z-index:2;
-        padding:6px 8px;
-        font-size:10px;
-        line-height:1.05;
+        z-index:6;
+        padding:4px 7px;
+        font-size:9px;
+        line-height:1;
         letter-spacing:.06em;
         text-transform:uppercase;
         white-space:normal;
@@ -7839,10 +7840,13 @@ def _render_dashboard_page_v2(
         color:inherit;
         text-decoration:none;
     }}
+    .dashboard-v2 #dashboardUnifiedTable tbody tr {{
+        height:14px;
+    }}
     .dashboard-v2 #dashboardUnifiedTable tbody td {{
-        height:16px;
-        padding:1px 8px;
-        line-height:0.95;
+        height:14px;
+        padding:0 7px;
+        line-height:1;
         vertical-align:middle;
         border-bottom:1px solid rgba(221, 233, 248, 0.9);
         border-right:1px solid rgba(229, 238, 249, 0.9);
