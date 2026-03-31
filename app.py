@@ -7663,25 +7663,25 @@ def _render_dashboard_page_v2(
 
     def render_dashboard_metric_cells(values):
         return "".join([
-            f'<td data-col="budget">{format_money(values.get("budget", 0))}</td>',
-            f'<td data-col="spend">{format_money(values.get("spend", 0))}</td>',
-            f'<td data-col="clicks">{format_int_or_float(values.get("clicks", 0))}</td>',
-            f'<td data-col="leads">{format_int_or_float(values.get("leads", 0))}</td>',
-            f'<td data-col="reg">{format_int_or_float(values.get("reg", 0))}</td>',
-            f'<td data-col="rate">{format_money(values.get("rate", 0))}</td>',
-            f'<td data-col="cost_reg">{format_money(values.get("cost_reg", 0))}</td>',
-            f'<td data-col="fb_ftd">{format_int_or_float(values.get("fb_ftd", 0))}</td>',
-            f'<td data-col="cpa">{format_money(values.get("cpa", 0))}</td>',
-            f'<td data-col="chatterfy">{format_int_or_float(values.get("chatterfy", 0))}</td>',
-            f'<td data-col="players_ftd">{format_int_or_float(values.get("players_ftd", 0))}</td>',
-            f'<td data-col="qual_ftd">{format_int_or_float(values.get("qual_ftd", 0))}</td>',
-            f'<td data-col="hold_count">{format_int_or_float(values.get("hold_count", 0))}</td>',
-            f'<td data-col="hold_split">—</td>',
-            f'<td data-col="cap_total">{format_int_or_float(values.get("cap_total", 0))}</td>',
-            f'<td data-col="cap_fill">{format_percent(values.get("cap_fill", 0))}</td>',
-            f'<td data-col="income">{format_money(values.get("income", 0))}</td>',
-            f'<td data-col="profit">{format_money(values.get("profit", 0))}</td>',
-            f'<td data-col="roi">{format_percent(values.get("roi", 0))}</td>',
+            f'<td class="dashboard-tree-summary-cell" data-col="budget">{format_money(values.get("budget", 0))}</td>',
+            f'<td class="dashboard-tree-summary-cell" data-col="spend">{format_money(values.get("spend", 0))}</td>',
+            f'<td class="dashboard-tree-summary-cell" data-col="clicks">{format_int_or_float(values.get("clicks", 0))}</td>',
+            f'<td class="dashboard-tree-summary-cell" data-col="leads">{format_int_or_float(values.get("leads", 0))}</td>',
+            f'<td class="dashboard-tree-summary-cell" data-col="reg">{format_int_or_float(values.get("reg", 0))}</td>',
+            f'<td class="dashboard-tree-summary-cell" data-col="rate">{format_money(values.get("rate", 0))}</td>',
+            f'<td class="dashboard-tree-summary-cell" data-col="cost_reg">{format_money(values.get("cost_reg", 0))}</td>',
+            f'<td class="dashboard-tree-summary-cell" data-col="fb_ftd">{format_int_or_float(values.get("fb_ftd", 0))}</td>',
+            f'<td class="dashboard-tree-summary-cell" data-col="cpa">{format_money(values.get("cpa", 0))}</td>',
+            f'<td class="dashboard-tree-summary-cell" data-col="chatterfy">{format_int_or_float(values.get("chatterfy", 0))}</td>',
+            f'<td class="dashboard-tree-summary-cell" data-col="players_ftd">{format_int_or_float(values.get("players_ftd", 0))}</td>',
+            f'<td class="dashboard-tree-summary-cell" data-col="qual_ftd">{format_int_or_float(values.get("qual_ftd", 0))}</td>',
+            f'<td class="dashboard-tree-summary-cell" data-col="hold_count">{format_int_or_float(values.get("hold_count", 0))}</td>',
+            f'<td class="dashboard-tree-summary-cell" data-col="hold_split">—</td>',
+            f'<td class="dashboard-tree-summary-cell" data-col="cap_total">{format_int_or_float(values.get("cap_total", 0))}</td>',
+            f'<td class="dashboard-tree-summary-cell" data-col="cap_fill">{format_percent(values.get("cap_fill", 0))}</td>',
+            f'<td class="dashboard-tree-summary-cell" data-col="income">{format_money(values.get("income", 0))}</td>',
+            f'<td class="dashboard-tree-summary-cell" data-col="profit">{format_money(values.get("profit", 0))}</td>',
+            f'<td class="dashboard-tree-summary-cell" data-col="roi">{format_percent(values.get("roi", 0))}</td>',
         ])
 
     def render_hierarchy_label(node, level, variant="caret"):
@@ -7803,14 +7803,14 @@ def _render_dashboard_page_v2(
                 <td data-col="platform">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "platform" else ""}</td>
                 <td data-col="geo">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "geo" else ""}</td>
                 <td data-col="manager">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "manager" else ""}</td>
-                <td data-col="campaign_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "campaign_name" else "—"}</td>
+                <td data-col="campaign_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "campaign_name" else ""}</td>
                 <td data-col="adset_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "adset_name" else ""}</td>
-                <td data-col="ad_name">—</td>
-                <td data-col="buyer">—</td>
-                <td data-col="offer">—</td>
-                <td data-col="cabinet_text">—</td>
-                <td data-col="advertiser_text">—</td>
-                <td data-col="account_id">—</td>
+                <td data-col="ad_name"></td>
+                <td class="dashboard-tree-summary-cell" data-col="buyer"></td>
+                <td class="dashboard-tree-summary-cell" data-col="offer"></td>
+                <td class="dashboard-tree-summary-cell" data-col="cabinet_text"></td>
+                <td class="dashboard-tree-summary-cell" data-col="advertiser_text"></td>
+                <td class="dashboard-tree-summary-cell" data-col="account_id"></td>
                 {render_dashboard_metric_cells(node["metrics"])}
             </tr>
             """
@@ -7838,6 +7838,7 @@ def _render_dashboard_page_v2(
         min-width:0;
         max-width:100%;
         overflow-x:hidden;
+        font-family:"Segoe UI", "Segoe UI Variable Text", Tahoma, Geneva, Verdana, sans-serif;
     }}
     .dashboard-v2 .dashboard-filters-panel {{
         padding:14px 14px 12px;
@@ -7958,16 +7959,17 @@ def _render_dashboard_page_v2(
         table-layout:fixed;
         border-collapse:separate;
         border-spacing:0;
-        font-size:11px;
+        font-size:12px;
+        font-family:"Segoe UI", "Segoe UI Variable Text", Tahoma, Geneva, Verdana, sans-serif;
     }}
     .dashboard-v2 #dashboardUnifiedTable thead th {{
         position:sticky;
         top:0;
         z-index:6;
         padding:4px 7px;
-        font-size:9px;
-        line-height:1;
-        letter-spacing:.06em;
+        font-size:10px;
+        line-height:1.1;
+        letter-spacing:.01em;
         text-transform:uppercase;
         white-space:normal;
         word-break:break-word;
@@ -7986,7 +7988,7 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable tbody td {{
         height:15px;
         padding:0 7px;
-        line-height:1;
+        line-height:1.05;
         vertical-align:middle;
         border-bottom:1px solid rgba(221, 233, 248, 0.9);
         border-right:1px solid rgba(229, 238, 249, 0.9);
@@ -8034,21 +8036,34 @@ def _render_dashboard_page_v2(
         color:#16325c;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row td {{
-        font-weight:700;
-        border-top:1px solid rgba(138, 159, 194, 0.22);
-        border-bottom:1px solid rgba(138, 159, 194, 0.22);
+        font-weight:600;
+        border-top:1px solid rgba(138, 159, 194, 0.14);
+        border-bottom:1px solid rgba(138, 159, 194, 0.14);
+    }}
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row.dashboard-tree-row-open td.dashboard-tree-summary-cell {{
+        color:transparent !important;
+        text-shadow:none !important;
+        user-select:none;
+        -webkit-user-select:none;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row.dashboard-tree-row-open td.dashboard-tree-summary-cell::selection {{
+        background:transparent;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row td.dashboard-tree-summary-cell {{
+        color:#8091af;
+        font-weight:500;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-0 td {{
-        background:#edf5ff;
+        background:#eef5ff;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-1 td {{
-        background:#f5f9ff;
+        background:#f7faff;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-2 td {{
-        background:#f9fbff;
+        background:#fbfcff;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-3 td {{
-        background:#fcfdff;
+        background:#ffffff;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-4 td {{
         background:#ffffff;
@@ -8091,12 +8106,13 @@ def _render_dashboard_page_v2(
         justify-content:flex-start;
         user-select:none;
         -webkit-user-select:none;
+        font-weight:600;
     }}
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-caret {{
         width:10px;
         display:inline-flex;
         justify-content:center;
-        color:#5672a3;
+        color:#647da8;
         transition:transform .18s ease;
     }}
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-toggle[aria-expanded="true"] .dashboard-tree-caret {{
@@ -8131,6 +8147,9 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-label {{
         overflow:hidden;
         text-overflow:ellipsis;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-leaf-row td {{
+        font-weight:400;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="buyer"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="buyer"] {{
@@ -8607,6 +8626,13 @@ def _render_dashboard_page_v2(
             if (!nodeId) return false;
             const treeRows = Array.from(table.querySelectorAll('tbody tr'));
             const treeButtons = Array.from(table.querySelectorAll('.dashboard-tree-toggle'));
+            const syncExpandedSummaryRows = () => {{
+                treeRows.forEach((row) => {{
+                    if (!row.dataset.nodeId) return;
+                    const rowButton = row.querySelector('.dashboard-tree-toggle');
+                    row.classList.toggle('dashboard-tree-row-open', rowButton?.getAttribute('aria-expanded') === 'true');
+                }});
+            }};
             const hideDescendants = (currentNodeId) => {{
                 treeRows.forEach((row) => {{
                     const ancestors = (row.dataset.ancestors || '').split(',').filter(Boolean);
@@ -8614,7 +8640,8 @@ def _render_dashboard_page_v2(
                     row.hidden = true;
                     if (row.dataset.nodeId) {{
                         const nestedButton = row.querySelector('.dashboard-tree-toggle');
-                    if (nestedButton) nestedButton.setAttribute('aria-expanded', 'false');
+                        if (nestedButton) nestedButton.setAttribute('aria-expanded', 'false');
+                        row.classList.remove('dashboard-tree-row-open');
                     }}
                 }});
             }};
@@ -8655,6 +8682,7 @@ def _render_dashboard_page_v2(
                 state.expanded[table.id || 'dashboard-tree-table'] = openNodes;
                 window.dashboardWriteState(state);
             }}
+            syncExpandedSummaryRows();
             if (window.dashboardTreeAutoSize) window.dashboardTreeAutoSize(table);
             return false;
         }};
@@ -8939,6 +8967,11 @@ def _render_dashboard_page_v2(
                     }});
                     expandNode(button);
                 }});
+                getTreeRows().forEach((row) => {{
+                    if (!row.dataset.nodeId) return;
+                    const rowButton = row.querySelector('.dashboard-tree-toggle');
+                    row.classList.toggle('dashboard-tree-row-open', rowButton?.getAttribute('aria-expanded') === 'true');
+                }});
                 window.dashboardTreeAutoSize(table);
                 if (window.dashboardApplySelectedRows) window.dashboardApplySelectedRows(table);
                 if (window.dashboardApplySelectedColumns) window.dashboardApplySelectedColumns(table);
@@ -8993,6 +9026,7 @@ def _render_dashboard_page_v2(
 
         const hiddenKey = window.teambeadStorageKey('dashboard-columns-hidden');
         const toggles = Array.from(document.querySelectorAll('.dashboard-column-toggle'));
+        let dashboardCellPaintSelection = null;
         const applyColumns = () => {{
             let hidden = [];
             try {{
@@ -9043,6 +9077,29 @@ def _render_dashboard_page_v2(
         }}
         applyColumns();
         document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
+            table.addEventListener('mousedown', (event) => {{
+                if (event.target.closest('.dashboard-tree-toggle, a, input, select, label, summary, button')) return;
+                const cell = event.target.closest('tbody td[data-col]');
+                if (!cell || !table.contains(cell)) return;
+                event.preventDefault();
+                event.stopPropagation();
+                dashboardCellPaintSelection = {{ table }};
+                if (window.dashboardToggleCellSelection) window.dashboardToggleCellSelection(cell);
+            }});
+            table.addEventListener('mouseover', (event) => {{
+                if (!dashboardCellPaintSelection || dashboardCellPaintSelection.table !== table) return;
+                const cell = event.target.closest('tbody td[data-col]');
+                if (!cell || !table.contains(cell)) return;
+                cell.classList.add('dashboard-cell-selected');
+                if (window.dashboardPersistSelectedCells) window.dashboardPersistSelectedCells(table);
+            }});
+            table.addEventListener('click', (event) => {{
+                if (event.target.closest('tbody td[data-col]')) {{
+                    event.preventDefault();
+                    event.stopPropagation();
+                    return;
+                }}
+            }});
             table.addEventListener('dblclick', (event) => {{
                 if (event.target.closest('a, input, select, label, summary')) return;
                 const cell = event.target.closest('[data-col]');
@@ -9053,6 +9110,9 @@ def _render_dashboard_page_v2(
             if (window.dashboardApplySelectedRows) window.dashboardApplySelectedRows(table);
             if (window.dashboardApplySelectedColumns) window.dashboardApplySelectedColumns(table);
             if (window.dashboardApplySelectedCells) window.dashboardApplySelectedCells(table);
+        }});
+        document.addEventListener('mouseup', () => {{
+            dashboardCellPaintSelection = null;
         }});
         requestAnimationFrame(() => {{
             scheduleDashboardUiRestore();
