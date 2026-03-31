@@ -7547,7 +7547,35 @@ def _render_dashboard_page_v2(
         has_players=has_players,
         search=search,
     )
-    rows = _dashboard_sort_rows(rows, sort_by=sort_by, order=order)
+    def _group_text(row, key):
+        return safe_text(row.get(key)).strip().lower()
+
+    def _sort_metric_value(row):
+        if sort_by in {
+            "budget", "spend", "leads", "reg", "cost_reg", "fb_ftd", "cpa", "chatterfy",
+            "players_ftd", "qual_ftd", "income", "profit", "roi", "caps_count",
+            "cap_total", "cap_current_ftd", "cap_fill", "hold_count", "active_cabinets",
+            "clicks", "rate",
+        }:
+            value = safe_number(row.get(sort_by, 0))
+            return value if safe_text(order).lower() == "asc" else -value
+        value = safe_text(row.get(sort_by, "")).lower()
+        if safe_text(order).lower() == "asc":
+            return value
+        return "".join(chr(255 - ord(ch)) for ch in value)
+
+    rows = sorted(
+        rows,
+        key=lambda row: (
+            _group_text(row, "platform"),
+            _group_text(row, "geo"),
+            _group_text(row, "manager"),
+            _group_text(row, "adset_name"),
+            _sort_metric_value(row),
+            _group_text(row, "launch_date"),
+            _group_text(row, "ad_name"),
+        ),
+    )
 
     buyer_options = "".join(
         f'<option value="{escape(value)}" {"selected" if safe_text(buyer) == safe_text(value) else ""}>{escape(value)}</option>'
@@ -7599,17 +7627,17 @@ def _render_dashboard_page_v2(
     }
 
     table_headers = [
+        ("platform", "Brand"),
+        ("geo", "Geo"),
+        ("manager", "Cabinet"),
+        ("adset_name", "Adset"),
         ("launch_date", "Start"),
         ("buyer", "Buyer"),
-        ("platform", "Platform"),
-        ("manager", "Manager"),
-        ("geo", "Geo"),
         ("offer", "Offer"),
         ("cabinet_text", "Cabinets"),
         ("advertiser_text", "Advertiser"),
         ("account_id", "Account"),
         ("campaign_name", "Campaign"),
-        ("adset_name", "Ad Group"),
         ("ad_name", "Ad"),
         ("budget", "Budget"),
         ("spend", "Spend"),
@@ -7643,21 +7671,42 @@ def _render_dashboard_page_v2(
     )
 
     rows_html = ""
-    for row in rows:
+    previous_group = None
+    total_rows = len(rows)
+    for index, row in enumerate(rows):
         row_class = "soft-green" if safe_number(row.get("profit", 0)) > 0 else ("soft-red" if safe_number(row.get("profit", 0)) < 0 else "")
+        current_group = (
+            safe_text(row.get("platform")).strip().lower(),
+            safe_text(row.get("geo")).strip().lower(),
+            safe_text(row.get("manager")).strip().lower(),
+            safe_text(row.get("adset_name")).strip().lower(),
+        )
+        next_row = rows[index + 1] if index + 1 < total_rows else None
+        next_group = (
+            safe_text(next_row.get("platform")).strip().lower(),
+            safe_text(next_row.get("geo")).strip().lower(),
+            safe_text(next_row.get("manager")).strip().lower(),
+            safe_text(next_row.get("adset_name")).strip().lower(),
+        ) if next_row else None
+        group_classes = []
+        if current_group != previous_group:
+            group_classes.append("group-start")
+        if current_group != next_group:
+            group_classes.append("group-end")
+        row_class = " ".join(value for value in [row_class, *group_classes] if value)
         rows_html += f"""
         <tr class="{row_class}">
+            <td data-col="platform">{escape(row.get("platform") or "—")}</td>
+            <td data-col="geo">{escape(row.get("geo") or "—")}</td>
+            <td data-col="manager">{escape(row.get("manager") or "—")}</td>
+            <td data-col="adset_name">{escape(row.get("adset_name") or "—")}</td>
             <td data-col="launch_date">{escape(row.get("launch_date") or "—")}</td>
             <td data-col="buyer">{escape(row.get("buyer") or "—")}</td>
-            <td data-col="platform">{escape(row.get("platform") or "—")}</td>
-            <td data-col="manager">{escape(row.get("manager") or "—")}</td>
-            <td data-col="geo">{escape(row.get("geo") or "—")}</td>
             <td data-col="offer">{escape(row.get("offer") or "—")}</td>
             <td data-col="cabinet_text">{escape(row.get("cabinet_text") or "—")}</td>
             <td data-col="advertiser_text">{escape(row.get("advertiser_text") or "—")}</td>
             <td data-col="account_id">{escape(row.get("account_id") or "—")}</td>
             <td data-col="campaign_name">{escape(row.get("campaign_name") or "—")}</td>
-            <td data-col="adset_name">{escape(row.get("adset_name") or "—")}</td>
             <td data-col="ad_name">{escape(row.get("ad_name") or "—")}</td>
             <td data-col="budget">{format_money(row.get("budget", 0))}</td>
             <td data-col="spend">{format_money(row.get("spend", 0))}</td>
@@ -7680,6 +7729,7 @@ def _render_dashboard_page_v2(
             <td data-col="roi">{format_percent(row.get("roi", 0))}</td>
         </tr>
         """
+        previous_group = current_group
 
     stats_html = build_dashboard_summary_cards(rows)
 
@@ -7859,11 +7909,17 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td {{
         background:#f6faff;
     }}
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.group-start td {{
+        border-top:1px solid #000000;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.group-end td {{
+        border-bottom:1px solid #000000;
+    }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="launch_date"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="launch_date"] {{
-        width:56px;
-        min-width:56px;
-        max-width:56px;
+        width:64px;
+        min-width:64px;
+        max-width:64px;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="buyer"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="buyer"] {{
@@ -7873,21 +7929,21 @@ def _render_dashboard_page_v2(
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="platform"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="platform"] {{
-        width:68px;
-        min-width:68px;
-        max-width:68px;
+        width:96px;
+        min-width:96px;
+        max-width:96px;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="manager"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="manager"] {{
-        width:88px;
-        min-width:88px;
-        max-width:88px;
+        width:110px;
+        min-width:110px;
+        max-width:110px;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="geo"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="geo"] {{
-        width:52px;
-        min-width:52px;
-        max-width:52px;
+        width:64px;
+        min-width:64px;
+        max-width:64px;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="offer"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="offer"] {{
@@ -7913,9 +7969,9 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable th[data-col="campaign_name"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="adset_name"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="adset_name"] {{
-        width:170px;
-        min-width:170px;
-        max-width:170px;
+        width:188px;
+        min-width:188px;
+        max-width:188px;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="ad_name"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="ad_name"] {{
@@ -7983,12 +8039,12 @@ def _render_dashboard_page_v2(
     }}
     .dashboard-v2 #dashboardUnifiedTable th[data-col="launch_date"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="launch_date"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="buyer"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="buyer"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="platform"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="platform"] {{
         background:#ecf5ff;
     }}
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="buyer"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="buyer"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="manager"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="manager"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="geo"],
