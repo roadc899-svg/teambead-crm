@@ -5311,7 +5311,11 @@ def chatterfy_parser_next_run_at(config=None, now=None):
     config = config or {}
     if not config.get("auto_sync_enabled"):
         return None
-    current = now or datetime.utcnow()
+    current = now or get_crm_local_now()
+    if current.tzinfo:
+        current = current.astimezone(LOCAL_TIMEZONE)
+    else:
+        current = current.replace(tzinfo=LOCAL_TIMEZONE)
     next_slot = current.replace(minute=0, second=0, microsecond=0)
     if current >= next_slot:
         next_slot += timedelta(hours=1)
@@ -5339,7 +5343,7 @@ def chatterfy_parser_next_run_seconds(config=None):
     next_run = chatterfy_parser_next_run_at(config)
     if not next_run:
         return None
-    seconds = int((next_run - datetime.utcnow()).total_seconds())
+    seconds = int((next_run - get_crm_local_now()).total_seconds())
     return max(0, seconds)
 
 
@@ -5486,7 +5490,7 @@ def perform_chatterfy_parser_sync(config, initiated_by="manual"):
     if not CHATTERFY_SYNC_LOCK.acquire(blocking=False):
         raise RuntimeError("Chatterfy sync is already running.")
     try:
-        sync_started_at = datetime.utcnow()
+        sync_started_at = get_crm_local_now()
         config = dict(config or {})
         config["sync_state"] = "running"
         config = chatterfy_parser_append_log("Запуск синхронизации. Начинаю обновление данных из Chatterfy.", kind="info", config=config)
@@ -5530,7 +5534,7 @@ def perform_chatterfy_parser_sync(config, initiated_by="manual"):
         updated_config["last_success_at"] = get_crm_local_now().isoformat()
         updated_config["last_error"] = ""
         updated_config["last_count"] = int(result["count"])
-        updated_config["last_duration_seconds"] = int((datetime.utcnow() - sync_started_at).total_seconds())
+        updated_config["last_duration_seconds"] = int((get_crm_local_now() - sync_started_at).total_seconds())
         updated_config["sync_state"] = "stopped" if pause_after_sync or not updated_config.get("auto_sync_enabled") else "idle"
         if pause_after_sync:
             updated_config["auto_sync_enabled"] = False
@@ -5554,9 +5558,9 @@ def perform_chatterfy_parser_sync(config, initiated_by="manual"):
         updated_config.update({k: v for k, v in latest_config.items() if k != "logs"})
         updated_config["auto_sync_enabled"] = False
         updated_config["sync_state"] = "stopped"
-        updated_config["last_run_at"] = datetime.utcnow().isoformat()
+        updated_config["last_run_at"] = get_crm_local_now().isoformat()
         updated_config["last_error"] = ""
-        updated_config["last_duration_seconds"] = int((datetime.utcnow() - sync_started_at).total_seconds()) if 'sync_started_at' in locals() else 0
+        updated_config["last_duration_seconds"] = int((get_crm_local_now() - sync_started_at).total_seconds()) if 'sync_started_at' in locals() else 0
         save_chatterfy_parser_config(updated_config)
         chatterfy_parser_append_log("Автосинк остановлен. Больше почасовых выгрузок не будет, пока вы снова не нажмёте Старт.", kind="info", config=updated_config)
         return {
@@ -5568,9 +5572,9 @@ def perform_chatterfy_parser_sync(config, initiated_by="manual"):
         }
     except Exception as exc:
         updated_config = dict(config or {})
-        updated_config["last_run_at"] = datetime.utcnow().isoformat()
+        updated_config["last_run_at"] = get_crm_local_now().isoformat()
         updated_config["last_error"] = safe_text(exc)
-        updated_config["last_duration_seconds"] = int((datetime.utcnow() - sync_started_at).total_seconds()) if 'sync_started_at' in locals() else 0
+        updated_config["last_duration_seconds"] = int((get_crm_local_now() - sync_started_at).total_seconds()) if 'sync_started_at' in locals() else 0
         updated_config["sync_state"] = "stopped" if not updated_config.get("auto_sync_enabled") else "idle"
         save_chatterfy_parser_config(updated_config)
         chatterfy_parser_append_log(f"Не получилось обновить данные: {exc}", kind="error", config=updated_config)
@@ -5601,9 +5605,11 @@ def chatterfy_parser_sync_worker():
         try:
             config = get_chatterfy_parser_config()
             if config.get("auto_sync_enabled") and safe_text(config.get("sync_state")) != "running":
-                now = datetime.utcnow()
+                now = get_crm_local_now()
                 current_slot = now.replace(minute=0, second=0, microsecond=0)
                 last_run = parse_datetime_flexible(config.get("last_run_at"))
+                if last_run:
+                    last_run = last_run.astimezone(LOCAL_TIMEZONE) if last_run.tzinfo else last_run.replace(tzinfo=LOCAL_TIMEZONE)
                 if now.minute == 0 and (not last_run or last_run < current_slot):
                     chatterfy_parser_append_log("Пришло время почасовой выгрузки. Запускаю очередное обновление.", kind="info", config=config)
                     run_chatterfy_parser_sync_async(initiated_by="auto")
@@ -5636,9 +5642,11 @@ def recover_chatterfy_parser_after_startup():
         save_chatterfy_parser_config(config)
     if not config.get("auto_sync_enabled"):
         return
-    now = datetime.utcnow()
+    now = get_crm_local_now()
     current_slot = now.replace(minute=0, second=0, microsecond=0)
     last_run = parse_datetime_flexible(config.get("last_run_at"))
+    if last_run:
+        last_run = last_run.astimezone(LOCAL_TIMEZONE) if last_run.tzinfo else last_run.replace(tzinfo=LOCAL_TIMEZONE)
     if not last_run or last_run < current_slot:
         chatterfy_parser_append_log("Приложение перезапущено. Возобновляю Chatterfy Parser и догоняю ближайший цикл.", kind="info", config=config)
         if not CHATTERFY_SYNC_LOCK.locked():
@@ -6940,6 +6948,67 @@ def toggle_chatterfy_parser(
 
 # Rebind extracted view/layout functions from dedicated modules while keeping route contracts intact.
 globals().update(bind_page_views(globals()))
+_original_sidebar_html = sidebar_html
+
+
+def _patched_sidebar_html(active_page, current_user=None):
+    html = _original_sidebar_html(active_page, current_user)
+    if not html:
+        return html
+    html = re.sub(
+        r'<a href="/fb" class="sidebar-standalone[^"]*"><span class="side-emoji">.*?</span><span class="side-label">FB</span></a>',
+        '',
+        html,
+        count=1,
+        flags=re.S,
+    )
+    fb_export_icon = """
+    <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+        <defs>
+            <linearGradient id="fbExportGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#35c2ff"/>
+                <stop offset="100%" stop-color="#1d4ed8"/>
+            </linearGradient>
+        </defs>
+        <rect x="6" y="6" width="52" height="52" rx="12" fill="url(#fbExportGrad)"/>
+        <path d="M38 18h6v8h-5c-1.5 0-2 0.7-2 2.1V33h7l-1.2 8H37v15h-8V41h-6v-8h6v-6c0-5.7 3.4-9 9-9Z" fill="#ffffff"/>
+    </svg>
+    """
+    html = re.sub(
+        r'(<a href="/grouped" class="[^"]*"><span class="side-emoji side-sub-emoji">)📈(</span><span class="side-label">Export FB</span></a>)',
+        r"\1" + fb_export_icon + r"\2",
+        html,
+        count=1,
+    )
+    parsers_icon = """
+    <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+        <defs>
+            <linearGradient id="parsersGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#7c9cff"/>
+                <stop offset="100%" stop-color="#5865f2"/>
+            </linearGradient>
+        </defs>
+        <rect x="6" y="6" width="52" height="52" rx="14" fill="url(#parsersGrad)"/>
+        <path d="M20 24c3-2.7 7.1-4 12-4s9 1.3 12 4c2.2 2 3.6 4.6 4 7.6-.7 5.7-3.7 10.2-8.7 13.2l-1.3 4.7-4.7-2.6c-1.4.3-2.9.5-4.3.5-4.9 0-9-1.3-12-4-2.3-2-3.6-4.6-4-7.7.4-3 1.7-5.5 4-7.7Z" fill="#ffffff"/>
+        <circle cx="27.5" cy="32.5" r="2.7" fill="#5865f2"/>
+        <circle cx="36.5" cy="32.5" r="2.7" fill="#5865f2"/>
+    </svg>
+    """
+    parser_links_pattern = (
+        r'(<a href="/chatterfy-parser" class="sidebar-standalone[^"]*"><span class="side-emoji">.*?</span><span class="side-label">Chatterfy Parser</span></a>)'
+        r'(<a href="/1x-parser" class="sidebar-standalone[^"]*"><span class="side-emoji">.*?</span><span class="side-label">1x Parser</span></a>)'
+    )
+    parsers_open = " open" if active_page in {"chatterfyparser", "onexparser"} else ""
+    parsers_group = (
+        f'<details class="sidebar-group" data-sidebar-group="parsers"{parsers_open}>'
+        f'<summary><span class="side-emoji">{parsers_icon}</span><span class="side-label">Parsers</span></summary>'
+        f'<div class="sidebar-links">\\1\\2</div></details>'
+    )
+    html = re.sub(parser_links_pattern, parsers_group, html, count=1, flags=re.S)
+    return html
+
+sidebar_html = _patched_sidebar_html
+page_shell.__globals__["sidebar_html"] = _patched_sidebar_html
 _page_routes = bind_page_routes(globals())
 _domain_actions = {}
 for _binder in (bind_analytics_actions, bind_parser_actions, bind_management_actions, bind_report_actions):
@@ -6987,6 +7056,11 @@ def _inject_chatterfy_parser_live_button_refresh(html: str) -> str:
     if update_fn_old in html and "function updateToggleButton(data)" not in html:
         html = html.replace(update_fn_old, update_fn_new, 1)
     html = html.replace(
+        'grid-template-columns:minmax(320px, 420px) minmax(360px, 1fr); gap:18px; align-items:stretch;',
+        'grid-template-columns:minmax(320px, 420px) minmax(360px, 1fr); gap:18px; align-items:start;',
+        1,
+    )
+    html = html.replace(
         'id="chatterfyParserLastSuccess" style="margin-top:8px; font-size:18px; font-weight:800; line-height:1.2; color:#1f2f4f; word-break:break-word;"',
         'id="chatterfyParserLastSuccess" style="margin-top:8px; font-size:15px; font-weight:800; line-height:1.18; color:#1f2f4f; white-space:pre-line; word-break:normal; overflow-wrap:normal;"',
         1,
@@ -6998,7 +7072,7 @@ def _inject_chatterfy_parser_live_button_refresh(html: str) -> str:
     )
     html = html.replace(
         'id="chatterfyParserLogs" style="max-height:320px; overflow:auto; background:transparent;"',
-        'id="chatterfyParserLogs" style="height:220px; max-height:420px; overflow:auto; background:transparent;"',
+        'id="chatterfyParserLogs" style="min-height:132px; max-height:320px; overflow:auto; background:transparent;"',
         1,
     )
     html = html.replace(
