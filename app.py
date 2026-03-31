@@ -6206,11 +6206,16 @@ def enrich_statistic_rows(rows, period_label=""):
     partner_by_flow, chatterfy_by_ad, chatterfy_by_flow = get_statistic_support_maps(period_label=period_label)
     ad_bucket_weights = {}
     ad_bucket_counts = {}
+    flow_bucket_weights = {}
+    flow_bucket_counts = {}
     for item in rows:
         ad_key = build_ad_offer_key(item.get("launch_date"), item.get("platform"), item.get("manager"), item.get("geo"), item.get("offer"))
+        flow_key = build_flow_key(item.get("platform"), item.get("manager"), item.get("geo"))
         weight = safe_number(item.get("ftd")) or safe_number(item.get("leads")) or safe_number(item.get("spend")) or 1.0
         ad_bucket_weights[ad_key] = ad_bucket_weights.get(ad_key, 0.0) + weight
         ad_bucket_counts[ad_key] = ad_bucket_counts.get(ad_key, 0) + 1
+        flow_bucket_weights[flow_key] = flow_bucket_weights.get(flow_key, 0.0) + weight
+        flow_bucket_counts[flow_key] = flow_bucket_counts.get(flow_key, 0) + 1
     enriched = []
     for item in rows:
         flow_key = build_flow_key(item.get("platform"), item.get("manager"), item.get("geo"))
@@ -6218,21 +6223,24 @@ def enrich_statistic_rows(rows, period_label=""):
         flow_stat = partner_by_flow.get(flow_key, {})
         chatter_count = chatterfy_by_ad.get(ad_key, 0.0)
         flow_chatter_count = chatterfy_by_flow.get(flow_key, 0.0)
-        offer_share = (chatter_count / flow_chatter_count) if flow_chatter_count > 0 else 0.0
         row_weight = safe_number(item.get("ftd")) or safe_number(item.get("leads")) or safe_number(item.get("spend")) or 1.0
         bucket_weight = ad_bucket_weights.get(ad_key, 0.0)
         bucket_count = ad_bucket_counts.get(ad_key, 1)
         creative_share = (row_weight / bucket_weight) if bucket_weight > 0 else (1.0 / bucket_count)
-        share = offer_share * creative_share
+        flow_weight = flow_bucket_weights.get(flow_key, 0.0)
+        flow_count = flow_bucket_counts.get(flow_key, 1)
+        flow_share = (row_weight / flow_weight) if flow_weight > 0 else (1.0 / flow_count)
+        chatter_share = (chatter_count / flow_chatter_count) if flow_chatter_count > 0 else 0.0
         clone = dict(item)
         clone["stat_chatterfy"] = chatter_count * creative_share
-        clone["stat_total_ftd"] = flow_stat.get("stat_total_ftd", 0.0) * share
-        clone["stat_qual_ftd"] = flow_stat.get("stat_qual_ftd", 0.0) * share
+        clone["stat_total_ftd"] = flow_stat.get("stat_total_ftd", 0.0) * flow_share
+        clone["stat_qual_ftd"] = flow_stat.get("stat_qual_ftd", 0.0) * flow_share
         clone["stat_rate"] = flow_stat.get("stat_rate", 0.0)
-        clone["stat_income"] = flow_stat.get("stat_income", 0.0) * share
-        clone["stat_cap_limit"] = flow_stat.get("stat_cap_limit", 0.0) * share
+        clone["stat_income"] = flow_stat.get("stat_income", 0.0) * flow_share
+        clone["stat_cap_limit"] = flow_stat.get("stat_cap_limit", 0.0) * flow_share
         clone["stat_cap_fill"] = cap_fill_percent(clone["stat_total_ftd"], clone["stat_cap_limit"])
-        clone["stat_has_cap"] = flow_stat.get("stat_has_cap", 0.0) if share > 0 or flow_stat.get("stat_has_cap", 0.0) else 0.0
+        clone["stat_has_cap"] = flow_stat.get("stat_has_cap", 0.0) if flow_share > 0 or flow_stat.get("stat_has_cap", 0.0) else 0.0
+        clone["stat_chat_share"] = chatter_share
         clone["stat_profit"] = clone["stat_income"] - (clone.get("spend") or 0)
         clone["stat_roi"] = (clone["stat_profit"] / clone.get("spend")) * 100 if (clone.get("spend") or 0) > 0 else 0
         enriched.append(clone)
@@ -7142,7 +7150,6 @@ def build_dashboard_cabinet_flow_map():
     for row in get_cabinet_rows():
         platform_key = normalize_dashboard_platform(getattr(row, "platform", ""))
         manager_key = safe_text(getattr(row, "manager_name", ""))
-        advertisers = safe_text(getattr(row, "advertiser", ""))
         geos = split_geo_tokens(getattr(row, "geo_list", "")) or [normalize_geo_value(getattr(row, "geo_list", ""))]
         for geo_code in geos:
             if not platform_key or not manager_key or not geo_code:
@@ -7150,6 +7157,43 @@ def build_dashboard_cabinet_flow_map():
             flow_key = build_flow_key(platform_key, manager_key, geo_code)
             result.setdefault(flow_key, []).append(row)
     return result
+
+
+def pick_dashboard_primary_cabinet(cabinets, fb_item=None):
+    if not cabinets:
+        return None
+
+    preferred = list(cabinets)
+    fb_item = fb_item or {}
+    offer_value = safe_text(fb_item.get("offer"))
+    haystack = " | ".join([
+        safe_text(fb_item.get("campaign_name")),
+        safe_text(fb_item.get("adset_name")),
+        safe_text(fb_item.get("ad_name")),
+    ]).lower()
+
+    offer_matched = [cab for cab in preferred if dashboard_offer_matches_cabinet(cab, offer_value)]
+    if offer_matched:
+        preferred = offer_matched
+
+    active_only = [cab for cab in preferred if safe_text(getattr(cab, "status", "")).lower() == "active"]
+    if active_only:
+        preferred = active_only
+
+    name_matched = [cab for cab in preferred if safe_text(getattr(cab, "name", "")).strip().lower() in haystack]
+    if name_matched:
+        preferred = name_matched
+
+    advertiser_matched = [cab for cab in preferred if safe_text(getattr(cab, "advertiser", "")).strip().lower() in haystack]
+    if advertiser_matched:
+        preferred = advertiser_matched
+
+    preferred.sort(key=lambda cab: (
+        safe_text(getattr(cab, "status", "")).lower() != "active",
+        safe_text(getattr(cab, "name", "")).lower(),
+        safe_text(getattr(cab, "advertiser", "")).lower(),
+    ))
+    return preferred[0]
 
 
 def build_dashboard_caps_flow_map(period_label=""):
@@ -7236,8 +7280,11 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
         if matched_cabinets:
             related_cabinets = matched_cabinets
 
-        cabinet_names = sorted({safe_text(cab.name) for cab in related_cabinets if safe_text(cab.name)})
-        advertiser_names = sorted({safe_text(cab.advertiser) for cab in related_cabinets if safe_text(cab.advertiser)})
+        primary_cabinet = pick_dashboard_primary_cabinet(related_cabinets, item)
+        primary_cabinet_name = safe_text(getattr(primary_cabinet, "name", ""))
+        primary_advertiser = safe_text(getattr(primary_cabinet, "advertiser", ""))
+        cabinet_names = [primary_cabinet_name] if primary_cabinet_name else []
+        advertiser_names = [primary_advertiser] if primary_advertiser else []
         active_cabinets = [cab for cab in related_cabinets if safe_text(getattr(cab, "status", "")).lower() == "active"]
         cap_info = caps_map.get(flow_key, {})
         hold_info = hold_map.get(flow_key, {})
@@ -7249,9 +7296,9 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
             "geo": safe_text(item.get("geo")),
             "offer": safe_text(item.get("offer")),
             "cabinet_names": cabinet_names,
-            "cabinet_text": ", ".join(cabinet_names) if cabinet_names else "—",
+            "cabinet_text": primary_cabinet_name or "—",
             "advertiser_names": advertiser_names,
-            "advertiser_text": ", ".join(advertiser_names) if advertiser_names else "—",
+            "advertiser_text": primary_advertiser or "—",
             "campaign_name": safe_text(item.get("campaign_name")),
             "adset_name": safe_text(item.get("adset_name")),
             "ad_name": safe_text(item.get("ad_name")),
@@ -7638,59 +7685,466 @@ def _render_dashboard_page_v2(
 
     buyer_filter_html = ""
     if is_admin_role(user) or user.get("role") == "operator":
-        buyer_filter_html = f'<label>Buyer<select name="buyer"><option value="">Все</option>{buyer_options}</select></label>'
+        buyer_filter_html = f'<label class="dashboard-filter-field"><span>Buyer</span><select name="buyer"><option value="">Все</option>{buyer_options}</select></label>'
     else:
         buyer_filter_html = f'<input type="hidden" name="buyer" value="{escape(buyer)}">'
 
     content = f"""
+    <style>
+    .dashboard-v2 {{
+        display:grid;
+        gap:18px;
+    }}
+    .dashboard-v2 .dashboard-filters-panel {{
+        padding:18px 18px 16px;
+    }}
+    .dashboard-v2 .dashboard-filter-grid {{
+        display:grid;
+        grid-template-columns:repeat(12, minmax(0, 1fr));
+        gap:10px;
+        align-items:end;
+    }}
+    .dashboard-v2 .dashboard-filter-field {{
+        display:grid;
+        gap:5px;
+        min-width:0;
+    }}
+    .dashboard-v2 .dashboard-filter-field span {{
+        font-size:11px;
+        line-height:1;
+        letter-spacing:.08em;
+        text-transform:uppercase;
+        color:#637494;
+        font-weight:800;
+        padding-left:2px;
+    }}
+    .dashboard-v2 .dashboard-filter-field select,
+    .dashboard-v2 .dashboard-filter-field input {{
+        height:40px;
+        border-radius:14px;
+        font-size:14px;
+        padding:0 14px;
+    }}
+    .dashboard-v2 .dashboard-period-picker {{
+        display:grid;
+        grid-template-columns:44px minmax(0, 1fr) 44px;
+        gap:8px;
+        align-items:end;
+        min-width:0;
+    }}
+    .dashboard-v2 .dashboard-period-picker .period-jump-btn {{
+        width:44px;
+        height:40px;
+        border-radius:14px;
+        padding:0;
+        font-size:22px;
+        line-height:1;
+    }}
+    .dashboard-v2 .dashboard-filter-actions {{
+        display:flex;
+        gap:10px;
+        align-items:end;
+        justify-content:flex-end;
+    }}
+    .dashboard-v2 .dashboard-filter-actions .btn,
+    .dashboard-v2 .dashboard-filter-actions .ghost-btn {{
+        min-width:110px;
+        height:40px;
+        border-radius:14px;
+    }}
+    .dashboard-v2 .dashboard-summary-wrap .stats-grid {{
+        grid-template-columns:repeat(9, minmax(0, 1fr));
+        gap:10px;
+    }}
+    .dashboard-v2 .dashboard-summary-wrap .stat-card {{
+        min-height:98px;
+        padding:14px 16px;
+        border-radius:18px;
+    }}
+    .dashboard-v2 .dashboard-summary-wrap .stat-card .name {{
+        font-size:11px;
+        letter-spacing:.08em;
+        text-transform:uppercase;
+        color:#6e7f9d;
+    }}
+    .dashboard-v2 .dashboard-summary-wrap .stat-card .value {{
+        font-size:28px;
+        line-height:1.05;
+    }}
+    .dashboard-v2 .dashboard-table-panel {{
+        padding:18px;
+    }}
+    .dashboard-v2 .dashboard-table-header {{
+        display:flex;
+        justify-content:space-between;
+        align-items:flex-end;
+        gap:16px;
+        margin-bottom:12px;
+    }}
+    .dashboard-v2 .dashboard-table-title {{
+        display:grid;
+        gap:4px;
+    }}
+    .dashboard-v2 .dashboard-table-title .panel-title {{
+        margin:0;
+    }}
+    .dashboard-v2 .dashboard-table-title .panel-subtitle {{
+        margin:0;
+        max-width:980px;
+    }}
+    .dashboard-v2 .dashboard-table-wrap {{
+        border:1px solid rgba(191, 212, 244, 0.9);
+        border-radius:20px;
+        overflow:auto;
+        background:#fdfefe;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable {{
+        min-width:3220px;
+        table-layout:fixed;
+        border-collapse:separate;
+        border-spacing:0;
+        font-size:13px;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable thead th {{
+        position:sticky;
+        top:0;
+        z-index:2;
+        padding:12px 10px;
+        font-size:11px;
+        line-height:1.15;
+        letter-spacing:.06em;
+        text-transform:uppercase;
+        white-space:normal;
+        word-break:break-word;
+        border-bottom:1px solid rgba(191, 212, 244, 0.9);
+        border-right:1px solid rgba(221, 233, 248, 0.9);
+        color:#213252;
+        background:#eef5ff;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable thead th a {{
+        color:inherit;
+        text-decoration:none;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable tbody td {{
+        padding:10px 10px;
+        border-bottom:1px solid rgba(221, 233, 248, 0.9);
+        border-right:1px solid rgba(229, 238, 249, 0.9);
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
+        color:#1e2d4a;
+        background:#ffffff;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td {{
+        background:#f6faff;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="launch_date"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="launch_date"] {{
+        width:64px;
+        min-width:64px;
+        max-width:64px;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="buyer"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="buyer"] {{
+        width:88px;
+        min-width:88px;
+        max-width:88px;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="platform"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="platform"] {{
+        width:78px;
+        min-width:78px;
+        max-width:78px;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="manager"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="manager"] {{
+        width:96px;
+        min-width:96px;
+        max-width:96px;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="geo"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="geo"] {{
+        width:58px;
+        min-width:58px;
+        max-width:58px;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="offer"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="offer"] {{
+        width:118px;
+        min-width:118px;
+        max-width:118px;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="cabinet_text"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="cabinet_text"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="advertiser_text"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="advertiser_text"] {{
+        width:118px;
+        min-width:118px;
+        max-width:118px;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="account_id"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="account_id"] {{
+        width:138px;
+        min-width:138px;
+        max-width:138px;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="campaign_name"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="campaign_name"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="adset_name"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="adset_name"] {{
+        width:200px;
+        min-width:200px;
+        max-width:200px;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="ad_name"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="ad_name"] {{
+        width:240px;
+        min-width:240px;
+        max-width:240px;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="budget"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="budget"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="spend"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="spend"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="rate"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="rate"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="cost_reg"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="cost_reg"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="cpa"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="cpa"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="income"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="income"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="profit"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="profit"] {{
+        width:106px;
+        min-width:106px;
+        max-width:106px;
+        text-align:right;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="clicks"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="clicks"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="leads"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="leads"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="reg"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="reg"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_ftd"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_ftd"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="chatterfy"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="chatterfy"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="players_ftd"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="players_ftd"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="qual_ftd"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="qual_ftd"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="hold_count"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="hold_count"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="cap_total"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="cap_total"] {{
+        width:82px;
+        min-width:82px;
+        max-width:82px;
+        text-align:right;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="hold_split"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="hold_split"] {{
+        width:92px;
+        min-width:92px;
+        max-width:92px;
+        text-align:center;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="cap_fill"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="cap_fill"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="roi"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="roi"] {{
+        width:84px;
+        min-width:84px;
+        max-width:84px;
+        text-align:right;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="launch_date"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="launch_date"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="buyer"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="buyer"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="platform"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="platform"] {{
+        background:#ecf5ff;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="manager"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="manager"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="geo"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="geo"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="offer"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="offer"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="cabinet_text"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="cabinet_text"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="advertiser_text"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="advertiser_text"] {{
+        background:#f7fbff;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="budget"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="budget"] {{
+        background:#eef9ef;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="spend"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="spend"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="clicks"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="clicks"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="leads"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="leads"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="reg"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="reg"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_ftd"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_ftd"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="cpa"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="cpa"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="cost_reg"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="cost_reg"] {{
+        background:#fff4e8;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="chatterfy"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="chatterfy"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="players_ftd"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="players_ftd"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="qual_ftd"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="qual_ftd"] {{
+        background:#f3efff;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="hold_count"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="hold_count"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="hold_split"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="hold_split"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="cap_total"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="cap_total"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="cap_fill"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="cap_fill"] {{
+        background:#fff8df;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="income"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="income"] {{
+        background:#edf8e7;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="profit"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="profit"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="roi"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="roi"] {{
+        background:#e7f8fb;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.soft-green td[data-col="profit"],
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.soft-green td[data-col="roi"] {{
+        color:#0f8c58;
+        font-weight:800;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.soft-red td[data-col="profit"],
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.soft-red td[data-col="roi"] {{
+        color:#d84c57;
+        font-weight:800;
+    }}
+    @media (max-width: 1500px) {{
+        .dashboard-v2 .dashboard-filter-grid {{
+            grid-template-columns:repeat(8, minmax(0, 1fr));
+        }}
+        .dashboard-v2 .dashboard-summary-wrap .stats-grid {{
+            grid-template-columns:repeat(3, minmax(0, 1fr));
+        }}
+    }}
+    </style>
+    <div class="dashboard-v2">
     {render_active_period_banner(effective_period_label)}
 
-    <div class="panel compact-panel">
-        <div class="toolbar-actions">
-            <div class="panel compact-panel filters" style="width:100%;">
-                <form method="get" action="/dashboard" data-persist-filters="dashboard-v2" style="display:grid; grid-template-columns:repeat(18, minmax(0, 1fr)); gap:10px; align-items:end;">
-                    {buyer_filter_html}
-                    <input type="hidden" name="period_view" value="period">
-                    <div class="period-picker" style="display:flex; align-items:end; gap:6px; min-width:0; grid-column:span 4;">
-                        <button type="button" class="ghost-btn small-btn period-jump-btn" data-period-jump="-1" aria-label="Previous period">‹</button>
-                        <label style="display:grid; gap:6px; min-width:0; flex:1 1 auto;">Period
-                            <select name="period_label" id="dashboardPeriodSelect">{period_options}</select>
-                        </label>
-                        <button type="button" class="ghost-btn small-btn period-jump-btn" data-period-jump="1" aria-label="Next period">›</button>
-                    </div>
-                    <label style="grid-column:span 2;">Platform<select name="platform">{platform_options}</select></label>
-                    <label style="grid-column:span 2;">Manager<select name="manager">{manager_options}</select></label>
-                    <label style="grid-column:span 2;">Geo<select name="geo">{geo_options}</select></label>
-                    <label style="grid-column:span 2;">Offer<select name="offer">{offer_options}</select></label>
-                    <label style="grid-column:span 2;">Cabinet<select name="cabinet_name">{cabinet_options}</select></label>
-                    <label style="grid-column:span 2;">Advertiser<select name="advertiser">{advertiser_options}</select></label>
-                    <label style="grid-column:span 3;">Campaign<select name="campaign_name">{campaign_options}</select></label>
-                    <label style="grid-column:span 3;">Ad Group<select name="adset_name">{adset_options}</select></label>
-                    <label style="grid-column:span 3;">Ad<select name="ad_name">{ad_name_options}</select></label>
-                    <label style="grid-column:span 3;">Account<select name="account_id">{account_options}</select></label>
-                    <label style="grid-column:span 3;">Source<select name="source_name">{source_options}</select></label>
-                    <label style="grid-column:span 2;">Caps<select name="has_caps">{yes_no_options(has_caps)}</select></label>
-                    <label style="grid-column:span 2;">Hold<select name="has_hold">{yes_no_options(has_hold)}</select></label>
-                    <label style="grid-column:span 2;">Chat<select name="has_chatterfy">{yes_no_options(has_chatterfy)}</select></label>
-                    <label style="grid-column:span 2;">Players<select name="has_players">{yes_no_options(has_players)}</select></label>
-                    <label style="grid-column:span 5;">Search<input type="text" name="search" value="{escape(search)}" placeholder="Campaign, ad, cabinet, advertiser, geo, account..."></label>
-                    <input type="hidden" name="sort_by" value="{escape(sort_by)}">
-                    <input type="hidden" name="order" value="{escape(order)}">
-                    <div style="display:flex; gap:10px; align-items:end; grid-column:span 3;">
-                        <button type="submit" class="btn small-btn">Filter</button>
-                        <a href="/dashboard?period_view=period&period_label={quote_plus(effective_period_label)}" class="ghost-btn small-btn" data-reset-filters="dashboard-v2">Reset</a>
-                    </div>
-                </form>
+    <div class="panel compact-panel dashboard-filters-panel">
+        <form method="get" action="/dashboard" data-persist-filters="dashboard-v2" class="dashboard-filter-grid">
+            {buyer_filter_html}
+            <input type="hidden" name="period_view" value="period">
+            <div class="dashboard-period-picker" style="grid-column:span 3;">
+                <button type="button" class="ghost-btn small-btn period-jump-btn" data-period-jump="-1" aria-label="Previous period">‹</button>
+                <label class="dashboard-filter-field">
+                    <span>Period</span>
+                    <select name="period_label" id="dashboardPeriodSelect">{period_options}</select>
+                </label>
+                <button type="button" class="ghost-btn small-btn period-jump-btn" data-period-jump="1" aria-label="Next period">›</button>
             </div>
-        </div>
+            <label class="dashboard-filter-field">
+                <span>Platform</span>
+                <select name="platform">{platform_options}</select>
+            </label>
+            <label class="dashboard-filter-field">
+                <span>Manager</span>
+                <select name="manager">{manager_options}</select>
+            </label>
+            <label class="dashboard-filter-field">
+                <span>Geo</span>
+                <select name="geo">{geo_options}</select>
+            </label>
+            <label class="dashboard-filter-field">
+                <span>Offer</span>
+                <select name="offer">{offer_options}</select>
+            </label>
+            <label class="dashboard-filter-field">
+                <span>Cabinet</span>
+                <select name="cabinet_name">{cabinet_options}</select>
+            </label>
+            <label class="dashboard-filter-field">
+                <span>Advertiser</span>
+                <select name="advertiser">{advertiser_options}</select>
+            </label>
+            <label class="dashboard-filter-field">
+                <span>Campaign</span>
+                <select name="campaign_name">{campaign_options}</select>
+            </label>
+            <label class="dashboard-filter-field">
+                <span>Ad Group</span>
+                <select name="adset_name">{adset_options}</select>
+            </label>
+            <label class="dashboard-filter-field">
+                <span>Ad</span>
+                <select name="ad_name">{ad_name_options}</select>
+            </label>
+            <label class="dashboard-filter-field">
+                <span>Account</span>
+                <select name="account_id">{account_options}</select>
+            </label>
+            <label class="dashboard-filter-field">
+                <span>Source</span>
+                <select name="source_name">{source_options}</select>
+            </label>
+            <label class="dashboard-filter-field">
+                <span>Caps</span>
+                <select name="has_caps">{yes_no_options(has_caps)}</select>
+            </label>
+            <label class="dashboard-filter-field">
+                <span>Hold</span>
+                <select name="has_hold">{yes_no_options(has_hold)}</select>
+            </label>
+            <label class="dashboard-filter-field">
+                <span>Chat</span>
+                <select name="has_chatterfy">{yes_no_options(has_chatterfy)}</select>
+            </label>
+            <label class="dashboard-filter-field">
+                <span>Players</span>
+                <select name="has_players">{yes_no_options(has_players)}</select>
+            </label>
+            <label class="dashboard-filter-field" style="grid-column:span 3;">
+                <span>Search</span>
+                <input type="text" name="search" value="{escape(search)}" placeholder="Campaign, ad, cabinet, advertiser, geo, account...">
+            </label>
+            <input type="hidden" name="sort_by" value="{escape(sort_by)}">
+            <input type="hidden" name="order" value="{escape(order)}">
+            <div class="dashboard-filter-actions" style="grid-column:span 2;">
+                <button type="submit" class="btn small-btn">Filter</button>
+                <a href="/dashboard?period_view=period&period_label={quote_plus(effective_period_label)}" class="ghost-btn small-btn" data-reset-filters="dashboard-v2">Reset</a>
+            </div>
+        </form>
     </div>
 
-    {stats_html}
+    <div class="dashboard-summary-wrap">
+        {stats_html}
+    </div>
 
-    <div class="panel compact-panel">
-        <div class="panel-title">CRM Unified Table</div>
-        <div class="panel-subtitle">FB is the base layer. Players, Chatterfy, Caps, Cabinets and Hold are stitched on top through launch date, manager, geo, offer, promo and cabinet flow relations.</div>
-        <div style="display:flex; justify-content:flex-end; margin-top:14px;">
+    <div class="panel compact-panel dashboard-table-panel">
+        <div class="dashboard-table-header">
+            <div class="dashboard-table-title">
+                <div class="panel-title">CRM Analytics</div>
+                <div class="panel-subtitle">Compact dashboard view across FB, Players, Chatterfy, Caps, Cabinets and Hold.</div>
+            </div>
             <details class="upload-menu upload-menu-right" id="dashboardColumnsMenu">
                 <summary class="ghost-btn small-btn">Columns</summary>
                 <div class="upload-menu-list" style="width:min(560px, calc(100vw - 48px));">
@@ -7704,12 +8158,13 @@ def _render_dashboard_page_v2(
                 </div>
             </details>
         </div>
-        <div class="table-wrap" style="margin-top:14px;">
-            <table id="dashboardUnifiedTable" style="min-width:3050px;">
+        <div class="dashboard-table-wrap">
+            <table id="dashboardUnifiedTable">
                 <thead><tr>{head_html}</tr></thead>
                 <tbody>{rows_html if rows_html else '<tr><td colspan="31">No dashboard rows for the selected filters</td></tr>'}</tbody>
             </table>
         </div>
+    </div>
     </div>
 
     <script>
