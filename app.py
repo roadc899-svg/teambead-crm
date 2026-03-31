@@ -7755,12 +7755,16 @@ def _render_dashboard_page_v2(
         for field, label in table_headers
     )
 
-    def render_lineage_label(label, level=0):
-        return (
-            f'<div class="dashboard-tree-cell dashboard-tree-level-{level}">'
-            f'<span class="dashboard-tree-label">{escape(label or "—")}</span>'
-            f'</div>'
-        )
+    def render_lineage_label(label, level=0, collapse_node_id=""):
+        content = f'<span class="dashboard-tree-label">{escape(label or "—")}</span>'
+        if collapse_node_id:
+            content = (
+                f'<button type="button" class="dashboard-tree-path-toggle" '
+                f'data-target="{escape(collapse_node_id)}" '
+                f'onclick="window.dashboardTreeToggleById && window.dashboardTreeToggleById(this.dataset.target, true); return false;">'
+                f'{content}</button>'
+            )
+        return f'<div class="dashboard-tree-cell dashboard-tree-level-{level}">{content}</div>'
 
     def render_leaf_row(row, parent_id="", ancestors=None, lineage=None):
         ancestors = ancestors or []
@@ -7779,11 +7783,11 @@ def _render_dashboard_page_v2(
         ])
         return f"""
         <tr class="dashboard-leaf-row {row_class}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}" data-row-key="{escape(row_key)}" onclick="window.dashboardHandleRowClick && window.dashboardHandleRowClick(this, event)"{hidden_attr}>
-            <td data-col="platform">{render_lineage_label(lineage.get("platform", ""), 0) if lineage.get("platform") else ""}</td>
-            <td data-col="geo">{render_lineage_label(lineage.get("geo", ""), 1) if lineage.get("geo") else ""}</td>
-            <td data-col="manager">{render_lineage_label(lineage.get("manager", ""), 2) if lineage.get("manager") else ""}</td>
-            <td data-col="campaign_name">{render_lineage_label(lineage.get("campaign_name", ""), 3) if lineage.get("campaign_name") else ""}</td>
-            <td data-col="adset_name">{render_lineage_label(lineage.get("adset_name", ""), 4) if lineage.get("adset_name") else ""}</td>
+            <td data-col="platform">{render_lineage_label(lineage.get("platform", {}).get("label", ""), 0, lineage.get("platform", {}).get("id", "")) if lineage.get("platform") else ""}</td>
+            <td data-col="geo">{render_lineage_label(lineage.get("geo", {}).get("label", ""), 1, lineage.get("geo", {}).get("id", "")) if lineage.get("geo") else ""}</td>
+            <td data-col="manager">{render_lineage_label(lineage.get("manager", {}).get("label", ""), 2, lineage.get("manager", {}).get("id", "")) if lineage.get("manager") else ""}</td>
+            <td data-col="campaign_name">{render_lineage_label(lineage.get("campaign_name", {}).get("label", ""), 3, lineage.get("campaign_name", {}).get("id", "")) if lineage.get("campaign_name") else ""}</td>
+            <td data-col="adset_name">{render_lineage_label(lineage.get("adset_name", {}).get("label", ""), 4, lineage.get("adset_name", {}).get("id", "")) if lineage.get("adset_name") else ""}</td>
             <td data-col="ad_name">{render_lineage_label(row.get("ad_name") or "—", 5)}</td>
             <td data-col="buyer">{escape(row.get("buyer") or "—")}</td>
             <td data-col="offer">{escape(row.get("offer") or "—")}</td>
@@ -7819,14 +7823,14 @@ def _render_dashboard_page_v2(
         for node in nodes:
             hidden_attr = ' hidden' if parent_id else ''
             current_ancestors = [*ancestors, node["id"]]
-            current_lineage = {**lineage, node["column"]: node["label"]}
+            current_lineage = {**lineage, node["column"]: {"label": node["label"], "id": node["id"]}}
             html += f"""
             <tr class="dashboard-tree-row dashboard-tree-row-level-{level}" data-node-id="{escape(node["id"])}" data-row-key="{escape(node["id"])}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}" onclick="window.dashboardHandleRowClick && window.dashboardHandleRowClick(this, event)"{hidden_attr}>
-                <td data-col="platform">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "platform" else (render_lineage_label(lineage.get("platform", ""), 0) if lineage.get("platform") else "")}</td>
-                <td data-col="geo">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "geo" else (render_lineage_label(lineage.get("geo", ""), 1) if lineage.get("geo") else "")}</td>
-                <td data-col="manager">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "manager" else (render_lineage_label(lineage.get("manager", ""), 2) if lineage.get("manager") else "")}</td>
-                <td data-col="campaign_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "campaign_name" else (render_lineage_label(lineage.get("campaign_name", ""), 3) if lineage.get("campaign_name") else "")}</td>
-                <td data-col="adset_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "adset_name" else (render_lineage_label(lineage.get("adset_name", ""), 4) if lineage.get("adset_name") else "")}</td>
+                <td data-col="platform">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "platform" else (render_lineage_label(lineage.get("platform", {}).get("label", ""), 0, lineage.get("platform", {}).get("id", "")) if lineage.get("platform") else "")}</td>
+                <td data-col="geo">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "geo" else (render_lineage_label(lineage.get("geo", {}).get("label", ""), 1, lineage.get("geo", {}).get("id", "")) if lineage.get("geo") else "")}</td>
+                <td data-col="manager">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "manager" else (render_lineage_label(lineage.get("manager", {}).get("label", ""), 2, lineage.get("manager", {}).get("id", "")) if lineage.get("manager") else "")}</td>
+                <td data-col="campaign_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "campaign_name" else (render_lineage_label(lineage.get("campaign_name", {}).get("label", ""), 3, lineage.get("campaign_name", {}).get("id", "")) if lineage.get("campaign_name") else "")}</td>
+                <td data-col="adset_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "adset_name" else (render_lineage_label(lineage.get("adset_name", {}).get("label", ""), 4, lineage.get("adset_name", {}).get("id", "")) if lineage.get("adset_name") else "")}</td>
                 <td data-col="ad_name"></td>
                 <td class="dashboard-tree-summary-cell" data-col="buyer"></td>
                 <td class="dashboard-tree-summary-cell" data-col="offer"></td>
@@ -8562,6 +8566,22 @@ def _render_dashboard_page_v2(
         -webkit-user-select:none;
         font-weight:600;
     }}
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-path-toggle {{
+        display:inline-flex;
+        align-items:center;
+        gap:4px;
+        border:0;
+        background:transparent;
+        padding:0;
+        margin:0;
+        color:#213252;
+        font:inherit;
+        cursor:pointer;
+        justify-content:flex-start;
+        user-select:none;
+        -webkit-user-select:none;
+        font-weight:600;
+    }}
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-caret {{
         width:10px;
         display:inline-flex;
@@ -9079,6 +9099,27 @@ def _render_dashboard_page_v2(
             if (!nodeId) return false;
             const treeRows = Array.from(table.querySelectorAll('tbody tr'));
             const treeButtons = Array.from(table.querySelectorAll('.dashboard-tree-toggle'));
+            const recomputeTreeVisibility = () => {{
+                const expandedNodes = new Set(
+                    treeButtons
+                        .filter((item) => item.getAttribute('aria-expanded') === 'true')
+                        .map((item) => item.dataset.target || '')
+                        .filter(Boolean)
+                );
+                treeRows.forEach((row) => {{
+                    const nodeRowId = row.dataset.nodeId || '';
+                    const parentId = row.dataset.parentId || '';
+                    const ancestors = (row.dataset.ancestors || '').split(',').filter(Boolean);
+                    const ancestorsExpanded = ancestors.every((ancestorId) => expandedNodes.has(ancestorId));
+                    if (!parentId) {{
+                        row.hidden = nodeRowId ? expandedNodes.has(nodeRowId) : false;
+                        return;
+                    }}
+                    const parentExpanded = expandedNodes.has(parentId);
+                    const selfExpanded = nodeRowId ? expandedNodes.has(nodeRowId) : false;
+                    row.hidden = !(ancestorsExpanded && parentExpanded) || selfExpanded;
+                }});
+            }};
             const syncExpandedSummaryRows = () => {{
                 treeRows.forEach((row) => {{
                     if (!row.dataset.nodeId) return;
@@ -9086,31 +9127,22 @@ def _render_dashboard_page_v2(
                     row.classList.toggle('dashboard-tree-row-open', rowButton?.getAttribute('aria-expanded') === 'true');
                 }});
             }};
-            const hideDescendants = (currentNodeId) => {{
+            const collapseDescendants = (currentNodeId) => {{
                 treeRows.forEach((row) => {{
                     const ancestors = (row.dataset.ancestors || '').split(',').filter(Boolean);
                     if (!ancestors.includes(currentNodeId)) return;
-                    row.hidden = true;
                     if (row.dataset.nodeId) {{
                         const nestedButton = row.querySelector('.dashboard-tree-toggle');
                         if (nestedButton) nestedButton.setAttribute('aria-expanded', 'false');
-                        row.classList.remove('dashboard-tree-row-open');
                     }}
-                }});
-            }};
-            const showDirectChildren = (currentNodeId) => {{
-                treeRows.forEach((row) => {{
-                    if ((row.dataset.parentId || '') !== currentNodeId) return;
-                    row.hidden = false;
                 }});
             }};
             const expanded = button.getAttribute('aria-expanded') === 'true';
             if (expanded) {{
                 button.setAttribute('aria-expanded', 'false');
-                hideDescendants(nodeId);
+                collapseDescendants(nodeId);
             }} else {{
                 button.setAttribute('aria-expanded', 'true');
-                showDirectChildren(nodeId);
             }}
             const openNodes = treeButtons
                 .filter((item) => item.getAttribute('aria-expanded') === 'true')
@@ -9122,9 +9154,18 @@ def _render_dashboard_page_v2(
                 state.expanded[table.id || 'dashboard-tree-table'] = openNodes;
                 window.dashboardWriteState(state);
             }}
+            recomputeTreeVisibility();
             syncExpandedSummaryRows();
             if (window.dashboardTreeAutoSize) window.dashboardTreeAutoSize(table);
             return false;
+        }};
+        window.dashboardTreeToggleById = (nodeId, forceCollapse = false) => {{
+            if (!nodeId) return false;
+            const button = Array.from(document.querySelectorAll('.dashboard-tree-toggle')).find((item) => (item.dataset.target || '') === nodeId);
+            if (!button) return false;
+            const isExpanded = button.getAttribute('aria-expanded') === 'true';
+            if (forceCollapse && !isExpanded) return false;
+            return window.dashboardTreeToggle(button);
         }};
 
         window.dashboardTreeAutoSize = (table) => {{
@@ -9350,63 +9391,35 @@ def _render_dashboard_page_v2(
                 const value = expanded[table.id || 'dashboard-tree-table'];
                 return Array.isArray(value) ? value : [];
             }};
-            const hideDescendants = (nodeId) => {{
+            const recomputeTreeVisibility = () => {{
+                const expandedNodes = new Set(
+                    getTreeButtons()
+                        .filter((button) => button.getAttribute('aria-expanded') === 'true')
+                        .map((button) => button.dataset.target || '')
+                        .filter(Boolean)
+                );
                 getTreeRows().forEach((row) => {{
+                    const nodeRowId = row.dataset.nodeId || '';
+                    const parentId = row.dataset.parentId || '';
                     const ancestors = (row.dataset.ancestors || '').split(',').filter(Boolean);
-                    if (!ancestors.includes(nodeId)) return;
-                    row.hidden = true;
-                    if (row.dataset.nodeId) {{
-                        const button = row.querySelector('.dashboard-tree-toggle');
-                        if (button) button.setAttribute('aria-expanded', 'false');
+                    const ancestorsExpanded = ancestors.every((ancestorId) => expandedNodes.has(ancestorId));
+                    if (!parentId) {{
+                        row.hidden = nodeRowId ? expandedNodes.has(nodeRowId) : false;
+                        return;
                     }}
+                    const parentExpanded = expandedNodes.has(parentId);
+                    const selfExpanded = nodeRowId ? expandedNodes.has(nodeRowId) : false;
+                    row.hidden = !(ancestorsExpanded && parentExpanded) || selfExpanded;
                 }});
             }};
-            const saveExpandedState = () => {{
-                const openNodes = getTreeButtons()
-                    .filter((button) => button.getAttribute('aria-expanded') === 'true')
-                    .map((button) => button.dataset.target || '')
-                    .filter(Boolean);
-                const state = window.dashboardReadState();
-                state.expanded = state.expanded || {{}};
-                state.expanded[table.id || 'dashboard-tree-table'] = openNodes;
-                window.dashboardWriteState(state);
-            }};
-            const showDirectChildren = (nodeId) => {{
-                getTreeRows().forEach((row) => {{
-                    if ((row.dataset.parentId || '') !== nodeId) return;
-                    row.hidden = false;
-                }});
-            }};
-            const expandNode = (button) => {{
-                const nodeId = button.dataset.target || '';
-                if (!nodeId) return;
-                button.setAttribute('aria-expanded', 'true');
-                showDirectChildren(nodeId);
-            }};
-            const collapseNode = (button) => {{
-                const nodeId = button.dataset.target || '';
-                if (!nodeId) return;
-                button.setAttribute('aria-expanded', 'false');
-                hideDescendants(nodeId);
-            }};
-                getTreeRows().forEach((row) => {{
-                    if (row.dataset.parentId) row.hidden = true;
-                    if (row.dataset.nodeId) {{
-                        const button = row.querySelector('.dashboard-tree-toggle');
-                        if (button) button.setAttribute('aria-expanded', 'false');
-                    }}
+                getTreeButtons().forEach((button) => {{
+                    button.setAttribute('aria-expanded', 'false');
                 }});
                 readExpandedNodes().forEach((nodeId) => {{
                     const button = getButtonMap().get(nodeId);
-                    if (!button) return;
-                    const parentRow = button.closest('tr');
-                    const ancestors = (parentRow?.dataset.ancestors || '').split(',').filter(Boolean);
-                    ancestors.forEach((ancestorId) => {{
-                        const ancestorButton = getButtonMap().get(ancestorId);
-                        if (ancestorButton) expandNode(ancestorButton);
-                    }});
-                    expandNode(button);
+                    if (button) button.setAttribute('aria-expanded', 'true');
                 }});
+                recomputeTreeVisibility();
                 getTreeRows().forEach((row) => {{
                     if (!row.dataset.nodeId) return;
                     const rowButton = row.querySelector('.dashboard-tree-toggle');
