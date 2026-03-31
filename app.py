@@ -7227,7 +7227,6 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
     hold_map = build_dashboard_hold_flow_map(period_label=period_label)
 
     rows = []
-    seen_flow_placeholder_keys = set()
 
     for item in fb_rows:
         platform_key = normalize_dashboard_platform(item.get("platform"))
@@ -7256,8 +7255,11 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
             "campaign_name": safe_text(item.get("campaign_name")),
             "adset_name": safe_text(item.get("adset_name")),
             "ad_name": safe_text(item.get("ad_name")),
+            "account_id": safe_text(item.get("account_id")),
+            "launch_date": safe_text(item.get("launch_date")),
             "budget": safe_number(item.get("budget", 0)),
             "spend": safe_number(item.get("spend", 0)),
+            "clicks": safe_number(item.get("clicks", 0)),
             "leads": safe_number(item.get("leads", 0)),
             "reg": safe_number(item.get("reg", 0)),
             "cost_reg": safe_number(item.get("cost_per_completed_registration", 0)),
@@ -7266,6 +7268,7 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
             "chatterfy": safe_number(item.get("stat_chatterfy", 0)),
             "players_ftd": safe_number(item.get("stat_total_ftd", 0)),
             "qual_ftd": safe_number(item.get("stat_qual_ftd", 0)),
+            "rate": safe_number(item.get("stat_rate", 0)),
             "income": safe_number(item.get("stat_income", 0)),
             "profit": safe_number(item.get("stat_profit", 0)),
             "roi": safe_number(item.get("stat_roi", 0)),
@@ -7282,55 +7285,6 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
             "row_kind": "fb",
         }
         rows.append(row)
-        seen_flow_placeholder_keys.add(flow_key)
-
-    for flow_key, related_cabinets in cabinet_map.items():
-        if flow_key in seen_flow_placeholder_keys:
-            continue
-        platform_key, manager_key, geo_key = flow_key
-        advertiser_names = sorted({safe_text(cab.advertiser) for cab in related_cabinets if safe_text(cab.advertiser)})
-        cabinet_names = sorted({safe_text(cab.name) for cab in related_cabinets if safe_text(cab.name)})
-        active_cabinets = [cab for cab in related_cabinets if safe_text(getattr(cab, "status", "")).lower() == "active"]
-        cap_info = caps_map.get(flow_key, {})
-        hold_info = hold_map.get(flow_key, {})
-        rows.append({
-            "buyer": buyer_scope,
-            "platform": platform_key,
-            "manager": manager_key,
-            "geo": geo_key,
-            "offer": "",
-            "cabinet_names": cabinet_names,
-            "cabinet_text": ", ".join(cabinet_names) if cabinet_names else "—",
-            "advertiser_names": advertiser_names,
-            "advertiser_text": ", ".join(advertiser_names) if advertiser_names else "—",
-            "campaign_name": "",
-            "adset_name": "",
-            "ad_name": "",
-            "budget": 0.0,
-            "spend": 0.0,
-            "leads": 0.0,
-            "reg": 0.0,
-            "cost_reg": 0.0,
-            "fb_ftd": 0.0,
-            "cpa": 0.0,
-            "chatterfy": 0.0,
-            "players_ftd": 0.0,
-            "qual_ftd": 0.0,
-            "income": 0.0,
-            "profit": 0.0,
-            "roi": 0.0,
-            "caps_count": safe_number(cap_info.get("caps_count", 0)),
-            "cap_total": safe_number(cap_info.get("cap_total", 0)),
-            "cap_current_ftd": safe_number(cap_info.get("cap_current_ftd", 0)),
-            "cap_fill": safe_number(cap_info.get("cap_fill", 0)),
-            "hold_count": safe_number(hold_info.get("hold_count", 0)),
-            "hold_split": f'{format_int_or_float(hold_info.get("baseline_fail_count", 0))}B / {format_int_or_float(hold_info.get("wager_fail_count", 0))}W' if hold_info else "0B / 0W",
-            "active_cabinets": len(active_cabinets),
-            "flow_key": flow_key,
-            "flow_label": " / ".join(filter(None, [platform_key, manager_key, geo_key])),
-            "source_name": "",
-            "row_kind": "flow",
-        })
 
     return rows
 
@@ -7339,18 +7293,24 @@ def build_dashboard_summary_cards(rows):
     totals = {
         "rows": len(rows),
         "spend": sum(safe_number(row.get("spend", 0)) for row in rows),
+        "leads": sum(safe_number(row.get("leads", 0)) for row in rows),
         "reg": sum(safe_number(row.get("reg", 0)) for row in rows),
+        "fb_ftd": sum(safe_number(row.get("fb_ftd", 0)) for row in rows),
         "players_ftd": sum(safe_number(row.get("players_ftd", 0)) for row in rows),
         "chatterfy": sum(safe_number(row.get("chatterfy", 0)) for row in rows),
-        "hold": sum(safe_number(row.get("hold_count", 0)) for row in rows),
+        "income": sum(safe_number(row.get("income", 0)) for row in rows),
+        "profit": sum(safe_number(row.get("profit", 0)) for row in rows),
     }
     cards = [
         ("Rows", format_int_or_float(totals["rows"])),
         ("Spend", format_money(totals["spend"])),
+        ("Leads", format_int_or_float(totals["leads"])),
         ("Reg", format_int_or_float(totals["reg"])),
+        ("FB FTD", format_int_or_float(totals["fb_ftd"])),
         ("Players FTD", format_int_or_float(totals["players_ftd"])),
         ("Chatterfy", format_int_or_float(totals["chatterfy"])),
-        ("Hold", format_int_or_float(totals["hold"])),
+        ("Income", format_money(totals["income"])),
+        ("Profit", format_money(totals["profit"])),
     ]
     cards_html = "".join(
         f'<div class="stat-card"><div class="name">{escape(name)}</div><div class="value">{escape(value)}</div></div>'
@@ -7359,13 +7319,36 @@ def build_dashboard_summary_cards(rows):
     return f'<div class="panel compact-panel"><div class="stats-grid">{cards_html}</div></div>'
 
 
-def _dashboard_filter_rows(rows, platform="", manager="", geo="", offer="", cabinet_name="", advertiser="", search=""):
+def _dashboard_filter_rows(
+    rows,
+    platform="",
+    manager="",
+    geo="",
+    offer="",
+    cabinet_name="",
+    advertiser="",
+    campaign_name="",
+    adset_name="",
+    account_id="",
+    ad_name="",
+    source_name="",
+    has_caps="",
+    has_hold="",
+    has_chatterfy="",
+    has_players="",
+    search="",
+):
     clean_platform = normalize_dashboard_platform(platform)
     clean_manager = safe_text(manager).strip().lower()
     clean_geo = normalize_geo_value(geo)
     clean_offer = safe_text(offer).strip().lower()
     clean_cabinet = safe_text(cabinet_name).strip().lower()
     clean_advertiser = safe_text(advertiser).strip().lower()
+    clean_campaign = safe_text(campaign_name).strip().lower()
+    clean_adset = safe_text(adset_name).strip().lower()
+    clean_account = safe_text(account_id).strip().lower()
+    clean_ad_name = safe_text(ad_name).strip().lower()
+    clean_source = safe_text(source_name).strip().lower()
     clean_search = safe_text(search).strip().lower()
     filtered = []
     for row in rows:
@@ -7381,6 +7364,32 @@ def _dashboard_filter_rows(rows, platform="", manager="", geo="", offer="", cabi
             continue
         if clean_advertiser and clean_advertiser not in [safe_text(item).strip().lower() for item in row.get("advertiser_names", [])]:
             continue
+        if clean_campaign and safe_text(row.get("campaign_name")).strip().lower() != clean_campaign:
+            continue
+        if clean_adset and safe_text(row.get("adset_name")).strip().lower() != clean_adset:
+            continue
+        if clean_account and safe_text(row.get("account_id")).strip().lower() != clean_account:
+            continue
+        if clean_ad_name and safe_text(row.get("ad_name")).strip().lower() != clean_ad_name:
+            continue
+        if clean_source and safe_text(row.get("source_name")).strip().lower() != clean_source:
+            continue
+        if has_caps == "yes" and safe_number(row.get("cap_total", 0)) <= 0:
+            continue
+        if has_caps == "no" and safe_number(row.get("cap_total", 0)) > 0:
+            continue
+        if has_hold == "yes" and safe_number(row.get("hold_count", 0)) <= 0:
+            continue
+        if has_hold == "no" and safe_number(row.get("hold_count", 0)) > 0:
+            continue
+        if has_chatterfy == "yes" and safe_number(row.get("chatterfy", 0)) <= 0:
+            continue
+        if has_chatterfy == "no" and safe_number(row.get("chatterfy", 0)) > 0:
+            continue
+        if has_players == "yes" and safe_number(row.get("players_ftd", 0)) <= 0:
+            continue
+        if has_players == "no" and safe_number(row.get("players_ftd", 0)) > 0:
+            continue
         if clean_search:
             haystack = " | ".join([
                 safe_text(row.get("buyer")),
@@ -7393,6 +7402,7 @@ def _dashboard_filter_rows(rows, platform="", manager="", geo="", offer="", cabi
                 safe_text(row.get("campaign_name")),
                 safe_text(row.get("adset_name")),
                 safe_text(row.get("ad_name")),
+                safe_text(row.get("account_id")),
                 safe_text(row.get("flow_label")),
                 safe_text(row.get("source_name")),
             ]).lower()
@@ -7445,6 +7455,15 @@ def _render_dashboard_page_v2(
     platform = safe_text(request.query_params.get("platform"))
     cabinet_name = safe_text(request.query_params.get("cabinet_name"))
     advertiser = safe_text(request.query_params.get("advertiser"))
+    campaign_name = safe_text(request.query_params.get("campaign_name"))
+    adset_name = safe_text(request.query_params.get("adset_name"))
+    account_id = safe_text(request.query_params.get("account_id"))
+    ad_name = safe_text(request.query_params.get("ad_name"))
+    source_name = safe_text(request.query_params.get("source_name"))
+    has_caps = safe_text(request.query_params.get("has_caps"))
+    has_hold = safe_text(request.query_params.get("has_hold"))
+    has_chatterfy = safe_text(request.query_params.get("has_chatterfy"))
+    has_players = safe_text(request.query_params.get("has_players"))
     sort_by = safe_text(request.query_params.get("sort_by") or "spend")
     order = safe_text(request.query_params.get("order") or "desc")
 
@@ -7456,6 +7475,11 @@ def _render_dashboard_page_v2(
     offer_values = sorted({safe_text(row.get("offer")) for row in base_rows if safe_text(row.get("offer"))})
     cabinet_values = sorted({safe_text(item) for row in base_rows for item in row.get("cabinet_names", []) if safe_text(item)})
     advertiser_values = sorted({safe_text(item) for row in base_rows for item in row.get("advertiser_names", []) if safe_text(item)})
+    campaign_values = sorted({safe_text(row.get("campaign_name")) for row in base_rows if safe_text(row.get("campaign_name"))})
+    adset_values = sorted({safe_text(row.get("adset_name")) for row in base_rows if safe_text(row.get("adset_name"))})
+    account_values = sorted({safe_text(row.get("account_id")) for row in base_rows if safe_text(row.get("account_id"))})
+    ad_name_values = sorted({safe_text(row.get("ad_name")) for row in base_rows if safe_text(row.get("ad_name"))})
+    source_values = sorted({safe_text(row.get("source_name")) for row in base_rows if safe_text(row.get("source_name"))})
 
     rows = _dashboard_filter_rows(
         base_rows,
@@ -7465,6 +7489,15 @@ def _render_dashboard_page_v2(
         offer=offer,
         cabinet_name=cabinet_name,
         advertiser=advertiser,
+        campaign_name=campaign_name,
+        adset_name=adset_name,
+        account_id=account_id,
+        ad_name=ad_name,
+        source_name=source_name,
+        has_caps=has_caps,
+        has_hold=has_hold,
+        has_chatterfy=has_chatterfy,
+        has_players=has_players,
         search=search,
     )
     rows = _dashboard_sort_rows(rows, sort_by=sort_by, order=order)
@@ -7483,6 +7516,16 @@ def _render_dashboard_page_v2(
     offer_options = make_options(offer_values, offer)
     cabinet_options = make_options(cabinet_values, cabinet_name)
     advertiser_options = make_options(advertiser_values, advertiser)
+    campaign_options = make_options(campaign_values, campaign_name)
+    adset_options = make_options(adset_values, adset_name)
+    account_options = make_options(account_values, account_id)
+    ad_name_options = make_options(ad_name_values, ad_name)
+    source_options = make_options(source_values, source_name)
+    yes_no_options = lambda selected: (
+        '<option value="">All</option>'
+        f'<option value="yes" {"selected" if selected == "yes" else ""}>Yes</option>'
+        f'<option value="no" {"selected" if selected == "no" else ""}>No</option>'
+    )
 
     filter_params = {
         "buyer": buyer,
@@ -7492,6 +7535,15 @@ def _render_dashboard_page_v2(
         "offer": offer,
         "cabinet_name": cabinet_name,
         "advertiser": advertiser,
+        "campaign_name": campaign_name,
+        "adset_name": adset_name,
+        "account_id": account_id,
+        "ad_name": ad_name,
+        "source_name": source_name,
+        "has_caps": has_caps,
+        "has_hold": has_hold,
+        "has_chatterfy": has_chatterfy,
+        "has_players": has_players,
         "search": search,
         "period_view": "period",
         "period_label": effective_period_label,
@@ -7500,6 +7552,7 @@ def _render_dashboard_page_v2(
     }
 
     table_headers = [
+        ("launch_date", "Start"),
         ("buyer", "Buyer"),
         ("platform", "Platform"),
         ("manager", "Manager"),
@@ -7507,13 +7560,16 @@ def _render_dashboard_page_v2(
         ("offer", "Offer"),
         ("cabinet_text", "Cabinets"),
         ("advertiser_text", "Advertiser"),
+        ("account_id", "Account"),
         ("campaign_name", "Campaign"),
         ("adset_name", "Ad Group"),
         ("ad_name", "Ad"),
         ("budget", "Budget"),
         ("spend", "Spend"),
+        ("clicks", "Clicks"),
         ("leads", "Leads"),
         ("reg", "Reg"),
+        ("rate", "Rate"),
         ("cost_reg", "Cost Reg"),
         ("fb_ftd", "FB FTD"),
         ("cpa", "CPA"),
@@ -7530,7 +7586,12 @@ def _render_dashboard_page_v2(
     ]
 
     head_html = "".join(
-        f"<th>{_dashboard_sort_link(label, field, **filter_params)}</th>"
+        f'<th data-col="{escape(field)}">{_dashboard_sort_link(label, field, **filter_params)}</th>'
+        for field, label in table_headers
+    )
+
+    column_chips = "".join(
+        f'<label class="column-chip"><input type="checkbox" class="dashboard-column-toggle" value="{escape(field)}" checked> {escape(label)}</label>'
         for field, label in table_headers
     )
 
@@ -7539,33 +7600,37 @@ def _render_dashboard_page_v2(
         row_class = "soft-green" if safe_number(row.get("profit", 0)) > 0 else ("soft-red" if safe_number(row.get("profit", 0)) < 0 else "")
         rows_html += f"""
         <tr class="{row_class}">
-            <td>{escape(row.get("buyer") or "—")}</td>
-            <td>{escape(row.get("platform") or "—")}</td>
-            <td>{escape(row.get("manager") or "—")}</td>
-            <td>{escape(row.get("geo") or "—")}</td>
-            <td>{escape(row.get("offer") or "—")}</td>
-            <td>{escape(row.get("cabinet_text") or "—")}</td>
-            <td>{escape(row.get("advertiser_text") or "—")}</td>
-            <td>{escape(row.get("campaign_name") or "—")}</td>
-            <td>{escape(row.get("adset_name") or "—")}</td>
-            <td>{escape(row.get("ad_name") or "—")}</td>
-            <td>{format_money(row.get("budget", 0))}</td>
-            <td>{format_money(row.get("spend", 0))}</td>
-            <td>{format_int_or_float(row.get("leads", 0))}</td>
-            <td>{format_int_or_float(row.get("reg", 0))}</td>
-            <td>{format_money(row.get("cost_reg", 0))}</td>
-            <td>{format_int_or_float(row.get("fb_ftd", 0))}</td>
-            <td>{format_money(row.get("cpa", 0))}</td>
-            <td>{format_int_or_float(row.get("chatterfy", 0))}</td>
-            <td>{format_int_or_float(row.get("players_ftd", 0))}</td>
-            <td>{format_int_or_float(row.get("qual_ftd", 0))}</td>
-            <td>{format_int_or_float(row.get("hold_count", 0))}</td>
-            <td>{escape(row.get("hold_split") or "0B / 0W")}</td>
-            <td>{format_int_or_float(row.get("cap_total", 0))}</td>
-            <td>{format_percent(row.get("cap_fill", 0))}</td>
-            <td>{format_money(row.get("income", 0))}</td>
-            <td>{format_money(row.get("profit", 0))}</td>
-            <td>{format_percent(row.get("roi", 0))}</td>
+            <td data-col="launch_date">{escape(row.get("launch_date") or "—")}</td>
+            <td data-col="buyer">{escape(row.get("buyer") or "—")}</td>
+            <td data-col="platform">{escape(row.get("platform") or "—")}</td>
+            <td data-col="manager">{escape(row.get("manager") or "—")}</td>
+            <td data-col="geo">{escape(row.get("geo") or "—")}</td>
+            <td data-col="offer">{escape(row.get("offer") or "—")}</td>
+            <td data-col="cabinet_text">{escape(row.get("cabinet_text") or "—")}</td>
+            <td data-col="advertiser_text">{escape(row.get("advertiser_text") or "—")}</td>
+            <td data-col="account_id">{escape(row.get("account_id") or "—")}</td>
+            <td data-col="campaign_name">{escape(row.get("campaign_name") or "—")}</td>
+            <td data-col="adset_name">{escape(row.get("adset_name") or "—")}</td>
+            <td data-col="ad_name">{escape(row.get("ad_name") or "—")}</td>
+            <td data-col="budget">{format_money(row.get("budget", 0))}</td>
+            <td data-col="spend">{format_money(row.get("spend", 0))}</td>
+            <td data-col="clicks">{format_int_or_float(row.get("clicks", 0))}</td>
+            <td data-col="leads">{format_int_or_float(row.get("leads", 0))}</td>
+            <td data-col="reg">{format_int_or_float(row.get("reg", 0))}</td>
+            <td data-col="rate">{format_money(row.get("rate", 0))}</td>
+            <td data-col="cost_reg">{format_money(row.get("cost_reg", 0))}</td>
+            <td data-col="fb_ftd">{format_int_or_float(row.get("fb_ftd", 0))}</td>
+            <td data-col="cpa">{format_money(row.get("cpa", 0))}</td>
+            <td data-col="chatterfy">{format_int_or_float(row.get("chatterfy", 0))}</td>
+            <td data-col="players_ftd">{format_int_or_float(row.get("players_ftd", 0))}</td>
+            <td data-col="qual_ftd">{format_int_or_float(row.get("qual_ftd", 0))}</td>
+            <td data-col="hold_count">{format_int_or_float(row.get("hold_count", 0))}</td>
+            <td data-col="hold_split">{escape(row.get("hold_split") or "0B / 0W")}</td>
+            <td data-col="cap_total">{format_int_or_float(row.get("cap_total", 0))}</td>
+            <td data-col="cap_fill">{format_percent(row.get("cap_fill", 0))}</td>
+            <td data-col="income">{format_money(row.get("income", 0))}</td>
+            <td data-col="profit">{format_money(row.get("profit", 0))}</td>
+            <td data-col="roi">{format_percent(row.get("roi", 0))}</td>
         </tr>
         """
 
@@ -7583,26 +7648,35 @@ def _render_dashboard_page_v2(
     <div class="panel compact-panel">
         <div class="toolbar-actions">
             <div class="panel compact-panel filters" style="width:100%;">
-                <form method="get" action="/dashboard" data-persist-filters="dashboard-v2" style="display:grid; grid-template-columns:repeat(8, minmax(0, 1fr)); gap:12px; align-items:end;">
+                <form method="get" action="/dashboard" data-persist-filters="dashboard-v2" style="display:grid; grid-template-columns:repeat(18, minmax(0, 1fr)); gap:10px; align-items:end;">
                     {buyer_filter_html}
                     <input type="hidden" name="period_view" value="period">
-                    <div class="period-picker" style="display:flex; align-items:end; gap:6px; min-width:0;">
+                    <div class="period-picker" style="display:flex; align-items:end; gap:6px; min-width:0; grid-column:span 4;">
                         <button type="button" class="ghost-btn small-btn period-jump-btn" data-period-jump="-1" aria-label="Previous period">‹</button>
                         <label style="display:grid; gap:6px; min-width:0; flex:1 1 auto;">Period
                             <select name="period_label" id="dashboardPeriodSelect">{period_options}</select>
                         </label>
                         <button type="button" class="ghost-btn small-btn period-jump-btn" data-period-jump="1" aria-label="Next period">›</button>
                     </div>
-                    <label>Platform<select name="platform">{platform_options}</select></label>
-                    <label>Manager<select name="manager">{manager_options}</select></label>
-                    <label>Geo<select name="geo">{geo_options}</select></label>
-                    <label>Offer<select name="offer">{offer_options}</select></label>
-                    <label>Cabinet<select name="cabinet_name">{cabinet_options}</select></label>
-                    <label>Advertiser<select name="advertiser">{advertiser_options}</select></label>
-                    <label style="grid-column:span 2;">Search<input type="text" name="search" value="{escape(search)}" placeholder="Campaign, ad, cabinet, advertiser, geo..."></label>
+                    <label style="grid-column:span 2;">Platform<select name="platform">{platform_options}</select></label>
+                    <label style="grid-column:span 2;">Manager<select name="manager">{manager_options}</select></label>
+                    <label style="grid-column:span 2;">Geo<select name="geo">{geo_options}</select></label>
+                    <label style="grid-column:span 2;">Offer<select name="offer">{offer_options}</select></label>
+                    <label style="grid-column:span 2;">Cabinet<select name="cabinet_name">{cabinet_options}</select></label>
+                    <label style="grid-column:span 2;">Advertiser<select name="advertiser">{advertiser_options}</select></label>
+                    <label style="grid-column:span 3;">Campaign<select name="campaign_name">{campaign_options}</select></label>
+                    <label style="grid-column:span 3;">Ad Group<select name="adset_name">{adset_options}</select></label>
+                    <label style="grid-column:span 3;">Ad<select name="ad_name">{ad_name_options}</select></label>
+                    <label style="grid-column:span 3;">Account<select name="account_id">{account_options}</select></label>
+                    <label style="grid-column:span 3;">Source<select name="source_name">{source_options}</select></label>
+                    <label style="grid-column:span 2;">Caps<select name="has_caps">{yes_no_options(has_caps)}</select></label>
+                    <label style="grid-column:span 2;">Hold<select name="has_hold">{yes_no_options(has_hold)}</select></label>
+                    <label style="grid-column:span 2;">Chat<select name="has_chatterfy">{yes_no_options(has_chatterfy)}</select></label>
+                    <label style="grid-column:span 2;">Players<select name="has_players">{yes_no_options(has_players)}</select></label>
+                    <label style="grid-column:span 5;">Search<input type="text" name="search" value="{escape(search)}" placeholder="Campaign, ad, cabinet, advertiser, geo, account..."></label>
                     <input type="hidden" name="sort_by" value="{escape(sort_by)}">
                     <input type="hidden" name="order" value="{escape(order)}">
-                    <div style="display:flex; gap:10px; align-items:end;">
+                    <div style="display:flex; gap:10px; align-items:end; grid-column:span 3;">
                         <button type="submit" class="btn small-btn">Filter</button>
                         <a href="/dashboard?period_view=period&period_label={quote_plus(effective_period_label)}" class="ghost-btn small-btn" data-reset-filters="dashboard-v2">Reset</a>
                     </div>
@@ -7615,11 +7689,25 @@ def _render_dashboard_page_v2(
 
     <div class="panel compact-panel">
         <div class="panel-title">CRM Unified Table</div>
-        <div class="panel-subtitle">FB is the base campaign layer. Players, Chatterfy, Caps, Cabinets and Hold are linked on top through flow, cabinet, geo, promo and tagged offer relations.</div>
+        <div class="panel-subtitle">FB is the base layer. Players, Chatterfy, Caps, Cabinets and Hold are stitched on top through launch date, manager, geo, offer, promo and cabinet flow relations.</div>
+        <div style="display:flex; justify-content:flex-end; margin-top:14px;">
+            <details class="upload-menu upload-menu-right" id="dashboardColumnsMenu">
+                <summary class="ghost-btn small-btn">Columns</summary>
+                <div class="upload-menu-list" style="width:min(560px, calc(100vw - 48px));">
+                    <div class="panel-subtitle">Choose which columns to keep visible in Dashboard.</div>
+                    <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
+                        <button type="button" class="ghost-btn small-btn" id="dashboardShowAllColumns">Show all</button>
+                    </div>
+                    <div style="display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px; margin-top:12px;">
+                        {column_chips}
+                    </div>
+                </div>
+            </details>
+        </div>
         <div class="table-wrap" style="margin-top:14px;">
-            <table style="min-width:2500px;">
+            <table id="dashboardUnifiedTable" style="min-width:3050px;">
                 <thead><tr>{head_html}</tr></thead>
-                <tbody>{rows_html if rows_html else '<tr><td colspan="27">No dashboard rows for the selected filters</td></tr>'}</tbody>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="31">No dashboard rows for the selected filters</td></tr>'}</tbody>
             </table>
         </div>
     </div>
@@ -7641,6 +7729,37 @@ def _render_dashboard_page_v2(
                 if (form) form.requestSubmit();
             }});
         }});
+
+        const hiddenKey = window.teambeadStorageKey('dashboard-columns-hidden');
+        const toggles = Array.from(document.querySelectorAll('.dashboard-column-toggle'));
+        const applyColumns = () => {{
+            let hidden = [];
+            try {{
+                hidden = JSON.parse(localStorage.getItem(hiddenKey) || '[]');
+            }} catch (_error) {{
+                hidden = [];
+            }}
+            toggles.forEach((toggle) => {{
+                toggle.checked = !hidden.includes(toggle.value);
+            }});
+            document.querySelectorAll('#dashboardUnifiedTable [data-col]').forEach((cell) => {{
+                cell.style.display = hidden.includes(cell.dataset.col) ? 'none' : '';
+            }});
+        }};
+        const saveColumns = () => {{
+            const hidden = toggles.filter((toggle) => !toggle.checked).map((toggle) => toggle.value);
+            localStorage.setItem(hiddenKey, JSON.stringify(hidden));
+            applyColumns();
+        }};
+        toggles.forEach((toggle) => toggle.addEventListener('change', saveColumns));
+        const showAllButton = document.getElementById('dashboardShowAllColumns');
+        if (showAllButton) {{
+            showAllButton.addEventListener('click', () => {{
+                localStorage.setItem(hiddenKey, JSON.stringify([]));
+                applyColumns();
+            }});
+        }}
+        applyColumns();
     }})();
     </script>
     """
