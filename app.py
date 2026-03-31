@@ -7768,6 +7768,7 @@ def _render_dashboard_page_v2(
 
     def render_leaf_row(row, parent_id="", ancestors=None, lineage=None):
         ancestors = ancestors or []
+        lineage = lineage or {}
         row_class = "soft-green" if safe_number(row.get("profit", 0)) > 0 else ("soft-red" if safe_number(row.get("profit", 0)) < 0 else "")
         hidden_attr = ' hidden' if parent_id else ''
         row_key = "leaf|" + "|".join([
@@ -7782,11 +7783,11 @@ def _render_dashboard_page_v2(
         ])
         return f"""
         <tr class="dashboard-leaf-row {row_class}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}" data-row-key="{escape(row_key)}" onclick="window.dashboardHandleRowClick && window.dashboardHandleRowClick(this, event)"{hidden_attr}>
-            <td data-col="platform"></td>
-            <td data-col="geo"></td>
-            <td data-col="manager"></td>
-            <td data-col="campaign_name"></td>
-            <td data-col="adset_name"></td>
+            <td data-col="platform">{render_lineage_label(lineage.get("platform", {}).get("label", ""), 0, lineage.get("platform", {}).get("id", "")) if lineage.get("platform") else ""}</td>
+            <td data-col="geo">{render_lineage_label(lineage.get("geo", {}).get("label", ""), 1, lineage.get("geo", {}).get("id", "")) if lineage.get("geo") else ""}</td>
+            <td data-col="manager">{render_lineage_label(lineage.get("manager", {}).get("label", ""), 2, lineage.get("manager", {}).get("id", "")) if lineage.get("manager") else ""}</td>
+            <td data-col="campaign_name">{render_lineage_label(lineage.get("campaign_name", {}).get("label", ""), 3, lineage.get("campaign_name", {}).get("id", "")) if lineage.get("campaign_name") else ""}</td>
+            <td data-col="adset_name">{render_lineage_label(lineage.get("adset_name", {}).get("label", ""), 4, lineage.get("adset_name", {}).get("id", "")) if lineage.get("adset_name") else ""}</td>
             <td data-col="ad_name">{render_lineage_label(row.get("ad_name") or "—", 5)}</td>
             <td data-col="buyer">{escape(row.get("buyer") or "—")}</td>
             <td data-col="offer">{escape(row.get("offer") or "—")}</td>
@@ -9070,6 +9071,40 @@ def _render_dashboard_page_v2(
             if (window.dashboardPersistAllTreeState) window.dashboardPersistAllTreeState();
             syncDashboardStateParam();
         }};
+        const dashboardHierarchyColumns = ['platform', 'geo', 'manager', 'campaign_name', 'adset_name', 'ad_name'];
+        const normalizeDashboardHierarchyRows = (table) => {{
+            if (!table) return;
+            const bodyRows = Array.from(table.querySelectorAll('tbody tr'));
+            bodyRows.forEach((row) => {{
+                dashboardHierarchyColumns.forEach((col) => {{
+                    const cell = row.querySelector(`td[data-col="${{col}}"]`);
+                    if (!cell) return;
+                    if (cell.dataset.originalHtml === undefined) {{
+                        cell.dataset.originalHtml = cell.innerHTML;
+                        cell.dataset.originalText = (cell.textContent || '').trim();
+                    }} else {{
+                        cell.innerHTML = cell.dataset.originalHtml;
+                    }}
+                }});
+            }});
+            let previousTexts = Array(dashboardHierarchyColumns.length).fill('');
+            bodyRows.filter((row) => !row.hidden).forEach((row) => {{
+                const currentTexts = dashboardHierarchyColumns.map((col) => {{
+                    const cell = row.querySelector(`td[data-col="${{col}}"]`);
+                    return cell?.dataset.originalText || '';
+                }});
+                dashboardHierarchyColumns.forEach((col, index) => {{
+                    const cell = row.querySelector(`td[data-col="${{col}}"]`);
+                    if (!cell) return;
+                    const currentText = currentTexts[index];
+                    const samePrefix = currentTexts.slice(0, index + 1).every((value, prefixIndex) => value && value === previousTexts[prefixIndex]);
+                    if (samePrefix) {{
+                        cell.innerHTML = '';
+                    }}
+                }});
+                previousTexts = currentTexts;
+            }});
+        }};
         document.querySelectorAll('.period-jump-btn').forEach((button) => {{
             button.addEventListener('click', () => {{
                 const direction = Number(button.dataset.periodJump || '0');
@@ -9155,6 +9190,7 @@ def _render_dashboard_page_v2(
             }}
             recomputeTreeVisibility();
             syncExpandedSummaryRows();
+            normalizeDashboardHierarchyRows(table);
             if (window.dashboardTreeAutoSize) window.dashboardTreeAutoSize(table);
             return false;
         }};
@@ -9424,6 +9460,7 @@ def _render_dashboard_page_v2(
                     const rowButton = row.querySelector('.dashboard-tree-toggle');
                     row.classList.toggle('dashboard-tree-row-open', rowButton?.getAttribute('aria-expanded') === 'true');
                 }});
+                normalizeDashboardHierarchyRows(table);
                 window.dashboardTreeAutoSize(table);
                 if (window.dashboardApplySelectedRows) window.dashboardApplySelectedRows(table);
                 if (window.dashboardApplySelectedColumns) window.dashboardApplySelectedColumns(table);
