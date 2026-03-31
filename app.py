@@ -7159,6 +7159,95 @@ def build_dashboard_cabinet_flow_map():
     return result
 
 
+def build_dashboard_players_scope_map(period_label=""):
+    ensure_partner_table()
+    ensure_caps_table()
+    db = SessionLocal()
+    try:
+        partner_query = db.query(PartnerRow)
+        caps_query = db.query(CapRow)
+        if period_label:
+            partner_query = partner_query.filter(PartnerRow.period_label == period_label)
+            caps_query = caps_query.filter(CapRow.period_label == period_label)
+        partner_rows = partner_query.all()
+        caps = caps_query.all()
+    finally:
+        db.close()
+
+    cabinet_platform_map = get_cabinet_platform_map()
+    caps_by_promo, caps_by_scope = build_cap_match_maps(caps)
+    result = {}
+    for row in partner_rows:
+        scope_key = build_cap_scope_key(getattr(row, "cabinet_name", ""), getattr(row, "country", ""))
+        if not all(scope_key):
+            continue
+        bucket = result.setdefault(scope_key, {
+            "players_ftd": 0.0,
+            "qual_ftd": 0.0,
+        })
+        if safe_number(getattr(row, "deposit_amount", 0)) > 0:
+            bucket["players_ftd"] += 1
+        matched_caps = get_caps_for_partner_row(row, caps_by_promo, caps_by_scope, cabinet_platform_map)
+        if any(is_partner_row_qualified_for_cap(row, cap, cabinet_platform_map) for cap in matched_caps):
+            bucket["qual_ftd"] += 1
+    return result
+
+
+def build_dashboard_caps_scope_map(period_label=""):
+    ensure_caps_table()
+    db = SessionLocal()
+    try:
+        query = db.query(CapRow)
+        if period_label:
+            query = query.filter(CapRow.period_label == period_label)
+        caps = query.all()
+    finally:
+        db.close()
+
+    result = {}
+    for cap in caps:
+        scope_key = build_cap_scope_key(getattr(cap, "cabinet_name", "") or getattr(cap, "buyer", ""), getattr(cap, "geo", "") or getattr(cap, "code", ""))
+        if not all(scope_key):
+            continue
+        bucket = result.setdefault(scope_key, {
+            "caps_count": 0.0,
+            "cap_total": 0.0,
+            "cap_current_ftd": 0.0,
+            "rate_values": [],
+        })
+        bucket["caps_count"] += 1
+        bucket["cap_total"] += safe_number(getattr(cap, "cap_value", 0))
+        bucket["cap_current_ftd"] += safe_number(getattr(cap, "current_ftd", 0))
+        rate_value = safe_cap_number(getattr(cap, "rate", 0))
+        if rate_value > 0:
+            bucket["rate_values"].append(rate_value)
+    for bucket in result.values():
+        rate_values = bucket.pop("rate_values", [])
+        bucket["rate"] = (sum(rate_values) / len(rate_values)) if rate_values else 0.0
+        bucket["cap_fill"] = cap_fill_percent(bucket["cap_current_ftd"], bucket["cap_total"])
+    return result
+
+
+def build_dashboard_hold_scope_map(period_label=""):
+    result = {}
+    for item in get_hold_wager_rows(period_label=period_label):
+        scope_key = build_cap_scope_key(item.get("cabinet_name"), item.get("country"))
+        if not all(scope_key):
+            continue
+        bucket = result.setdefault(scope_key, {
+            "hold_count": 0.0,
+            "baseline_fail_count": 0.0,
+            "wager_fail_count": 0.0,
+        })
+        bucket["hold_count"] += 1
+        reason = safe_text(item.get("reason")).lower()
+        if "baseline" in reason:
+            bucket["baseline_fail_count"] += 1
+        if "wager" in reason:
+            bucket["wager_fail_count"] += 1
+    return result
+
+
 def pick_dashboard_primary_cabinet(cabinets, fb_item=None):
     if not cabinets:
         return None
@@ -7267,11 +7356,13 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
     fb_rows = aggregate_grouped_rows(get_filtered_data(buyer=buyer_scope, period_label=period_label))
     fb_rows = enrich_statistic_rows(fb_rows, period_label=period_label)
     cabinet_map = build_dashboard_cabinet_flow_map()
-    caps_map = build_dashboard_caps_flow_map(period_label=period_label)
-    hold_map = build_dashboard_hold_flow_map(period_label=period_label)
+    players_scope_map = build_dashboard_players_scope_map(period_label=period_label)
+    caps_scope_map = build_dashboard_caps_scope_map(period_label=period_label)
+    hold_scope_map = build_dashboard_hold_scope_map(period_label=period_label)
 
-    rows = []
-
+    row_contexts = []
+    scope_bucket_weights = {}
+    scope_bucket_counts = {}
     for item in fb_rows:
         platform_key = normalize_dashboard_platform(item.get("platform"))
         flow_key = build_flow_key(platform_key, item.get("manager"), item.get("geo"))
@@ -7283,22 +7374,67 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
         primary_cabinet = pick_dashboard_primary_cabinet(related_cabinets, item)
         primary_cabinet_name = safe_text(getattr(primary_cabinet, "name", ""))
         primary_advertiser = safe_text(getattr(primary_cabinet, "advertiser", ""))
-        cabinet_names = [primary_cabinet_name] if primary_cabinet_name else []
-        advertiser_names = [primary_advertiser] if primary_advertiser else []
-        active_cabinets = [cab for cab in related_cabinets if safe_text(getattr(cab, "status", "")).lower() == "active"]
-        cap_info = caps_map.get(flow_key, {})
-        hold_info = hold_map.get(flow_key, {})
+        related_cabinet_names = sorted({
+            safe_text(getattr(cab, "name", "")).strip()
+            for cab in related_cabinets
+            if safe_text(getattr(cab, "name", "")).strip()
+        })
+        related_advertiser_names = sorted({
+            safe_text(getattr(cab, "advertiser", "")).strip()
+            for cab in related_cabinets
+            if safe_text(getattr(cab, "advertiser", "")).strip()
+        })
+        scope_key = build_cap_scope_key(primary_cabinet_name, item.get("geo")) if primary_cabinet_name else ("", "")
+        row_weight = safe_number(item.get("ftd")) or safe_number(item.get("leads")) or safe_number(item.get("spend")) or 1.0
+        if all(scope_key):
+            scope_bucket_weights[scope_key] = scope_bucket_weights.get(scope_key, 0.0) + row_weight
+            scope_bucket_counts[scope_key] = scope_bucket_counts.get(scope_key, 0) + 1
+        row_contexts.append({
+            "item": item,
+            "flow_key": flow_key,
+            "related_cabinets": related_cabinets,
+            "related_cabinet_names": related_cabinet_names,
+            "related_advertiser_names": related_advertiser_names,
+            "primary_cabinet_name": primary_cabinet_name,
+            "primary_advertiser": primary_advertiser,
+            "scope_key": scope_key,
+            "row_weight": row_weight,
+        })
 
+    rows = []
+    for context in row_contexts:
+        item = context["item"]
+        scope_key = context["scope_key"]
+        players_info = players_scope_map.get(scope_key, {}) if all(scope_key) else {}
+        caps_info = caps_scope_map.get(scope_key, {}) if all(scope_key) else {}
+        hold_info = hold_scope_map.get(scope_key, {}) if all(scope_key) else {}
+        bucket_weight = scope_bucket_weights.get(scope_key, 0.0)
+        bucket_count = scope_bucket_counts.get(scope_key, 1)
+        scope_share = 0.0
+        if all(scope_key):
+            scope_share = (context["row_weight"] / bucket_weight) if bucket_weight > 0 else (1.0 / bucket_count)
+        active_cabinets = [cab for cab in context["related_cabinets"] if safe_text(getattr(cab, "status", "")).lower() == "active"]
+        players_ftd = safe_number(players_info.get("players_ftd", 0)) * scope_share
+        qual_ftd = safe_number(players_info.get("qual_ftd", 0)) * scope_share
+        rate = safe_number(caps_info.get("rate", 0))
+        payout = qual_ftd * rate
+        caps_count = safe_number(caps_info.get("caps_count", 0)) * scope_share
+        cap_total = safe_number(caps_info.get("cap_total", 0)) * scope_share
+        cap_current_ftd = safe_number(caps_info.get("cap_current_ftd", 0)) * scope_share
+        baseline_fail_count = safe_number(hold_info.get("baseline_fail_count", 0)) * scope_share
+        wager_fail_count = safe_number(hold_info.get("wager_fail_count", 0)) * scope_share
+        hold_count = safe_number(hold_info.get("hold_count", 0)) * scope_share
+        profit = payout - safe_number(item.get("spend", 0))
         row = {
             "buyer": safe_text(item.get("buyer")),
             "platform": safe_text(item.get("platform")),
             "manager": safe_text(item.get("manager")),
             "geo": safe_text(item.get("geo")),
             "offer": safe_text(item.get("offer")),
-            "cabinet_names": cabinet_names,
-            "cabinet_text": primary_cabinet_name or "—",
-            "advertiser_names": advertiser_names,
-            "advertiser_text": primary_advertiser or "—",
+            "cabinet_names": context["related_cabinet_names"] or ([context["primary_cabinet_name"]] if context["primary_cabinet_name"] else []),
+            "cabinet_text": ", ".join(context["related_cabinet_names"]) if context["related_cabinet_names"] else (context["primary_cabinet_name"] or "—"),
+            "advertiser_names": context["related_advertiser_names"] or ([context["primary_advertiser"]] if context["primary_advertiser"] else []),
+            "advertiser_text": context["primary_advertiser"] or (context["related_advertiser_names"][0] if context["related_advertiser_names"] else "—"),
             "campaign_name": safe_text(item.get("campaign_name")),
             "adset_name": safe_text(item.get("adset_name")),
             "ad_name": safe_text(item.get("ad_name")),
@@ -7313,22 +7449,22 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
             "fb_ftd": safe_number(item.get("ftd", 0)),
             "cpa": safe_number(item.get("cpa_real", 0)),
             "chatterfy": safe_number(item.get("stat_chatterfy", 0)),
-            "players_ftd": safe_number(item.get("stat_total_ftd", 0)),
-            "qual_ftd": safe_number(item.get("stat_qual_ftd", 0)),
-            "rate": safe_number(item.get("stat_rate", 0)),
-            "income": safe_number(item.get("stat_income", 0)),
-            "profit": safe_number(item.get("stat_profit", 0)),
-            "roi": safe_number(item.get("stat_roi", 0)),
-            "caps_count": safe_number(cap_info.get("caps_count", 0)),
-            "cap_total": safe_number(cap_info.get("cap_total", 0)),
-            "cap_current_ftd": safe_number(cap_info.get("cap_current_ftd", 0)),
-            "cap_fill": safe_number(cap_info.get("cap_fill", 0)),
-            "hold_count": safe_number(hold_info.get("hold_count", 0)),
-            "baseline_fail_count": safe_number(hold_info.get("baseline_fail_count", 0)),
-            "wager_fail_count": safe_number(hold_info.get("wager_fail_count", 0)),
-            "hold_split": f'{format_int_or_float(hold_info.get("baseline_fail_count", 0))}B / {format_int_or_float(hold_info.get("wager_fail_count", 0))}W' if hold_info else "0B / 0W",
+            "players_ftd": players_ftd,
+            "qual_ftd": qual_ftd,
+            "rate": rate,
+            "income": payout,
+            "profit": profit,
+            "roi": ((profit / safe_number(item.get("spend", 0))) * 100) if safe_number(item.get("spend", 0)) > 0 else 0.0,
+            "caps_count": caps_count,
+            "cap_total": cap_total,
+            "cap_current_ftd": cap_current_ftd,
+            "cap_fill": cap_fill_percent(cap_current_ftd, cap_total),
+            "hold_count": hold_count,
+            "baseline_fail_count": baseline_fail_count,
+            "wager_fail_count": wager_fail_count,
+            "hold_split": f'{format_int_or_float(baseline_fail_count)}B / {format_int_or_float(wager_fail_count)}W',
             "active_cabinets": len(active_cabinets),
-            "flow_key": flow_key,
+            "flow_key": context["flow_key"],
             "flow_label": " / ".join(filter(None, [safe_text(item.get("platform")), safe_text(item.get("manager")), safe_text(item.get("geo"))])),
             "source_name": safe_text(item.get("source_name")),
             "row_kind": "fb",
@@ -7358,7 +7494,7 @@ def build_dashboard_summary_cards(rows):
         ("FB FTD", format_int_or_float(totals["fb_ftd"])),
         ("Players FTD", format_int_or_float(totals["players_ftd"])),
         ("Chatterfy", format_int_or_float(totals["chatterfy"])),
-        ("Income", format_money(totals["income"])),
+        ("Payout", format_money(totals["income"])),
         ("Profit", format_money(totals["profit"])),
     ]
     cards_html = "".join(
@@ -7772,7 +7908,7 @@ def _render_dashboard_page_v2(
         toggle = (
             f'<a class="dashboard-tree-toggle dashboard-tree-toggle-{escape(variant)}" '
             f'data-target="{escape(node["id"])}" aria-expanded="{"true" if expanded else "false"}" '
-            f'href="{escape(make_dashboard_state_toggle_link(node["id"]))}">{icon_html}'
+            f'title="{escape(node["label"])}" href="{escape(make_dashboard_state_toggle_link(node["id"]))}">{icon_html}'
             f'<span class="dashboard-tree-label">{escape(node["label"])}</span></a>'
         )
         return f'<div class="dashboard-tree-cell dashboard-tree-level-{level}" data-tree-value="{escape(node["label"])}">{toggle}</div>'
@@ -7807,7 +7943,7 @@ def _render_dashboard_page_v2(
         ("hold_split", "Hold Split"),
         ("cap_total", "Cap"),
         ("cap_fill", "Cap Fill"),
-        ("income", "Income"),
+        ("income", "Payout"),
         ("profit", "Profit"),
         ("roi", "ROI"),
     ]
@@ -7824,7 +7960,7 @@ def _render_dashboard_page_v2(
 
     def render_lineage_label(label, level=0, collapse_node_id=""):
         del collapse_node_id
-        content = f'<span class="dashboard-tree-label">{escape(label or "—")}</span>'
+        content = f'<span class="dashboard-tree-label" title="{escape(label or "—")}">{escape(label or "—")}</span>'
         return f'<div class="dashboard-tree-cell dashboard-tree-level-{level}" data-tree-value="{escape(label or "—")}">{content}</div>'
 
     def render_leaf_row(row, parent_id="", ancestors=None, lineage=None):
@@ -7926,7 +8062,7 @@ def _render_dashboard_page_v2(
         ("hold_count", "Hold"),
         ("cap_total", "Cap"),
         ("cap_fill", "Cap Fill"),
-        ("income", "Income"),
+        ("income", "Payout"),
         ("profit", "Profit"),
         ("roi", "ROI"),
     ]
@@ -7982,6 +8118,7 @@ def _render_dashboard_page_v2(
             "advertiser_text": safe_text(row.get("advertiser_text")).strip() or "—",
             "metrics": serialize_metric_values(row),
             "ancestors": ancestors,
+            "profit_value": safe_number(row.get("profit", 0)),
         }
 
     def serialize_tree_payload(nodes, ancestors=None):
@@ -7999,6 +8136,7 @@ def _render_dashboard_page_v2(
                 "label": node["label"],
                 "column": node["column"],
                 "metrics": serialize_metric_values(node["metrics"]),
+                "profit_value": safe_number(node["metrics"].get("profit", 0)),
                 "children": children,
                 "ads": leaf_rows,
             })
@@ -8196,7 +8334,7 @@ def _render_dashboard_page_v2(
         ("hold_split", "Hold Split"),
         ("cap_total", "Cap"),
         ("cap_fill", "Cap Fill"),
-        ("income", "Income"),
+        ("income", "Payout"),
         ("profit", "Profit"),
         ("roi", "ROI"),
     ]
@@ -8287,6 +8425,10 @@ def _render_dashboard_page_v2(
         + "</tr>"
         for row in inline_rows
     ])
+    dashboard_table_fields_json = json.dumps(table_field_order, ensure_ascii=False)
+    dashboard_hierarchy_fields_json = json.dumps(hierarchy_field_order, ensure_ascii=False)
+    dashboard_metric_fields_json = json.dumps(metric_field_order, ensure_ascii=False)
+    dashboard_descriptor_fields_json = json.dumps([field for field, _label in descriptor_fields], ensure_ascii=False)
 
     def render_dashboard_table_panel(title, table_id):
         body_html = rows_html if rows else f'<tr><td colspan="{len(table_headers)}">No dashboard rows for the selected filters</td></tr>'
@@ -8660,16 +8802,17 @@ def _render_dashboard_page_v2(
         white-space:nowrap;
         overflow:hidden;
         text-overflow:ellipsis;
-        color:#1e2d4a;
-        background:#ffffff;
+        color:rgba(30, 45, 74, 0.82);
+        background:rgba(255, 255, 255, 0.82);
         user-select:none;
         -webkit-user-select:none;
+        font-weight:400;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td {{
         background:#f6faff;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] tbody tr {{
-        cursor:pointer;
+        cursor:default;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-row-selected td {{
         background:#b7f0c2 !important;
@@ -8769,13 +8912,13 @@ def _render_dashboard_page_v2(
         background:transparent;
         padding:0;
         margin:0;
-        color:#213252;
+        color:rgba(33, 50, 82, 0.86);
         font:inherit;
         cursor:pointer;
         justify-content:flex-start;
         user-select:none;
         -webkit-user-select:none;
-        font-weight:600;
+        font-weight:500;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] .dashboard-tree-caret {{
         width:10px;
@@ -8814,8 +8957,9 @@ def _render_dashboard_page_v2(
         content:"+";
     }}
     .dashboard-v2 table[data-dashboard-tree-table] .dashboard-tree-label {{
-        overflow:hidden;
-        text-overflow:ellipsis;
+        overflow:visible;
+        text-overflow:clip;
+        white-space:nowrap;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-leaf-row td {{
         font-weight:400;
@@ -9053,10 +9197,11 @@ def _render_dashboard_page_v2(
         white-space:nowrap;
         overflow:hidden;
         text-overflow:ellipsis;
-        color:#1e2d4a;
-        background:#ffffff;
+        color:rgba(30, 45, 74, 0.82);
+        background:rgba(255, 255, 255, 0.82);
         user-select:none;
         -webkit-user-select:none;
+        font-weight:400;
     }}
     .dashboard-v2 table[data-dashboard-cascade-table] tbody tr.dashboard-cascade-row {{
         height:15px;
@@ -9329,6 +9474,108 @@ def _render_dashboard_page_v2(
         min-width:0 !important;
         max-width:none !important;
     }}
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="platform"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="platform"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="geo"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="geo"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="manager"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="manager"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="campaign_name"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="campaign_name"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="adset_name"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="adset_name"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="ad_name"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="ad_name"] {{
+        width:auto !important;
+        min-width:0 !important;
+        max-width:none !important;
+    }}
+    .dashboard-v2 table[data-dashboard-tree-table] tbody td {{
+        overflow:visible;
+        text-overflow:clip;
+        color:rgba(30, 45, 74, 0.82);
+        background-color:rgba(255, 255, 255, 0.82);
+        font-weight:400;
+    }}
+    .dashboard-v2 table[data-dashboard-tree-table] .dashboard-tree-caret {{
+        color:rgba(100, 125, 168, 0.78);
+    }}
+    .dashboard-v2 table[data-dashboard-tree-table] tbody tr.soft-green td[data-col="profit"],
+    .dashboard-v2 table[data-dashboard-tree-table] tbody tr.soft-green td[data-col="roi"] {{
+        color:#0f8c58;
+        font-weight:600;
+    }}
+    .dashboard-v2 table[data-dashboard-tree-table] tbody tr.soft-red td[data-col="profit"],
+    .dashboard-v2 table[data-dashboard-tree-table] tbody tr.soft-red td[data-col="roi"] {{
+        color:#d84c57;
+        font-weight:600;
+    }}
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="platform"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="platform"] {{
+        background:rgba(236, 245, 255, 0.82);
+    }}
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="buyer"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="buyer"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="manager"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="manager"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="geo"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="geo"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="offer"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="offer"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="cabinet_text"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="cabinet_text"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="advertiser_text"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="advertiser_text"] {{
+        background:rgba(247, 251, 255, 0.82);
+    }}
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="budget"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="budget"] {{
+        background:rgba(238, 249, 239, 0.82);
+    }}
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="spend"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="spend"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="clicks"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="clicks"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="leads"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="leads"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="reg"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="reg"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="fb_ftd"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="fb_ftd"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="cpa"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="cpa"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="cost_reg"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="cost_reg"] {{
+        background:rgba(255, 244, 232, 0.82);
+    }}
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="chatterfy"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="chatterfy"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="players_ftd"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="players_ftd"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="qual_ftd"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="qual_ftd"] {{
+        background:rgba(243, 239, 255, 0.82);
+    }}
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="hold_count"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="hold_count"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="hold_split"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="hold_split"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="cap_total"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="cap_total"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="cap_fill"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="cap_fill"] {{
+        background:rgba(255, 248, 223, 0.82);
+    }}
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="income"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="income"] {{
+        background:rgba(237, 248, 231, 0.82);
+    }}
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="profit"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="profit"],
+    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="roi"],
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="roi"] {{
+        background:rgba(231, 248, 251, 0.82);
+    }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td[data-col="platform"],
     .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td[data-col="geo"],
     .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td[data-col="manager"],
@@ -9455,20 +9702,59 @@ def _render_dashboard_page_v2(
         const filterForm = periodSelect?.closest('form');
         const tables = () => Array.from(document.querySelectorAll('[data-dashboard-flat-table]'));
         const treeTables = () => Array.from(document.querySelectorAll('[data-dashboard-tree-table]'));
+        const dashboardTreePayload = {matrix_tree_json};
+        const dashboardTableFields = {dashboard_table_fields_json};
+        const dashboardHierarchyFields = {dashboard_hierarchy_fields_json};
+        const dashboardMetricFields = {dashboard_metric_fields_json};
+        const dashboardDescriptorFields = {dashboard_descriptor_fields_json};
+        const dashboardNoRowsHtml = '<tr><td colspan="{len(table_headers)}">No dashboard rows for the selected filters</td></tr>';
         const hiddenKey = window.teambeadStorageKey('dashboard-flat-columns-hidden');
         const treeStateKey = window.teambeadStorageKey('dashboard-tree-open-nodes');
         const toggles = Array.from(document.querySelectorAll('.dashboard-column-toggle'));
         const stateInput = document.getElementById('dashboardStateInput');
+        const hierarchyLevelMap = dashboardHierarchyFields.reduce((acc, field, index) => {{
+            acc[field] = index;
+            return acc;
+        }}, Object.create(null));
+        const autoWidthColumns = new Set([
+            'platform',
+            'geo',
+            'manager',
+            'campaign_name',
+            'adset_name',
+            'ad_name',
+            'buyer',
+            'offer',
+            'cabinet_text',
+            'advertiser_text',
+            'account_id',
+        ]);
+        const autoWidthFloors = Object.freeze({{
+            platform: 52,
+            geo: 48,
+            manager: 72,
+            campaign_name: 112,
+            adset_name: 132,
+            ad_name: 150,
+            buyer: 62,
+            offer: 76,
+            cabinet_text: 88,
+            advertiser_text: 88,
+            account_id: 108,
+        }});
 
         const parseNodeState = (raw) => new Set(
             String(raw || '').split(',').map((value) => value.trim()).filter(Boolean)
         );
+        const serializeNodeState = (state) => Array.from(state).sort().join(',');
         let openNodes = parseNodeState(stateInput?.value || localStorage.getItem(treeStateKey) || '');
 
         const autoSizeTable = (table) => {{
             if (!table) return;
             const cols = Array.from(new Set(
-                Array.from(table.querySelectorAll('[data-col]')).map((cell) => cell.dataset.col || '').filter(Boolean)
+                Array.from(table.querySelectorAll('[data-col]'))
+                    .map((cell) => cell.dataset.col || '')
+                    .filter((col) => !table.matches('[data-dashboard-tree-table]') || autoWidthColumns.has(col))
             ));
             cols.forEach((col) => {{
                 const cells = Array.from(table.querySelectorAll(`[data-col="${{col}}"]`)).filter((cell) => {{
@@ -9480,7 +9766,7 @@ def _render_dashboard_page_v2(
                     cell.style.minWidth = '';
                     cell.style.maxWidth = '';
                 }});
-                let width = 0;
+                let width = autoWidthFloors[col] || 0;
                 cells.forEach((cell) => {{
                     const style = window.getComputedStyle(cell);
                     const paddingLeft = parseFloat(style.paddingLeft || '0') || 0;
@@ -9493,6 +9779,49 @@ def _render_dashboard_page_v2(
                     cell.style.maxWidth = `${{width}}px`;
                 }});
             }});
+        }};
+
+        const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({{
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;',
+        }})[char]);
+
+        const buildStateUrl = (state) => {{
+            const url = new URL(window.location.href);
+            const serialized = serializeNodeState(state);
+            if (serialized) {{
+                url.searchParams.set('dashboard_state', serialized);
+            }} else {{
+                url.searchParams.delete('dashboard_state');
+            }}
+            const query = url.searchParams.toString();
+            return url.pathname + (query ? `?${{query}}` : '');
+        }};
+
+        const getToggledState = (nodeId) => {{
+            const nextState = new Set(openNodes);
+            if (nextState.has(nodeId)) {{
+                Array.from(nextState).forEach((openId) => {{
+                    if (openId === nodeId || openId.startsWith(`${{nodeId}}|`)) {{
+                        nextState.delete(openId);
+                    }}
+                }});
+            }} else {{
+                nextState.add(nodeId);
+            }}
+            return nextState;
+        }};
+
+        const syncTreeState = () => {{
+            const serialized = serializeNodeState(openNodes);
+            if (stateInput) stateInput.value = serialized;
+            localStorage.setItem(treeStateKey, serialized);
+            if (window.history && typeof window.history.replaceState === 'function') {{
+                window.history.replaceState(null, '', buildStateUrl(openNodes));
+            }}
         }};
 
         const applyColumns = () => {{
@@ -9508,7 +9837,9 @@ def _render_dashboard_page_v2(
             document.querySelectorAll('[data-dashboard-flat-table] [data-col]').forEach((cell) => {{
                 cell.style.display = hidden.includes(cell.dataset.col) ? 'none' : '';
             }});
-            tables().forEach(autoSizeTable);
+            window.requestAnimationFrame(() => {{
+                tables().forEach(autoSizeTable);
+            }});
         }};
 
         const saveColumns = () => {{
@@ -9519,64 +9850,109 @@ def _render_dashboard_page_v2(
             applyColumns();
         }};
 
-        const treeRows = (table) => Array.from(table.querySelectorAll('tbody tr'));
-        const treeButtons = (table) => Array.from(table.querySelectorAll('.dashboard-tree-toggle'));
-        const directChildren = (table, nodeId) => treeRows(table).filter((row) => row.dataset.parentId === nodeId);
-
-        const syncTreeState = () => {{
-            const serialized = Array.from(openNodes).join(',');
-            if (stateInput) stateInput.value = serialized;
-            localStorage.setItem(treeStateKey, serialized);
+        const emptyInlineRow = () => {{
+            const payload = Object.create(null);
+            dashboardTableFields.forEach((field) => {{
+                payload[field] = '';
+            }});
+            payload._profitValue = 0;
+            return payload;
         }};
 
-        const resetTreeTable = (table) => {{
-            treeRows(table).forEach((row) => {{
-                if (row.dataset.parentId) {{
-                    row.hidden = true;
+        const renderLineageLabel = (label, level) => {{
+            const safeLabel = escapeHtml(label || '—');
+            return `<div class="dashboard-tree-cell dashboard-tree-level-${{level}}" data-tree-value="${{safeLabel}}"><span class="dashboard-tree-label" title="${{safeLabel}}">${{safeLabel}}</span></div>`;
+        }};
+
+        const renderHierarchyToggle = (node) => {{
+            const safeLabel = escapeHtml(node.label || '—');
+            const level = hierarchyLevelMap[node.column] ?? 0;
+            const expanded = openNodes.has(node.id);
+            const href = buildStateUrl(getToggledState(node.id));
+            return `<div class="dashboard-tree-cell dashboard-tree-level-${{level}}" data-tree-value="${{safeLabel}}"><a class="dashboard-tree-toggle dashboard-tree-toggle-caret" data-target="${{escapeHtml(node.id)}}" aria-expanded="${{expanded ? 'true' : 'false'}}" title="${{safeLabel}}" href="${{escapeHtml(href)}}"><span class="dashboard-tree-caret">▸</span><span class="dashboard-tree-label">${{safeLabel}}</span></a></div>`;
+        }};
+
+        const makeMetricsPayload = (metrics) => {{
+            const payload = Object.create(null);
+            dashboardMetricFields.forEach((field) => {{
+                payload[field] = escapeHtml(metrics?.[field] || '');
+            }});
+            return payload;
+        }};
+
+        const makeNodeInlineRow = (node) => {{
+            const payload = emptyInlineRow();
+            payload[node.column] = renderHierarchyToggle(node);
+            Object.assign(payload, makeMetricsPayload(node.metrics || Object.create(null)));
+            payload._profitValue = Number(node.profit_value || 0);
+            return payload;
+        }};
+
+        const makeLeafInlineRow = (leaf) => {{
+            const payload = emptyInlineRow();
+            payload.ad_name = renderLineageLabel(leaf.label || '—', hierarchyLevelMap.ad_name ?? 5);
+            dashboardDescriptorFields.forEach((field) => {{
+                payload[field] = escapeHtml(leaf?.[field] || '');
+            }});
+            Object.assign(payload, makeMetricsPayload(leaf.metrics || Object.create(null)));
+            payload._profitValue = Number(leaf.profit_value || 0);
+            return payload;
+        }};
+
+        const mergeInlineRows = (left, right) => {{
+            const payload = emptyInlineRow();
+            dashboardTableFields.forEach((field) => {{
+                payload[field] = right?.[field] || left?.[field] || '';
+            }});
+            payload._profitValue = Number(right?._profitValue ?? left?._profitValue ?? 0);
+            return payload;
+        }};
+
+        const buildInlineRows = (nodes) => {{
+            const rendered = [];
+            (nodes || []).forEach((node) => {{
+                const baseRow = makeNodeInlineRow(node);
+                if (!openNodes.has(node.id)) {{
+                    rendered.push(baseRow);
+                    return;
                 }}
-                row.classList.remove('dashboard-tree-row-open');
-            }});
-            treeButtons(table).forEach((button) => {{
-                button.setAttribute('aria-expanded', 'false');
-            }});
-        }};
-
-        const applyTreeState = () => {{
-            treeTables().forEach(resetTreeTable);
-            const orderedNodes = Array.from(openNodes).sort((left, right) => left.split('|').length - right.split('|').length);
-            orderedNodes.forEach((nodeId) => {{
-                treeTables().forEach((table) => {{
-                    const row = treeRows(table).find((item) => item.dataset.nodeId === nodeId);
-                    if (!row) return;
-                    const parentId = row.dataset.parentId || '';
-                    if (parentId && !openNodes.has(parentId)) return;
-                    row.classList.add('dashboard-tree-row-open');
-                    const button = treeButtons(table).find((item) => item.dataset.target === nodeId);
-                    if (button) {{
-                        button.setAttribute('aria-expanded', 'true');
-                    }}
-                    directChildren(table, nodeId).forEach((child) => {{
-                        child.hidden = false;
-                    }});
+                const childGroups = (node.children && node.children.length)
+                    ? node.children.map((child) => buildInlineRows([child]))
+                    : (node.ads || []).map((leaf) => [makeLeafInlineRow(leaf)]);
+                if (!childGroups.length) {{
+                    rendered.push(baseRow);
+                    return;
+                }}
+                const firstGroup = childGroups[0];
+                rendered.push(mergeInlineRows(baseRow, firstGroup[0]));
+                rendered.push(...firstGroup.slice(1));
+                childGroups.slice(1).forEach((group) => {{
+                    rendered.push(...group);
                 }});
             }});
+            return rendered;
+        }};
+
+        const renderInlineRowHtml = (row) => {{
+            const rowClass = row._profitValue > 0 ? 'soft-green' : (row._profitValue < 0 ? 'soft-red' : '');
+            const cells = dashboardTableFields.map((field) => `<td data-col="${{escapeHtml(field)}}">${{row[field] || ''}}</td>`).join('');
+            return `<tr class="${{rowClass}}">${{cells}}</tr>`;
+        }};
+
+        const renderTreeTable = (table) => {{
+            if (!table) return;
+            const tbody = table.tBodies && table.tBodies[0];
+            if (!tbody) return;
+            const inlineRows = buildInlineRows(dashboardTreePayload);
+            tbody.innerHTML = inlineRows.length
+                ? inlineRows.map(renderInlineRowHtml).join('')
+                : dashboardNoRowsHtml;
+        }};
+
+        const renderTreeTables = () => {{
+            treeTables().forEach(renderTreeTable);
             syncTreeState();
-        }};
-
-        window.dashboardTreeToggle = (button) => {{
-            const nodeId = button?.dataset?.target;
-            if (!nodeId) return;
-            if (openNodes.has(nodeId)) {{
-                Array.from(openNodes).forEach((openId) => {{
-                    if (openId === nodeId || openId.startsWith(`${{nodeId}}|`)) {{
-                        openNodes.delete(openId);
-                    }}
-                }});
-            }} else {{
-                openNodes.add(nodeId);
-            }}
-            applyTreeState();
-            tables().forEach(autoSizeTable);
+            applyColumns();
         }};
 
         toggles.forEach((toggle) => toggle.addEventListener('change', saveColumns));
@@ -9585,6 +9961,16 @@ def _render_dashboard_page_v2(
                 localStorage.setItem(hiddenKey, JSON.stringify([]));
                 applyColumns();
             }});
+        }});
+
+        document.addEventListener('click', (event) => {{
+            const toggle = event.target.closest('.dashboard-tree-toggle');
+            if (!toggle || !toggle.closest('[data-dashboard-tree-table]')) return;
+            event.preventDefault();
+            const nodeId = toggle.dataset.target;
+            if (!nodeId) return;
+            openNodes = getToggledState(nodeId);
+            renderTreeTables();
         }});
 
         const groupingForm = document.getElementById('dashboardGroupingForm');
@@ -9613,9 +9999,7 @@ def _render_dashboard_page_v2(
         }});
 
         requestAnimationFrame(() => {{
-            applyColumns();
-            applyTreeState();
-            tables().forEach(autoSizeTable);
+            renderTreeTables();
         }});
     }})();
     </script>
