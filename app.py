@@ -7745,8 +7745,18 @@ def _render_dashboard_page_v2(
         ancestors = ancestors or []
         row_class = "soft-green" if safe_number(row.get("profit", 0)) > 0 else ("soft-red" if safe_number(row.get("profit", 0)) < 0 else "")
         hidden_attr = ' hidden' if parent_id else ''
+        row_key = "leaf|" + "|".join([
+            safe_text(parent_id) or "root",
+            safe_text(row.get("platform")).strip() or "—",
+            safe_text(row.get("geo")).strip() or "—",
+            safe_text(row.get("manager")).strip() or "—",
+            safe_text(row.get("campaign_name")).strip() or "—",
+            safe_text(row.get("adset_name")).strip() or "—",
+            safe_text(row.get("ad_name")).strip() or "—",
+            safe_text(row.get("account_id")).strip() or "—",
+        ])
         return f"""
-        <tr class="dashboard-leaf-row {row_class}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}"{hidden_attr}>
+        <tr class="dashboard-leaf-row {row_class}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}" data-row-key="{escape(row_key)}"{hidden_attr}>
             <td data-col="platform"></td>
             <td data-col="geo"></td>
             <td data-col="manager"></td>
@@ -7787,7 +7797,7 @@ def _render_dashboard_page_v2(
             hidden_attr = ' hidden' if parent_id else ''
             current_ancestors = [*ancestors, node["id"]]
             html += f"""
-            <tr class="dashboard-tree-row dashboard-tree-row-level-{level}" data-node-id="{escape(node["id"])}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}"{hidden_attr}>
+            <tr class="dashboard-tree-row dashboard-tree-row-level-{level}" data-node-id="{escape(node["id"])}" data-row-key="{escape(node["id"])}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}"{hidden_attr}>
                 <td data-col="platform">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "platform" else ""}</td>
                 <td data-col="geo">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "geo" else ""}</td>
                 <td data-col="manager">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "manager" else ""}</td>
@@ -7989,6 +7999,15 @@ def _render_dashboard_page_v2(
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td {{
         background:#f6faff;
+    }}
+    .dashboard-v2 table[data-dashboard-tree-table] tbody tr {{
+        cursor:pointer;
+    }}
+    .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-row-selected td {{
+        background:#d9edff !important;
+    }}
+    .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-row-selected:hover td {{
+        background:#d9edff !important;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row td {{
         font-weight:700;
@@ -8576,8 +8595,39 @@ def _render_dashboard_page_v2(
             }});
             window.dashboardWriteState(state);
         }};
-
-        document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
+        window.dashboardApplySelectedRows = (table) => {{
+            if (!table) return;
+            const state = window.dashboardReadState();
+            const selectedRows = state.selectedRows || {{}};
+            const selectedKeys = new Set(
+                Array.isArray(selectedRows[table.id || 'dashboard-tree-table'])
+                    ? selectedRows[table.id || 'dashboard-tree-table']
+                    : []
+            );
+            Array.from(table.querySelectorAll('tbody tr[data-row-key]')).forEach((row) => {{
+                row.classList.toggle('dashboard-row-selected', selectedKeys.has(row.dataset.rowKey || ''));
+            }});
+        }};
+        window.dashboardPersistSelectedRows = (table) => {{
+            if (!table) return;
+            const state = window.dashboardReadState();
+            state.selectedRows = state.selectedRows || {{}};
+            state.selectedRows[table.id || 'dashboard-tree-table'] = Array.from(
+                table.querySelectorAll('tbody tr.dashboard-row-selected[data-row-key]')
+            )
+                .map((row) => row.dataset.rowKey || '')
+                .filter(Boolean);
+            window.dashboardWriteState(state);
+        }};
+        window.dashboardToggleRowSelection = (row) => {{
+            if (!row) return;
+            const table = row.closest('[data-dashboard-tree-table]');
+            if (!table) return;
+            row.classList.toggle('dashboard-row-selected');
+            window.dashboardPersistSelectedRows(table);
+        }};
+        window.restoreDashboardUiState = () => {{
+            document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
             const getTreeButtons = () => Array.from(table.querySelectorAll('.dashboard-tree-toggle'));
             const getTreeRows = () => Array.from(table.querySelectorAll('tbody tr'));
             const getButtonMap = () => new Map(getTreeButtons().map((button) => [button.dataset.target || '', button]));
@@ -8626,7 +8676,13 @@ def _render_dashboard_page_v2(
                 button.setAttribute('aria-expanded', 'false');
                 hideDescendants(nodeId);
             }};
-            requestAnimationFrame(() => {{
+                getTreeRows().forEach((row) => {{
+                    if (row.dataset.parentId) row.hidden = true;
+                    if (row.dataset.nodeId) {{
+                        const button = row.querySelector('.dashboard-tree-toggle');
+                        if (button) button.setAttribute('aria-expanded', 'false');
+                    }}
+                }});
                 readExpandedNodes().forEach((nodeId) => {{
                     const button = getButtonMap().get(nodeId);
                     if (!button) return;
@@ -8639,10 +8695,28 @@ def _render_dashboard_page_v2(
                     expandNode(button);
                 }});
                 window.dashboardTreeAutoSize(table);
+                if (window.dashboardApplySelectedRows) window.dashboardApplySelectedRows(table);
             }});
-        }});
+        }};
+        const scheduleDashboardUiRestore = () => {{
+            requestAnimationFrame(() => {{
+                if (window.restoreDashboardUiState) window.restoreDashboardUiState();
+            }});
+            window.setTimeout(() => {{
+                if (window.restoreDashboardUiState) window.restoreDashboardUiState();
+            }}, 60);
+            window.setTimeout(() => {{
+                if (window.restoreDashboardUiState) window.restoreDashboardUiState();
+            }}, 180);
+        }};
+        scheduleDashboardUiRestore();
         document.querySelectorAll('.dashboard-sort-link').forEach((link) => {{
             link.addEventListener('click', () => {{
+                persistDashboardUiState();
+            }});
+        }});
+        document.querySelectorAll('.dashboard-filter-actions .btn, .dashboard-filter-actions .ghost-btn').forEach((button) => {{
+            button.addEventListener('click', () => {{
                 persistDashboardUiState();
             }});
         }});
@@ -8659,6 +8733,14 @@ def _render_dashboard_page_v2(
             document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
                 window.dashboardTreeAutoSize(table);
             }});
+        }});
+        window.addEventListener('pageshow', () => {{
+            scheduleDashboardUiRestore();
+        }});
+        document.addEventListener('visibilitychange', () => {{
+            if (!document.hidden) {{
+                scheduleDashboardUiRestore();
+            }}
         }});
 
         const hiddenKey = window.teambeadStorageKey('dashboard-columns-hidden');
@@ -8681,6 +8763,17 @@ def _render_dashboard_page_v2(
                 window.dashboardTreeAutoSize(table);
             }});
         }};
+        document.querySelectorAll('.dashboard-filter-grid select, .dashboard-filter-grid input').forEach((field) => {{
+            const eventName = field.tagName === 'SELECT' ? 'change' : 'input';
+            field.addEventListener(eventName, () => {{
+                persistDashboardUiState();
+            }});
+            if (eventName !== 'change') {{
+                field.addEventListener('change', () => {{
+                    persistDashboardUiState();
+                }});
+            }}
+        }});
         const saveColumns = () => {{
             const hidden = toggles.filter((toggle) => !toggle.checked).map((toggle) => toggle.value);
             const state = window.dashboardReadState();
@@ -8693,11 +8786,26 @@ def _render_dashboard_page_v2(
         const showAllButton = document.getElementById('dashboardShowAllColumns');
         if (showAllButton) {{
             showAllButton.addEventListener('click', () => {{
+                const state = window.dashboardReadState();
+                state.hiddenColumns = [];
+                window.dashboardWriteState(state);
                 localStorage.setItem(hiddenKey, JSON.stringify([]));
                 applyColumns();
             }});
         }}
         applyColumns();
+        document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
+            table.addEventListener('click', (event) => {{
+                if (event.target.closest('.dashboard-tree-toggle, a, input, select, label, summary, button')) return;
+                const row = event.target.closest('tbody tr[data-row-key]');
+                if (!row || !table.contains(row)) return;
+                if (window.dashboardToggleRowSelection) window.dashboardToggleRowSelection(row);
+            }});
+            if (window.dashboardApplySelectedRows) window.dashboardApplySelectedRows(table);
+        }});
+        requestAnimationFrame(() => {{
+            scheduleDashboardUiRestore();
+        }});
     }})();
     </script>
     """
