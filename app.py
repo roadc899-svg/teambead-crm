@@ -7841,10 +7841,10 @@ def _render_dashboard_page_v2(
         text-decoration:none;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr {{
-        height:14px;
+        height:15px;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody td {{
-        height:14px;
+        height:15px;
         padding:0 7px;
         line-height:1;
         vertical-align:middle;
