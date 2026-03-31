@@ -7840,9 +7840,9 @@ def _render_dashboard_page_v2(
         text-decoration:none;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody td {{
-        height:19px;
-        padding:2px 8px;
-        line-height:1;
+        height:16px;
+        padding:1px 8px;
+        line-height:0.95;
         vertical-align:middle;
         border-bottom:1px solid rgba(221, 233, 248, 0.9);
         border-right:1px solid rgba(229, 238, 249, 0.9);
