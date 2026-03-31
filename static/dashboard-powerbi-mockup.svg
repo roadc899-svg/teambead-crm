@@ -1,0 +1,117 @@
+<svg width="1600" height="920" viewBox="0 0 1600 920" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1600" y2="920" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F3F8FF"/>
+      <stop offset="1" stop-color="#EAF2FF"/>
+    </linearGradient>
+    <filter id="shadow" x="0" y="0" width="1600" height="920" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="12" stdDeviation="18" flood-color="#98ADD3" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="920" fill="url(#bg)"/>
+
+  <g filter="url(#shadow)">
+    <rect x="36" y="32" width="1528" height="856" rx="28" fill="#FFFFFF"/>
+  </g>
+
+  <text x="62" y="82" fill="#182844" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">CRM Analytics</text>
+  <text x="62" y="114" fill="#6980A5" font-family="Segoe UI, Arial, sans-serif" font-size="20">Power BI style matrix drill-down mockup</text>
+
+  <rect x="60" y="150" width="1480" height="86" rx="22" fill="#F7FAFF" stroke="#D4E2F8"/>
+  <text x="92" y="196" fill="#2E4367" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="600">Active path</text>
+  <text x="240" y="196" fill="#16365F" font-family="Segoe UI, Arial, sans-serif" font-size="18">1x</text>
+  <text x="278" y="196" fill="#8AA0C4" font-family="Segoe UI, Arial, sans-serif" font-size="18">→</text>
+  <text x="304" y="196" fill="#16365F" font-family="Segoe UI, Arial, sans-serif" font-size="18">PE</text>
+  <text x="338" y="196" fill="#8AA0C4" font-family="Segoe UI, Arial, sans-serif" font-size="18">→</text>
+  <text x="364" y="196" fill="#16365F" font-family="Segoe UI, Arial, sans-serif" font-size="18">Natalya</text>
+  <text x="442" y="196" fill="#8AA0C4" font-family="Segoe UI, Arial, sans-serif" font-size="18">→</text>
+  <text x="468" y="196" fill="#16365F" font-family="Segoe UI, Arial, sans-serif" font-size="18">24.03/1x/Natalya/EC</text>
+  <text x="676" y="196" fill="#8AA0C4" font-family="Segoe UI, Arial, sans-serif" font-size="18">→</text>
+  <text x="702" y="196" fill="#16365F" font-family="Segoe UI, Arial, sans-serif" font-size="18">Mines004</text>
+
+  <rect x="60" y="262" width="1480" height="566" rx="24" fill="#FCFDFF" stroke="#D8E5F8"/>
+
+  <!-- Header -->
+  <rect x="60" y="262" width="1480" height="64" rx="24" fill="#EEF5FF"/>
+  <path d="M60 302H1540" stroke="#D6E4F8"/>
+  <text x="84" y="302" fill="#233A60" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">BRAND</text>
+  <text x="220" y="302" fill="#233A60" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">GEO</text>
+  <text x="340" y="302" fill="#233A60" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">CABINET</text>
+  <text x="520" y="302" fill="#233A60" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">CAMPAIGN</text>
+  <text x="760" y="302" fill="#233A60" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">ADSET</text>
+  <text x="990" y="302" fill="#233A60" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">AD</text>
+  <text x="1196" y="302" fill="#233A60" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">SPEND</text>
+  <text x="1298" y="302" fill="#233A60" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">CLICKS</text>
+  <text x="1408" y="302" fill="#233A60" font-family="Segoe UI, Arial, sans-serif" font-size="16" font-weight="700">LEADS</text>
+
+  <!-- Row backgrounds -->
+  <rect x="60" y="326" width="1480" height="54" fill="#EFF6FF"/>
+  <rect x="60" y="380" width="1480" height="54" fill="#F7FAFF"/>
+  <rect x="60" y="434" width="1480" height="54" fill="#FCFDFF"/>
+  <rect x="60" y="488" width="1480" height="54" fill="#FFFFFF"/>
+  <rect x="60" y="542" width="1480" height="54" fill="#D4EAFF"/>
+  <rect x="60" y="596" width="1480" height="54" fill="#FFFFFF"/>
+  <rect x="60" y="650" width="1480" height="54" fill="#FFFFFF"/>
+  <rect x="60" y="704" width="1480" height="54" fill="#FFFFFF"/>
+
+  <!-- Grid lines -->
+  <g stroke="#E0EAF8">
+    <path d="M60 380H1540"/>
+    <path d="M60 434H1540"/>
+    <path d="M60 488H1540"/>
+    <path d="M60 542H1540"/>
+    <path d="M60 596H1540"/>
+    <path d="M60 650H1540"/>
+    <path d="M60 704H1540"/>
+    <path d="M60 758H1540"/>
+    <path d="M190 262V828"/>
+    <path d="M310 262V828"/>
+    <path d="M500 262V828"/>
+    <path d="M740 262V828"/>
+    <path d="M970 262V828"/>
+    <path d="M1180 262V828"/>
+    <path d="M1286 262V828"/>
+    <path d="M1396 262V828"/>
+  </g>
+
+  <!-- Sticky left block visual -->
+  <rect x="60" y="262" width="910" height="566" fill="#FFFFFF" fill-opacity="0.58"/>
+
+  <!-- Tree rows -->
+  <text x="78" y="360" fill="#20385F" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">▾ 1x</text>
+  <text x="1204" y="360" fill="#20385F" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">$2,261.31</text>
+  <text x="1312" y="360" fill="#20385F" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">23252</text>
+  <text x="1428" y="360" fill="#20385F" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">3786</text>
+
+  <text x="200" y="414" fill="#20385F" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="600">▾ PE</text>
+  <text x="1204" y="414" fill="#8AA0BE" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="600">hidden on open</text>
+
+  <text x="328" y="468" fill="#20385F" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="600">▾ Natalya</text>
+  <text x="1204" y="468" fill="#8AA0BE" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="600">hidden on open</text>
+
+  <text x="520" y="522" fill="#20385F" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="600">▾ 24.03/1x/Natalya/EC</text>
+  <text x="1204" y="522" fill="#8AA0BE" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="600">hidden on open</text>
+
+  <rect x="68" y="552" width="1464" height="34" rx="10" fill="#B9DDFF"/>
+  <text x="760" y="576" fill="#16365F" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">▾ 24.03/1x/Natalya/EC/Mines004</text>
+  <text x="1204" y="576" fill="#16365F" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">$14.17</text>
+  <text x="1312" y="576" fill="#16365F" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">22</text>
+  <text x="1428" y="576" fill="#16365F" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="700">15</text>
+
+  <text x="988" y="630" fill="#29466F" font-family="Segoe UI, Arial, sans-serif" font-size="17">24.03/1x/Natalya/EC/Mines004/Latam0001</text>
+  <text x="1204" y="630" fill="#29466F" font-family="Segoe UI, Arial, sans-serif" font-size="17">$10.15</text>
+  <text x="1318" y="630" fill="#29466F" font-family="Segoe UI, Arial, sans-serif" font-size="17">16</text>
+  <text x="1434" y="630" fill="#29466F" font-family="Segoe UI, Arial, sans-serif" font-size="17">11</text>
+
+  <text x="988" y="684" fill="#29466F" font-family="Segoe UI, Arial, sans-serif" font-size="17">24.03/1x/Natalya/EC/Mines004/Latam0010</text>
+  <text x="1204" y="684" fill="#29466F" font-family="Segoe UI, Arial, sans-serif" font-size="17">$4.02</text>
+  <text x="1326" y="684" fill="#29466F" font-family="Segoe UI, Arial, sans-serif" font-size="17">6</text>
+  <text x="1440" y="684" fill="#29466F" font-family="Segoe UI, Arial, sans-serif" font-size="17">4</text>
+
+  <text x="200" y="738" fill="#90A4C5" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="600">▸ CO</text>
+  <text x="200" y="792" fill="#90A4C5" font-family="Segoe UI, Arial, sans-serif" font-size="18" font-weight="600">▸ PY</text>
+
+  <rect x="60" y="842" width="1480" height="22" rx="11" fill="#EEF4FC"/>
+  <rect x="420" y="845" width="430" height="16" rx="8" fill="#C9D8EE"/>
+</svg>

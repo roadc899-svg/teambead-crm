@@ -7823,6 +7823,96 @@ def _render_dashboard_page_v2(
 
     rows_html = render_tree_rows(tree, variant="caret")
 
+    matrix_metric_fields = [
+        ("budget", "Budget"),
+        ("spend", "Spend"),
+        ("clicks", "Clicks"),
+        ("leads", "Leads"),
+        ("reg", "Reg"),
+        ("rate", "Rate"),
+        ("cost_reg", "Cost Reg"),
+        ("fb_ftd", "FB FTD"),
+        ("cpa", "CPA"),
+        ("chatterfy", "Chatterfy"),
+        ("players_ftd", "Players FTD"),
+        ("qual_ftd", "Qual FTD"),
+        ("hold_count", "Hold"),
+        ("cap_total", "Cap"),
+        ("cap_fill", "Cap Fill"),
+        ("income", "Income"),
+        ("profit", "Profit"),
+        ("roi", "ROI"),
+    ]
+
+    def serialize_metric_values(values):
+        return {
+            "budget": format_money(values.get("budget", 0)),
+            "spend": format_money(values.get("spend", 0)),
+            "clicks": format_int_or_float(values.get("clicks", 0)),
+            "leads": format_int_or_float(values.get("leads", 0)),
+            "reg": format_int_or_float(values.get("reg", 0)),
+            "rate": format_money(values.get("rate", 0)),
+            "cost_reg": format_money(values.get("cost_reg", 0)),
+            "fb_ftd": format_int_or_float(values.get("fb_ftd", 0)),
+            "cpa": format_money(values.get("cpa", 0)),
+            "chatterfy": format_int_or_float(values.get("chatterfy", 0)),
+            "players_ftd": format_int_or_float(values.get("players_ftd", 0)),
+            "qual_ftd": format_int_or_float(values.get("qual_ftd", 0)),
+            "hold_count": format_int_or_float(values.get("hold_count", 0)),
+            "cap_total": format_int_or_float(values.get("cap_total", 0)),
+            "cap_fill": format_percent(values.get("cap_fill", 0)),
+            "income": format_money(values.get("income", 0)),
+            "profit": format_money(values.get("profit", 0)),
+            "roi": format_percent(values.get("roi", 0)),
+        }
+
+    def serialize_leaf_payload(row, parent_id="", ancestors=None):
+        ancestors = ancestors or []
+        leaf_key = "leaf|" + "|".join([
+            safe_text(parent_id) or "root",
+            safe_text(row.get("platform")).strip() or "—",
+            safe_text(row.get("geo")).strip() or "—",
+            safe_text(row.get("manager")).strip() or "—",
+            safe_text(row.get("campaign_name")).strip() or "—",
+            safe_text(row.get("adset_name")).strip() or "—",
+            safe_text(row.get("ad_name")).strip() or "—",
+            safe_text(row.get("account_id")).strip() or "—",
+        ])
+        return {
+            "id": leaf_key,
+            "label": safe_text(row.get("ad_name")).strip() or "—",
+            "account_id": safe_text(row.get("account_id")).strip() or "—",
+            "buyer": safe_text(row.get("buyer")).strip() or "—",
+            "offer": safe_text(row.get("offer")).strip() or "—",
+            "cabinet_text": safe_text(row.get("cabinet_text")).strip() or "—",
+            "advertiser_text": safe_text(row.get("advertiser_text")).strip() or "—",
+            "metrics": serialize_metric_values(row),
+            "ancestors": ancestors,
+        }
+
+    def serialize_tree_payload(nodes, ancestors=None):
+        ancestors = ancestors or []
+        payload = []
+        for node in nodes:
+            node_ancestors = [*ancestors, node["id"]]
+            children = serialize_tree_payload(node["children"], node_ancestors)
+            leaf_rows = [
+                serialize_leaf_payload(leaf_row, parent_id=node["id"], ancestors=node_ancestors)
+                for leaf_row in _dashboard_sort_rows(node["rows"], sort_by=sort_by, order=order)
+            ] if not node["children"] else []
+            payload.append({
+                "id": node["id"],
+                "label": node["label"],
+                "column": node["column"],
+                "metrics": serialize_metric_values(node["metrics"]),
+                "children": children,
+                "ads": leaf_rows,
+            })
+        return payload
+
+    matrix_tree_json = json.dumps(serialize_tree_payload(tree), ensure_ascii=False)
+    matrix_metric_fields_json = json.dumps(matrix_metric_fields, ensure_ascii=False)
+
     buyer_filter_html = ""
     if is_admin_role(user) or user.get("role") == "operator":
         buyer_filter_html = f'<label class="dashboard-filter-field"><span>Buyer</span><select name="buyer"><option value="">Все</option>{buyer_options}</select></label>'
@@ -7953,6 +8043,172 @@ def _render_dashboard_page_v2(
         width:100%;
         min-width:0;
         max-width:100%;
+    }}
+    .dashboard-v2 .dashboard-matrix-wrap {{
+        display:grid;
+        gap:14px;
+    }}
+    .dashboard-v2 .dashboard-matrix-path {{
+        display:flex;
+        flex-wrap:wrap;
+        gap:8px;
+        align-items:center;
+        min-height:34px;
+    }}
+    .dashboard-v2 .dashboard-matrix-path-chip {{
+        display:inline-flex;
+        align-items:center;
+        gap:8px;
+        padding:8px 12px;
+        border-radius:999px;
+        background:#eef5ff;
+        color:#18345d;
+        font-size:13px;
+        font-weight:600;
+    }}
+    .dashboard-v2 .dashboard-matrix-board {{
+        display:grid;
+        grid-template-columns:repeat(6, minmax(180px, 1fr));
+        gap:12px;
+        align-items:start;
+    }}
+    .dashboard-v2 .dashboard-matrix-column {{
+        border:1px solid rgba(197, 214, 241, 0.95);
+        border-radius:18px;
+        background:#fcfdff;
+        overflow:hidden;
+    }}
+    .dashboard-v2 .dashboard-matrix-column-head {{
+        padding:12px 14px;
+        background:#eef5ff;
+        color:#223a60;
+        font-size:11px;
+        font-weight:700;
+        letter-spacing:.04em;
+        text-transform:uppercase;
+        border-bottom:1px solid rgba(214, 228, 248, 0.95);
+    }}
+    .dashboard-v2 .dashboard-matrix-column-body {{
+        display:grid;
+        gap:4px;
+        padding:8px;
+        max-height:420px;
+        overflow:auto;
+    }}
+    .dashboard-v2 .dashboard-matrix-item {{
+        width:100%;
+        display:grid;
+        gap:4px;
+        text-align:left;
+        border:0;
+        border-radius:14px;
+        padding:10px 12px;
+        background:transparent;
+        color:#20385f;
+        cursor:pointer;
+        transition:background .14s ease, box-shadow .14s ease, transform .14s ease;
+    }}
+    .dashboard-v2 .dashboard-matrix-item:hover {{
+        background:#f5f9ff;
+    }}
+    .dashboard-v2 .dashboard-matrix-item.is-active {{
+        background:#beddff;
+        box-shadow:inset 0 0 0 1px rgba(54, 116, 209, 0.26);
+    }}
+    .dashboard-v2 .dashboard-matrix-item-label {{
+        font-size:14px;
+        font-weight:600;
+        line-height:1.2;
+        word-break:break-word;
+    }}
+    .dashboard-v2 .dashboard-matrix-item-sub {{
+        display:flex;
+        gap:10px;
+        flex-wrap:wrap;
+        color:#6f84a7;
+        font-size:11px;
+    }}
+    .dashboard-v2 .dashboard-matrix-empty {{
+        padding:18px 14px;
+        color:#8da0bf;
+        font-size:13px;
+    }}
+    .dashboard-v2 .dashboard-matrix-detail {{
+        border:1px solid rgba(197, 214, 241, 0.95);
+        border-radius:18px;
+        background:#fcfdff;
+        overflow:hidden;
+    }}
+    .dashboard-v2 .dashboard-matrix-detail-head {{
+        padding:14px 16px;
+        background:#eef5ff;
+        border-bottom:1px solid rgba(214, 228, 248, 0.95);
+    }}
+    .dashboard-v2 .dashboard-matrix-detail-title {{
+        color:#1a335b;
+        font-size:18px;
+        font-weight:700;
+    }}
+    .dashboard-v2 .dashboard-matrix-detail-subtitle {{
+        margin-top:4px;
+        color:#6f84a7;
+        font-size:13px;
+    }}
+    .dashboard-v2 .dashboard-matrix-metrics {{
+        display:grid;
+        grid-template-columns:repeat(auto-fit, minmax(118px, 1fr));
+        gap:8px;
+        padding:14px 16px;
+        border-bottom:1px solid rgba(232, 240, 250, 0.95);
+    }}
+    .dashboard-v2 .dashboard-matrix-metric {{
+        padding:10px 12px;
+        border-radius:14px;
+        background:#f6f9ff;
+    }}
+    .dashboard-v2 .dashboard-matrix-metric-label {{
+        color:#7287a8;
+        font-size:10px;
+        font-weight:700;
+        text-transform:uppercase;
+        letter-spacing:.04em;
+    }}
+    .dashboard-v2 .dashboard-matrix-metric-value {{
+        margin-top:6px;
+        color:#19355e;
+        font-size:18px;
+        font-weight:700;
+    }}
+    .dashboard-v2 .dashboard-matrix-ads {{
+        padding:14px 16px 18px;
+    }}
+    .dashboard-v2 .dashboard-matrix-ads-title {{
+        color:#1f3760;
+        font-size:13px;
+        font-weight:700;
+        margin-bottom:10px;
+        text-transform:uppercase;
+        letter-spacing:.04em;
+    }}
+    .dashboard-v2 .dashboard-matrix-ads-table {{
+        width:100%;
+        border-collapse:separate;
+        border-spacing:0;
+        font-size:12px;
+    }}
+    .dashboard-v2 .dashboard-matrix-ads-table th,
+    .dashboard-v2 .dashboard-matrix-ads-table td {{
+        padding:8px 10px;
+        border-bottom:1px solid rgba(229, 238, 249, 0.95);
+        text-align:left;
+        vertical-align:top;
+    }}
+    .dashboard-v2 .dashboard-matrix-ads-table th {{
+        color:#6e83a6;
+        font-size:10px;
+        font-weight:700;
+        text-transform:uppercase;
+        letter-spacing:.04em;
     }}
     .dashboard-v2 #dashboardUnifiedTable {{
         min-width:2740px;
@@ -8538,26 +8794,13 @@ def _render_dashboard_page_v2(
         <div class="dashboard-table-header">
             <div class="dashboard-table-title">
                 <div class="panel-title">CRM Analytics</div>
-                <div class="panel-subtitle">Compact dashboard view across FB, Players, Chatterfy, Caps, Cabinets and Hold.</div>
+                <div class="panel-subtitle">Power BI style matrix drill-down across Brand, GEO, Cabinet, Campaign, Adset and Ad.</div>
             </div>
-            <details class="upload-menu upload-menu-right" id="dashboardColumnsMenu">
-                <summary class="ghost-btn small-btn">Columns</summary>
-                <div class="upload-menu-list" style="width:min(560px, calc(100vw - 48px));">
-                    <div class="panel-subtitle">Choose which columns to keep visible in Dashboard.</div>
-                    <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
-                        <button type="button" class="ghost-btn small-btn" id="dashboardShowAllColumns">Show all</button>
-                    </div>
-                    <div style="display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px; margin-top:12px;">
-                        {column_chips}
-                    </div>
-                </div>
-            </details>
         </div>
-        <div class="dashboard-table-wrap">
-            <table id="dashboardUnifiedTable" data-dashboard-tree-table>
-                <thead><tr>{head_html}</tr></thead>
-                <tbody>{rows_html if rows_html else '<tr><td colspan="31">No dashboard rows for the selected filters</td></tr>'}</tbody>
-            </table>
+        <div class="dashboard-matrix-wrap">
+            <div class="dashboard-matrix-path" id="dashboardMatrixPath"></div>
+            <div class="dashboard-matrix-board" id="dashboardMatrixBoard"></div>
+            <div class="dashboard-matrix-detail" id="dashboardMatrixDetail"></div>
         </div>
     </div>
     </div>
@@ -8645,18 +8888,6 @@ def _render_dashboard_page_v2(
                     }}
                 }});
             }};
-            const collapseSiblingBranches = (currentNodeId) => {{
-                const currentRow = table.querySelector(`tbody tr[data-node-id="${{CSS.escape(currentNodeId)}}"]`);
-                const parentId = currentRow?.dataset.parentId || '';
-                treeRows.forEach((row) => {{
-                    if ((row.dataset.parentId || '') !== parentId) return;
-                    const siblingNodeId = row.dataset.nodeId || '';
-                    if (!siblingNodeId || siblingNodeId === currentNodeId) return;
-                    const siblingButton = row.querySelector('.dashboard-tree-toggle');
-                    if (siblingButton) siblingButton.setAttribute('aria-expanded', 'false');
-                    hideDescendants(siblingNodeId);
-                }});
-            }};
             const showDirectChildren = (currentNodeId) => {{
                 treeRows.forEach((row) => {{
                     if ((row.dataset.parentId || '') !== currentNodeId) return;
@@ -8668,7 +8899,6 @@ def _render_dashboard_page_v2(
                 button.setAttribute('aria-expanded', 'false');
                 hideDescendants(nodeId);
             }} else {{
-                collapseSiblingBranches(nodeId);
                 button.setAttribute('aria-expanded', 'true');
                 showDirectChildren(nodeId);
             }}
@@ -9117,6 +9347,212 @@ def _render_dashboard_page_v2(
         requestAnimationFrame(() => {{
             scheduleDashboardUiRestore();
         }});
+    }})();
+    </script>
+    <script>
+    (() => {{
+        const treeData = {matrix_tree_json};
+        const metricFields = {matrix_metric_fields_json};
+        const storageKey = window.teambeadStorageKey('dashboard-ui-state');
+        const pathEl = document.getElementById('dashboardMatrixPath');
+        const boardEl = document.getElementById('dashboardMatrixBoard');
+        const detailEl = document.getElementById('dashboardMatrixDetail');
+        if (!pathEl || !boardEl || !detailEl) return;
+
+        const columns = [
+            {{ key: 'platform', label: 'Brand' }},
+            {{ key: 'geo', label: 'Geo' }},
+            {{ key: 'manager', label: 'Cabinet' }},
+            {{ key: 'campaign_name', label: 'Campaign' }},
+            {{ key: 'adset_name', label: 'Adset' }},
+            {{ key: 'ad_name', label: 'Ad' }},
+        ];
+
+        const readState = () => {{
+            try {{
+                const parsed = JSON.parse(localStorage.getItem(storageKey) || '{{}}');
+                return parsed && typeof parsed === 'object' ? parsed : {{}};
+            }} catch (_error) {{
+                return {{}};
+            }}
+        }};
+        const writeState = (state) => {{
+            try {{
+                localStorage.setItem(storageKey, JSON.stringify(state || {{}}));
+            }} catch (_error) {{}}
+        }};
+
+        const getNodeById = (nodes, id) => {{
+            for (const node of nodes || []) {{
+                if (node.id === id) return node;
+                const nested = getNodeById(node.children || [], id);
+                if (nested) return nested;
+            }}
+            return null;
+        }};
+
+        const getItemsForLevel = (path, levelIndex) => {{
+            if (levelIndex === 0) return treeData;
+            let branch = treeData;
+            for (let i = 0; i < levelIndex; i += 1) {{
+                const selectedId = path[i];
+                const selectedNode = (branch || []).find((item) => item.id === selectedId);
+                if (!selectedNode) return [];
+                if (i === levelIndex - 1) return selectedNode.children || [];
+                branch = selectedNode.children || [];
+            }}
+            return [];
+        }};
+
+        const getCurrentBranch = (path) => {{
+            let current = null;
+            let branch = treeData;
+            for (const selectedId of path) {{
+                const next = (branch || []).find((item) => item.id === selectedId);
+                if (!next) break;
+                current = next;
+                branch = next.children || [];
+            }}
+            return current;
+        }};
+
+        const savePath = (path) => {{
+            const state = readState();
+            state.matrixPath = path;
+            writeState(state);
+        }};
+
+        const renderPath = (path) => {{
+            const labels = [];
+            let branch = treeData;
+            path.forEach((selectedId) => {{
+                const node = (branch || []).find((item) => item.id === selectedId);
+                if (!node) return;
+                labels.push(node.label);
+                branch = node.children || [];
+            }});
+            pathEl.innerHTML = labels.length
+                ? labels.map((label) => `<span class="dashboard-matrix-path-chip">${{label}}</span>`).join('')
+                : '<span class="dashboard-matrix-path-chip">Choose Brand to start drill-down</span>';
+        }};
+
+        const renderDetail = (path) => {{
+            const current = getCurrentBranch(path);
+            if (!current) {{
+                detailEl.innerHTML = `
+                    <div class="dashboard-matrix-detail-head">
+                        <div class="dashboard-matrix-detail-title">No selection</div>
+                        <div class="dashboard-matrix-detail-subtitle">Choose Brand, then keep drilling right.</div>
+                    </div>
+                `;
+                return;
+            }}
+            const ads = current.ads || [];
+            const adsTable = ads.length ? `
+                <div class="dashboard-matrix-ads">
+                    <div class="dashboard-matrix-ads-title">Ads inside selected branch</div>
+                    <table class="dashboard-matrix-ads-table">
+                        <thead>
+                            <tr>
+                                <th>Ad</th>
+                                <th>Account</th>
+                                <th>Spend</th>
+                                <th>Clicks</th>
+                                <th>Leads</th>
+                                <th>Reg</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${{ads.map((ad) => `
+                                <tr>
+                                    <td>${{ad.label}}</td>
+                                    <td>${{ad.account_id}}</td>
+                                    <td>${{ad.metrics.spend}}</td>
+                                    <td>${{ad.metrics.clicks}}</td>
+                                    <td>${{ad.metrics.leads}}</td>
+                                    <td>${{ad.metrics.reg}}</td>
+                                </tr>
+                            `).join('')}}
+                        </tbody>
+                    </table>
+                </div>
+            ` : '';
+            detailEl.innerHTML = `
+                <div class="dashboard-matrix-detail-head">
+                    <div class="dashboard-matrix-detail-title">${{current.label}}</div>
+                    <div class="dashboard-matrix-detail-subtitle">${{columns.find((col) => col.key === current.column)?.label || 'Level'}} metrics</div>
+                </div>
+                <div class="dashboard-matrix-metrics">
+                    ${{metricFields.map(([field, label]) => `
+                        <div class="dashboard-matrix-metric">
+                            <div class="dashboard-matrix-metric-label">${{label}}</div>
+                            <div class="dashboard-matrix-metric-value">${{current.metrics[field] || '—'}}</div>
+                        </div>
+                    `).join('')}}
+                </div>
+                ${{adsTable}}
+            `;
+        }};
+
+        const renderBoard = (path) => {{
+            boardEl.innerHTML = columns.map((column, index) => {{
+                const items = column.key === 'ad_name'
+                    ? (getCurrentBranch(path)?.ads || []).map((ad) => ({{
+                        id: ad.id,
+                        label: ad.label,
+                        metrics: ad.metrics,
+                        isLeafAd: true,
+                    }}))
+                    : getItemsForLevel(path, index);
+                const selectedId = path[index] || '';
+                return `
+                    <div class="dashboard-matrix-column">
+                        <div class="dashboard-matrix-column-head">${column.label}</div>
+                        <div class="dashboard-matrix-column-body">
+                            ${{items.length ? items.map((item) => `
+                                <button
+                                    type="button"
+                                    class="dashboard-matrix-item ${{selectedId === item.id ? 'is-active' : ''}}"
+                                    data-matrix-level="${{index}}"
+                                    data-matrix-id="${{item.id}}">
+                                    <div class="dashboard-matrix-item-label">${{item.label}}</div>
+                                    <div class="dashboard-matrix-item-sub">
+                                        <span>${{item.metrics?.spend || '—'}} spend</span>
+                                        <span>${{item.metrics?.leads || '—'}} leads</span>
+                                        <span>${{item.metrics?.clicks || '—'}} clicks</span>
+                                    </div>
+                                </button>
+                            `).join('') : '<div class="dashboard-matrix-empty">No items on this level yet</div>'}}
+                        </div>
+                    </div>
+                `;
+            }}).join('');
+        }};
+
+        const hydratePath = () => {{
+            const state = readState();
+            const path = Array.isArray(state.matrixPath) ? state.matrixPath.slice(0, 6) : [];
+            return path.filter(Boolean);
+        }};
+
+        const rerender = (path) => {{
+            renderPath(path);
+            renderBoard(path);
+            renderDetail(path);
+            savePath(path);
+        }};
+
+        boardEl.addEventListener('click', (event) => {{
+            const button = event.target.closest('[data-matrix-level][data-matrix-id]');
+            if (!button) return;
+            const level = Number(button.dataset.matrixLevel || '0');
+            const id = button.dataset.matrixId || '';
+            const nextPath = hydratePath().slice(0, level);
+            nextPath[level] = id;
+            rerender(nextPath);
+        }});
+
+        rerender(hydratePath());
     }})();
     </script>
     """
