@@ -7823,7 +7823,7 @@ def _render_dashboard_page_v2(
         position:sticky;
         top:0;
         z-index:2;
-        padding:9px 8px;
+        padding:7px 8px;
         font-size:10px;
         line-height:1.15;
         letter-spacing:.06em;
@@ -7840,7 +7840,8 @@ def _render_dashboard_page_v2(
         text-decoration:none;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody td {{
-        padding:7px 8px;
+        padding:5px 8px;
+        line-height:1.1;
         border-bottom:1px solid rgba(221, 233, 248, 0.9);
         border-right:1px solid rgba(229, 238, 249, 0.9);
         white-space:nowrap;
