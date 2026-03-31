@@ -7700,15 +7700,15 @@ def _render_dashboard_page_v2(
         overflow-x:hidden;
     }}
     .dashboard-v2 .dashboard-filters-panel {{
-        padding:18px 18px 16px;
+        padding:14px 14px 12px;
         width:100%;
         min-width:0;
         overflow:hidden;
     }}
     .dashboard-v2 .dashboard-filter-grid {{
         display:grid;
-        grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));
-        gap:10px;
+        grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));
+        gap:8px;
         align-items:end;
         width:100%;
         min-width:0;
@@ -7719,7 +7719,7 @@ def _render_dashboard_page_v2(
         min-width:0;
     }}
     .dashboard-v2 .dashboard-filter-field span {{
-        font-size:11px;
+        font-size:10px;
         line-height:1;
         letter-spacing:.08em;
         text-transform:uppercase;
@@ -7729,10 +7729,10 @@ def _render_dashboard_page_v2(
     }}
     .dashboard-v2 .dashboard-filter-field select,
     .dashboard-v2 .dashboard-filter-field input {{
-        height:40px;
-        border-radius:14px;
-        font-size:14px;
-        padding:0 14px;
+        height:36px;
+        border-radius:12px;
+        font-size:13px;
+        padding:0 12px;
     }}
     .dashboard-v2 .dashboard-period-picker {{
         display:grid;
@@ -7743,10 +7743,10 @@ def _render_dashboard_page_v2(
     }}
     .dashboard-v2 .dashboard-period-picker .period-jump-btn {{
         width:44px;
-        height:40px;
-        border-radius:14px;
+        height:36px;
+        border-radius:12px;
         padding:0;
-        font-size:22px;
+        font-size:20px;
         line-height:1;
     }}
     .dashboard-v2 .dashboard-filter-actions {{
@@ -7757,31 +7757,31 @@ def _render_dashboard_page_v2(
     }}
     .dashboard-v2 .dashboard-filter-actions .btn,
     .dashboard-v2 .dashboard-filter-actions .ghost-btn {{
-        min-width:110px;
-        height:40px;
-        border-radius:14px;
+        min-width:96px;
+        height:36px;
+        border-radius:12px;
     }}
     .dashboard-v2 .dashboard-summary-wrap .stats-grid {{
-        grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));
-        gap:10px;
+        grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));
+        gap:8px;
     }}
     .dashboard-v2 .dashboard-summary-wrap .stat-card {{
-        min-height:98px;
-        padding:14px 16px;
-        border-radius:18px;
+        min-height:84px;
+        padding:12px 14px;
+        border-radius:16px;
     }}
     .dashboard-v2 .dashboard-summary-wrap .stat-card .name {{
-        font-size:11px;
+        font-size:10px;
         letter-spacing:.08em;
         text-transform:uppercase;
         color:#6e7f9d;
     }}
     .dashboard-v2 .dashboard-summary-wrap .stat-card .value {{
-        font-size:28px;
+        font-size:23px;
         line-height:1.05;
     }}
     .dashboard-v2 .dashboard-table-panel {{
-        padding:18px;
+        padding:14px;
         min-width:0;
         overflow:hidden;
     }}
@@ -7805,7 +7805,7 @@ def _render_dashboard_page_v2(
     }}
     .dashboard-v2 .dashboard-table-wrap {{
         border:1px solid rgba(191, 212, 244, 0.9);
-        border-radius:20px;
+        border-radius:16px;
         overflow:auto;
         background:#fdfefe;
         width:100%;
@@ -7813,18 +7813,18 @@ def _render_dashboard_page_v2(
         max-width:100%;
     }}
     .dashboard-v2 #dashboardUnifiedTable {{
-        min-width:3220px;
+        min-width:2740px;
         table-layout:fixed;
         border-collapse:separate;
         border-spacing:0;
-        font-size:13px;
+        font-size:12px;
     }}
     .dashboard-v2 #dashboardUnifiedTable thead th {{
         position:sticky;
         top:0;
         z-index:2;
-        padding:12px 10px;
-        font-size:11px;
+        padding:9px 8px;
+        font-size:10px;
         line-height:1.15;
         letter-spacing:.06em;
         text-transform:uppercase;
@@ -7840,7 +7840,7 @@ def _render_dashboard_page_v2(
         text-decoration:none;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody td {{
-        padding:10px 10px;
+        padding:7px 8px;
         border-bottom:1px solid rgba(221, 233, 248, 0.9);
         border-right:1px solid rgba(229, 238, 249, 0.9);
         white-space:nowrap;
@@ -7854,67 +7854,67 @@ def _render_dashboard_page_v2(
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="launch_date"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="launch_date"] {{
-        width:64px;
-        min-width:64px;
-        max-width:64px;
+        width:56px;
+        min-width:56px;
+        max-width:56px;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="buyer"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="buyer"] {{
-        width:88px;
-        min-width:88px;
-        max-width:88px;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="platform"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="platform"] {{
         width:78px;
         min-width:78px;
         max-width:78px;
     }}
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="platform"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="platform"] {{
+        width:68px;
+        min-width:68px;
+        max-width:68px;
+    }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="manager"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="manager"] {{
-        width:96px;
-        min-width:96px;
-        max-width:96px;
+        width:88px;
+        min-width:88px;
+        max-width:88px;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="geo"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="geo"] {{
-        width:58px;
-        min-width:58px;
-        max-width:58px;
+        width:52px;
+        min-width:52px;
+        max-width:52px;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="offer"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="offer"] {{
-        width:118px;
-        min-width:118px;
-        max-width:118px;
+        width:102px;
+        min-width:102px;
+        max-width:102px;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="cabinet_text"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="cabinet_text"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="advertiser_text"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="advertiser_text"] {{
-        width:118px;
-        min-width:118px;
-        max-width:118px;
+        width:104px;
+        min-width:104px;
+        max-width:104px;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="account_id"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="account_id"] {{
-        width:138px;
-        min-width:138px;
-        max-width:138px;
+        width:122px;
+        min-width:122px;
+        max-width:122px;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="campaign_name"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="campaign_name"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="adset_name"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="adset_name"] {{
-        width:200px;
-        min-width:200px;
-        max-width:200px;
+        width:170px;
+        min-width:170px;
+        max-width:170px;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="ad_name"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="ad_name"] {{
-        width:240px;
-        min-width:240px;
-        max-width:240px;
+        width:210px;
+        min-width:210px;
+        max-width:210px;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="budget"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="budget"],
@@ -7930,9 +7930,9 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable th[data-col="income"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="profit"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="profit"] {{
-        width:106px;
-        min-width:106px;
-        max-width:106px;
+        width:92px;
+        min-width:92px;
+        max-width:92px;
         text-align:right;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="clicks"],
@@ -7953,25 +7953,25 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable th[data-col="hold_count"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="cap_total"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="cap_total"] {{
-        width:82px;
-        min-width:82px;
-        max-width:82px;
+        width:70px;
+        min-width:70px;
+        max-width:70px;
         text-align:right;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="hold_split"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="hold_split"] {{
-        width:92px;
-        min-width:92px;
-        max-width:92px;
+        width:82px;
+        min-width:82px;
+        max-width:82px;
         text-align:center;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="cap_fill"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="cap_fill"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="roi"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="roi"] {{
-        width:84px;
-        min-width:84px;
-        max-width:84px;
+        width:72px;
+        min-width:72px;
+        max-width:72px;
         text-align:right;
     }}
     .dashboard-v2 #dashboardUnifiedTable th[data-col="launch_date"],
