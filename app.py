@@ -7637,6 +7637,11 @@ def _render_dashboard_page_v2(
         "chatterfy", "players_ftd", "qual_ftd", "hold_count", "cap_total", "cap_fill",
         "income", "profit", "roi",
     ]
+    dashboard_metric_sum_fields = [
+        "budget", "spend", "clicks", "leads", "reg", "fb_ftd", "chatterfy", "players_ftd",
+        "qual_ftd", "hold_count", "cap_total", "cap_current_ftd", "income",
+        "baseline_fail_count", "wager_fail_count",
+    ]
 
     hierarchy_levels = [
         ("platform", "platform"),
@@ -7647,11 +7652,33 @@ def _render_dashboard_page_v2(
     ]
 
     def aggregate_dashboard_metrics(items):
-        totals = {field: 0.0 for field in dashboard_numeric_fields}
+        totals = {field: 0.0 for field in dashboard_metric_sum_fields}
         for item in items:
-            for field in dashboard_numeric_fields:
+            for field in dashboard_metric_sum_fields:
                 totals[field] += safe_number(item.get(field, 0))
-        return totals
+        profit = totals["income"] - totals["spend"]
+        return {
+            "budget": totals["budget"],
+            "spend": totals["spend"],
+            "clicks": totals["clicks"],
+            "leads": totals["leads"],
+            "reg": totals["reg"],
+            "rate": (totals["income"] / totals["qual_ftd"]) if totals["qual_ftd"] > 0 else 0.0,
+            "cost_reg": (totals["spend"] / totals["reg"]) if totals["reg"] > 0 else 0.0,
+            "fb_ftd": totals["fb_ftd"],
+            "cpa": (totals["spend"] / totals["fb_ftd"]) if totals["fb_ftd"] > 0 else 0.0,
+            "chatterfy": totals["chatterfy"],
+            "players_ftd": totals["players_ftd"],
+            "qual_ftd": totals["qual_ftd"],
+            "hold_count": totals["hold_count"],
+            "cap_total": totals["cap_total"],
+            "cap_fill": cap_fill_percent(totals["cap_current_ftd"], totals["cap_total"]),
+            "income": totals["income"],
+            "profit": profit,
+            "roi": ((profit / totals["spend"]) * 100) if totals["spend"] > 0 else 0.0,
+            "baseline_fail_count": totals["baseline_fail_count"],
+            "wager_fail_count": totals["wager_fail_count"],
+        }
 
     def hierarchy_bucket_sort_key(bucket_name, bucket_rows):
         text_value = safe_text(bucket_name).strip().lower()
@@ -7730,7 +7757,7 @@ def _render_dashboard_page_v2(
         )
         return f'<div class="dashboard-tree-cell dashboard-tree-level-{level}" data-tree-value="{escape(node["label"])}">{toggle}</div>'
 
-    tree = []
+    tree = build_dashboard_tree(rows, hierarchy_levels)
 
     table_headers = [
         ("platform", "Brand"),
@@ -7886,6 +7913,12 @@ def _render_dashboard_page_v2(
     ]
 
     def serialize_metric_values(values):
+        hold_split = safe_text(values.get("hold_split"))
+        if not hold_split:
+            hold_split = (
+                f'{format_int_or_float(values.get("baseline_fail_count", 0))}B / '
+                f'{format_int_or_float(values.get("wager_fail_count", 0))}W'
+            )
         return {
             "budget": format_money(values.get("budget", 0)),
             "spend": format_money(values.get("spend", 0)),
@@ -7900,6 +7933,7 @@ def _render_dashboard_page_v2(
             "players_ftd": format_int_or_float(values.get("players_ftd", 0)),
             "qual_ftd": format_int_or_float(values.get("qual_ftd", 0)),
             "hold_count": format_int_or_float(values.get("hold_count", 0)),
+            "hold_split": hold_split,
             "cap_total": format_int_or_float(values.get("cap_total", 0)),
             "cap_fill": format_percent(values.get("cap_fill", 0)),
             "income": format_money(values.get("income", 0)),
@@ -7972,13 +8006,8 @@ def _render_dashboard_page_v2(
     selected_cabinet_node = find_node(selected_geo_node["children"], matrix_cabinet) if selected_geo_node else None
     selected_campaign_node = find_node(selected_cabinet_node["children"], matrix_campaign) if selected_cabinet_node else None
     selected_adset_node = find_node(selected_campaign_node["children"], matrix_adset) if selected_campaign_node else None
-
-    matrix_selected_ad_row = None
-    if selected_adset_node and matrix_ad:
-        for row in _dashboard_sort_rows(selected_adset_node["rows"], sort_by=sort_by, order=order):
-            if safe_text(row.get("ad_name")) == matrix_ad:
-                matrix_selected_ad_row = row
-                break
+    selected_ad_items = build_dashboard_tree(selected_adset_node["rows"], [("ad_name", "ad_name")]) if selected_adset_node else []
+    selected_ad_node = find_node(selected_ad_items, matrix_ad) if selected_ad_items else None
 
     def render_matrix_path_html():
         chips = []
@@ -7993,8 +8022,8 @@ def _render_dashboard_page_v2(
         rendered = []
         for item in items:
             if is_ad_level:
-                label = safe_text(item.get("ad_name")) or "—"
-                metrics = serialize_metric_values(item)
+                label = safe_text(item.get("label") or item.get("ad_name")) or "—"
+                metrics = serialize_metric_values(item.get("metrics", item))
                 href = make_matrix_link(
                     matrix_ad=label,
                 )
@@ -8065,7 +8094,7 @@ def _render_dashboard_page_v2(
         <div class="dashboard-matrix-column">
             <div class="dashboard-matrix-column-head">Ad</div>
             <div class="dashboard-matrix-column-body">
-                {render_matrix_items(_dashboard_sort_rows(selected_adset_node["rows"], sort_by=sort_by, order=order) if selected_adset_node else [], "matrix_ad", matrix_ad, is_ad_level=True)}
+                {render_matrix_items(selected_ad_items, "matrix_ad", matrix_ad, is_ad_level=True)}
             </div>
         </div>
         ''',
@@ -8076,9 +8105,9 @@ def _render_dashboard_page_v2(
     matrix_focus_subtitle = "Choose Brand, then keep drilling to the right."
     matrix_ads_table_html = ""
 
-    if matrix_selected_ad_row:
-        matrix_focus_metrics = serialize_metric_values(matrix_selected_ad_row)
-        matrix_focus_title = safe_text(matrix_selected_ad_row.get("ad_name")) or "Ad"
+    if selected_ad_node:
+        matrix_focus_metrics = serialize_metric_values(selected_ad_node["metrics"])
+        matrix_focus_title = selected_ad_node["label"]
         matrix_focus_subtitle = "Ad metrics"
     elif selected_adset_node:
         matrix_focus_metrics = serialize_metric_values(selected_adset_node["metrics"])
@@ -8124,14 +8153,14 @@ def _render_dashboard_page_v2(
             for field, label in matrix_metric_fields
         ]) + '</div>'
 
-    flat_descriptor_columns = [
+    descriptor_fields = [
         ("buyer", "Buyer"),
         ("offer", "Offer"),
         ("cabinet_text", "Cabinets"),
         ("advertiser_text", "Advertiser"),
         ("account_id", "Account"),
     ]
-    flat_metric_columns = [
+    metric_fields = [
         ("budget", "Budget"),
         ("spend", "Spend"),
         ("clicks", "Clicks"),
@@ -8152,146 +8181,143 @@ def _render_dashboard_page_v2(
         ("profit", "Profit"),
         ("roi", "ROI"),
     ]
-    hierarchy_label_map = {field: label for field, label in flat_hierarchy_levels}
-    flat_table_headers = (
-        [(field, hierarchy_label_map[field]) for field in selected_group_levels]
-        + flat_descriptor_columns
-        + flat_metric_columns
-    )
 
-    flat_sum_fields = [
-        "budget", "spend", "clicks", "leads", "reg", "fb_ftd", "chatterfy", "players_ftd",
-        "qual_ftd", "hold_count", "cap_total", "cap_current_ftd", "income", "profit",
-        "baseline_fail_count", "wager_fail_count",
-    ]
-    flat_set_fields = ["buyer", "offer", "cabinet_text", "advertiser_text", "account_id"]
+    def summarize_unique_dashboard_value(items, field):
+        values = sorted({
+            safe_text(item.get(field)).strip()
+            for item in items
+            if safe_text(item.get(field)).strip() and safe_text(item.get(field)).strip() != "—"
+        })
+        return values[0] if len(values) == 1 else ""
 
-    def summarize_dashboard_bucket_values(values):
-        clean_values = [safe_text(value) for value in values if safe_text(value) and safe_text(value) != "—"]
-        unique_values = sorted(set(clean_values))
-        if len(unique_values) == 1:
-            return unique_values[0]
-        return ""
+    def summarize_dashboard_descriptors(items):
+        return {
+            field: summarize_unique_dashboard_value(items, field)
+            for field, _label in descriptor_fields
+        }
 
-    def aggregate_dashboard_flat_rows(items, group_levels):
-        buckets = {}
+    focus_rows = rows
+    focus_profit_value = safe_number(total_metrics.get("profit", 0))
+    focus_metrics = serialize_metric_values(total_metrics)
+    focus_descriptors = summarize_dashboard_descriptors(rows)
+
+    if selected_brand_node:
+        focus_rows = selected_brand_node["rows"]
+        focus_profit_value = safe_number(selected_brand_node["metrics"].get("profit", 0))
+        focus_metrics = serialize_metric_values(selected_brand_node["metrics"])
+        focus_descriptors = summarize_dashboard_descriptors(focus_rows)
+    if selected_geo_node:
+        focus_rows = selected_geo_node["rows"]
+        focus_profit_value = safe_number(selected_geo_node["metrics"].get("profit", 0))
+        focus_metrics = serialize_metric_values(selected_geo_node["metrics"])
+        focus_descriptors = summarize_dashboard_descriptors(focus_rows)
+    if selected_cabinet_node:
+        focus_rows = selected_cabinet_node["rows"]
+        focus_profit_value = safe_number(selected_cabinet_node["metrics"].get("profit", 0))
+        focus_metrics = serialize_metric_values(selected_cabinet_node["metrics"])
+        focus_descriptors = summarize_dashboard_descriptors(focus_rows)
+    if selected_campaign_node:
+        focus_rows = selected_campaign_node["rows"]
+        focus_profit_value = safe_number(selected_campaign_node["metrics"].get("profit", 0))
+        focus_metrics = serialize_metric_values(selected_campaign_node["metrics"])
+        focus_descriptors = summarize_dashboard_descriptors(focus_rows)
+    if selected_adset_node:
+        focus_rows = selected_adset_node["rows"]
+        focus_profit_value = safe_number(selected_adset_node["metrics"].get("profit", 0))
+        focus_metrics = serialize_metric_values(selected_adset_node["metrics"])
+        focus_descriptors = summarize_dashboard_descriptors(focus_rows)
+    if selected_ad_node:
+        focus_rows = selected_ad_node["rows"]
+        focus_profit_value = safe_number(selected_ad_node["metrics"].get("profit", 0))
+        focus_metrics = serialize_metric_values(selected_ad_node["metrics"])
+        focus_descriptors = {
+            field: summarize_unique_dashboard_value(focus_rows, field)
+            for field, _label in descriptor_fields
+        }
+
+    def render_dashboard_cascade_items(items, level_key, selected_value, empty_message, reset_after=None, is_ad_level=False):
+        if not items:
+            return f'<div class="dashboard-cascade-empty">{escape(empty_message)}</div>'
+        rendered = []
         for item in items:
-            key = tuple(safe_text(item.get(field)).strip() or "—" for field in group_levels)
-            if key not in buckets:
-                bucket = {
-                    field: (safe_text(item.get(field)).strip() or "—")
-                    for field in group_levels
-                }
-                for field in flat_sum_fields:
-                    bucket[field] = 0.0
-                for field in flat_set_fields:
-                    bucket[f"{field}_values"] = set()
-                buckets[key] = bucket
-            bucket = buckets[key]
-            for field in flat_sum_fields:
-                bucket[field] += safe_number(item.get(field, 0))
-            for field in flat_set_fields:
-                value = safe_text(item.get(field)).strip()
-                if value and value != "—":
-                    bucket[f"{field}_values"].add(value)
-        result = []
-        for bucket in buckets.values():
-            bucket["profit"] = bucket["income"] - bucket["spend"]
-            bucket["rate"] = (bucket["income"] / bucket["qual_ftd"]) if bucket["qual_ftd"] > 0 else 0.0
-            bucket["cost_reg"] = (bucket["spend"] / bucket["reg"]) if bucket["reg"] > 0 else 0.0
-            bucket["cpa"] = (bucket["spend"] / bucket["fb_ftd"]) if bucket["fb_ftd"] > 0 else 0.0
-            bucket["cap_fill"] = cap_fill_percent(bucket["cap_current_ftd"], bucket["cap_total"])
-            bucket["roi"] = ((bucket["profit"] / bucket["spend"]) * 100) if bucket["spend"] > 0 else 0.0
-            bucket["hold_split"] = f'{format_int_or_float(bucket["baseline_fail_count"])}B / {format_int_or_float(bucket["wager_fail_count"])}W'
-            for field in flat_set_fields:
-                bucket[field] = summarize_dashboard_bucket_values(bucket[f"{field}_values"])
-            result.append(bucket)
-        return result
+            if is_ad_level:
+                label = safe_text(item.get("label") or item.get("ad_name")).strip() or "—"
+                href = make_matrix_link(matrix_ad=label)
+            else:
+                label = safe_text(item.get("label")).strip() or "—"
+                overrides = {level_key: label}
+                for key in (reset_after or []):
+                    overrides[key] = ""
+                href = make_matrix_link(**overrides)
+            active_class = " is-active" if safe_text(selected_value) == label else ""
+            rendered.append(
+                f'<a class="dashboard-cascade-item{active_class}" href="{escape(href)}">{escape(label)}</a>'
+            )
+        return "".join(rendered)
 
-    flat_rows = _dashboard_sort_rows(aggregate_dashboard_flat_rows(rows, selected_group_levels), sort_by=sort_by, order=order)
+    cascade_lists = {
+        "platform": render_dashboard_cascade_items(
+            tree,
+            "matrix_brand",
+            matrix_brand,
+            "No brands for these filters",
+            reset_after=["matrix_geo", "matrix_cabinet", "matrix_campaign", "matrix_adset", "matrix_ad"],
+        ),
+        "geo": render_dashboard_cascade_items(
+            selected_brand_node["children"] if selected_brand_node else [],
+            "matrix_geo",
+            matrix_geo,
+            "Select Brand first",
+            reset_after=["matrix_cabinet", "matrix_campaign", "matrix_adset", "matrix_ad"],
+        ),
+        "manager": render_dashboard_cascade_items(
+            selected_geo_node["children"] if selected_geo_node else [],
+            "matrix_cabinet",
+            matrix_cabinet,
+            "Select GEO first",
+            reset_after=["matrix_campaign", "matrix_adset", "matrix_ad"],
+        ),
+        "campaign_name": render_dashboard_cascade_items(
+            selected_cabinet_node["children"] if selected_cabinet_node else [],
+            "matrix_campaign",
+            matrix_campaign,
+            "Select Cabinet first",
+            reset_after=["matrix_adset", "matrix_ad"],
+        ),
+        "adset_name": render_dashboard_cascade_items(
+            selected_campaign_node["children"] if selected_campaign_node else [],
+            "matrix_adset",
+            matrix_adset,
+            "Select Campaign first",
+            reset_after=["matrix_ad"],
+        ),
+        "ad_name": render_dashboard_cascade_items(
+            selected_ad_items,
+            "matrix_ad",
+            matrix_ad,
+            "Select Adset first",
+            is_ad_level=True,
+        ),
+    }
 
-    def render_dashboard_flat_cell(row, field):
-        if field in {level for level, _label in flat_hierarchy_levels} | {"buyer", "offer", "cabinet_text", "advertiser_text", "account_id", "hold_split"}:
-            return escape(safe_text(row.get(field)) or "")
-        if field in {"budget", "spend", "rate", "cost_reg", "cpa", "income", "profit"}:
-            return format_money(row.get(field, 0))
-        if field in {"roi", "cap_fill"}:
-            return format_percent(row.get(field, 0))
-        return format_int_or_float(row.get(field, 0))
+    def render_dashboard_summary_cell(field):
+        if field in cascade_lists:
+            return f'<div class="dashboard-cascade-list">{cascade_lists[field]}</div>'
+        if field in {name for name, _label in descriptor_fields}:
+            return escape(focus_descriptors.get(field, "") or "")
+        return escape(safe_text(focus_metrics.get(field, "")) or "")
 
-    head_html = "".join(
-        f'<th data-col="{escape(field)}">{_dashboard_sort_link(label, field, **filter_params)}</th>'
-        for field, label in flat_table_headers
-    )
-    rows_html = "".join(
-        f'<tr class="{"soft-green" if safe_number(row.get("profit", 0)) > 0 else ("soft-red" if safe_number(row.get("profit", 0)) < 0 else "")}">'
-        + "".join(f'<td data-col="{escape(field)}">{render_dashboard_flat_cell(row, field)}</td>' for field, _label in flat_table_headers)
-        + "</tr>"
-        for row in flat_rows
-    )
-    column_chips = "".join(
-        f'<label class="column-chip"><input type="checkbox" class="dashboard-column-toggle" value="{escape(field)}" checked> {escape(label)}</label>'
-        for field, label in flat_table_headers
-    )
-
-    def render_hidden_dashboard_filters(include_group_levels=False):
-        hidden_fields = [
-            ("buyer", buyer),
-            ("platform", platform),
-            ("manager", manager),
-            ("geo", geo),
-            ("offer", offer),
-            ("cabinet_name", cabinet_name),
-            ("advertiser", advertiser),
-            ("campaign_name", campaign_name),
-            ("adset_name", adset_name),
-            ("account_id", account_id),
-            ("ad_name", ad_name),
-            ("source_name", source_name),
-            ("has_caps", has_caps),
-            ("has_hold", has_hold),
-            ("has_chatterfy", has_chatterfy),
-            ("has_players", has_players),
-            ("search", search),
-            ("period_view", "period"),
-            ("period_label", effective_period_label),
-            ("sort_by", sort_by),
-            ("order", order),
-        ]
-        html = "".join(
-            f'<input type="hidden" name="{escape(name)}" value="{escape(value)}">'
-            for name, value in hidden_fields
-            if safe_text(value) or name in {"period_view", "period_label", "sort_by", "order"}
-        )
-        if include_group_levels:
-            return html
-        html += f'<input type="hidden" name="group_levels" value="{escape(group_levels_param)}">'
-        return html
-
-    group_level_chips = "".join(
-        f'<label class="column-chip"><input type="checkbox" name="group_levels" value="{escape(field)}" {"checked" if field in selected_group_levels else ""}> {escape(label)}</label>'
-        for field, label in flat_hierarchy_levels
-    )
-    grouping_menu_html = f"""
-    <details class="upload-menu upload-menu-right" id="dashboardGroupingMenu">
-        <summary class="ghost-btn small-btn">Grouping</summary>
-        <div class="upload-menu-list" style="width:min(460px, calc(100vw - 48px));">
-            <form method="get" action="/dashboard" id="dashboardGroupingForm">
-                {render_hidden_dashboard_filters(include_group_levels=True)}
-                <div class="panel-subtitle">Choose hierarchy levels for flat aggregation.</div>
-                <div style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; margin-top:12px;">
-                    {group_level_chips}
-                </div>
-                <div style="display:flex; gap:10px; margin-top:12px; flex-wrap:wrap;">
-                    <button type="submit" class="btn small-btn">Apply</button>
-                </div>
-            </form>
-        </div>
-    </details>
+    rows_html = f"""
+    <tr class="dashboard-cascade-row {'soft-green' if focus_profit_value > 0 else ('soft-red' if focus_profit_value < 0 else '')}">
+        {''.join(
+            f'<td data-col="{escape(field)}" class="{"dashboard-cascade-cell" if field in cascade_lists else "dashboard-cascade-summary-cell"}">{render_dashboard_summary_cell(field)}</td>'
+            for field, _label in table_headers
+        )}
+    </tr>
     """
 
     def render_dashboard_table_panel(title, table_id):
-        empty_colspan = max(len(flat_table_headers), 1)
+        body_html = rows_html if rows else f'<tr><td colspan="{len(table_headers)}">No dashboard rows for the selected filters</td></tr>'
         return f"""
         <div class="panel compact-panel dashboard-table-panel">
             <div class="dashboard-table-header">
@@ -8299,7 +8325,6 @@ def _render_dashboard_page_v2(
                     <div class="panel-title">{escape(title)}</div>
                 </div>
                 <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                    {grouping_menu_html if table_id == "dashboardUnifiedTable" else ""}
                     <details class="upload-menu upload-menu-right" id="{'dashboardColumnsMenu' if table_id == 'dashboardUnifiedTable' else 'dashboardColumnsMenuTest'}">
                         <summary class="ghost-btn small-btn">Columns</summary>
                         <div class="upload-menu-list" style="width:min(560px, calc(100vw - 48px));">
@@ -8315,9 +8340,9 @@ def _render_dashboard_page_v2(
                 </div>
             </div>
             <div class="dashboard-table-wrap">
-                <table id="{escape(table_id)}" data-dashboard-flat-table>
+                <table id="{escape(table_id)}" data-dashboard-flat-table data-dashboard-cascade-table>
                     <thead><tr>{head_html}</tr></thead>
-                    <tbody>{rows_html if rows_html else f'<tr><td colspan="{empty_colspan}">No dashboard rows for the selected filters</td></tr>'}</tbody>
+                    <tbody>{body_html}</tbody>
                 </table>
             </div>
         </div>
@@ -9060,6 +9085,59 @@ def _render_dashboard_page_v2(
         user-select:none;
         -webkit-user-select:none;
     }}
+    .dashboard-v2 table[data-dashboard-cascade-table] tbody tr.dashboard-cascade-row {{
+        height:auto;
+    }}
+    .dashboard-v2 table[data-dashboard-cascade-table] tbody tr.dashboard-cascade-row td {{
+        height:auto;
+        vertical-align:top;
+        padding:10px 8px;
+        white-space:normal;
+        overflow:visible;
+        text-overflow:clip;
+    }}
+    .dashboard-v2 table[data-dashboard-cascade-table] td.dashboard-cascade-cell {{
+        padding:0;
+    }}
+    .dashboard-v2 .dashboard-cascade-list {{
+        display:grid;
+        gap:4px;
+        min-height:220px;
+        max-height:420px;
+        padding:8px;
+        overflow:auto;
+    }}
+    .dashboard-v2 .dashboard-cascade-item {{
+        display:block;
+        padding:8px 10px;
+        border-radius:12px;
+        color:#20385f;
+        font-size:13px;
+        font-weight:600;
+        line-height:1.2;
+        text-decoration:none;
+        background:transparent;
+        transition:background .14s ease, box-shadow .14s ease;
+    }}
+    .dashboard-v2 .dashboard-cascade-item:hover {{
+        background:#f5f9ff;
+    }}
+    .dashboard-v2 .dashboard-cascade-item.is-active {{
+        background:#beddff;
+        box-shadow:inset 0 0 0 1px rgba(54, 116, 209, 0.26);
+    }}
+    .dashboard-v2 .dashboard-cascade-empty {{
+        padding:12px 10px;
+        color:#8da0bf;
+        font-size:12px;
+        line-height:1.35;
+    }}
+    .dashboard-v2 table[data-dashboard-cascade-table] td.dashboard-cascade-summary-cell {{
+        color:#20385f;
+        font-size:13px;
+        font-weight:600;
+        line-height:1.3;
+    }}
     .dashboard-v2 table[data-dashboard-flat-table] tbody tr:hover td {{
         background:#f6faff;
     }}
@@ -9378,6 +9456,12 @@ def _render_dashboard_page_v2(
             <input type="hidden" name="sort_by" value="{escape(sort_by)}">
             <input type="hidden" name="order" value="{escape(order)}">
             <input type="hidden" name="group_levels" value="{escape(group_levels_param)}">
+            <input type="hidden" name="matrix_brand" value="{escape(matrix_brand)}">
+            <input type="hidden" name="matrix_geo" value="{escape(matrix_geo)}">
+            <input type="hidden" name="matrix_cabinet" value="{escape(matrix_cabinet)}">
+            <input type="hidden" name="matrix_campaign" value="{escape(matrix_campaign)}">
+            <input type="hidden" name="matrix_adset" value="{escape(matrix_adset)}">
+            <input type="hidden" name="matrix_ad" value="{escape(matrix_ad)}">
             <input type="hidden" name="dashboard_state" id="dashboardStateInput" value="{escape(dashboard_state_param)}">
             <div class="dashboard-filter-actions" style="grid-column:span 2;">
                 <button type="submit" class="btn small-btn">Filter</button>
