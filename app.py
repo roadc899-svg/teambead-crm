@@ -7479,7 +7479,7 @@ def _dashboard_sort_link(label, field, **params):
     if current_sort == field:
         arrow = " ↑" if current_order == "asc" else " ↓"
     qs = build_query_string(**{**params, "sort_by": field, "order": next_order})
-    return f'<a href="/dashboard?{qs}">{escape(label)}{arrow}</a>'
+    return f'<a href="/dashboard?{qs}" class="dashboard-sort-link">{escape(label)}{arrow}</a>'
 
 
 def _render_dashboard_page_v2(
@@ -7619,6 +7619,13 @@ def _render_dashboard_page_v2(
                 totals[field] += safe_number(item.get(field, 0))
         return totals
 
+    def hierarchy_bucket_sort_key(bucket_name, bucket_rows):
+        text_value = safe_text(bucket_name).strip().lower()
+        metric_field = sort_by if sort_by in dashboard_numeric_fields else "spend"
+        metric_value = sum(safe_number(item.get(metric_field, 0)) for item in bucket_rows)
+        reverse_metric = -metric_value if safe_text(order).lower() != "asc" else metric_value
+        return (reverse_metric, text_value)
+
     node_counter = 0
 
     def build_dashboard_tree(items, levels, path=None):
@@ -7633,8 +7640,11 @@ def _render_dashboard_page_v2(
             buckets.setdefault(bucket_name, []).append(item)
 
         result = []
-        for bucket_name in sorted(buckets.keys(), key=lambda value: value.lower()):
-            bucket_rows = buckets[bucket_name]
+        sorted_bucket_items = sorted(
+            buckets.items(),
+            key=lambda item: hierarchy_bucket_sort_key(item[0], item[1]),
+        )
+        for bucket_name, bucket_rows in sorted_bucket_items:
             node_counter += 1
             node_path = [*path, f"{field}:{bucket_name}"]
             node_id = "dashboard-node-" + "|".join(node_path)
@@ -8008,7 +8018,6 @@ def _render_dashboard_page_v2(
         align-items:center;
         justify-content:flex-start;
         min-height:15px;
-        width:100%;
     }}
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-level-1 {{
         padding-left:0;
@@ -8037,7 +8046,6 @@ def _render_dashboard_page_v2(
         font:inherit;
         cursor:pointer;
         justify-content:flex-start;
-        width:100%;
     }}
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-caret {{
         width:10px;
@@ -8523,7 +8531,13 @@ def _render_dashboard_page_v2(
                 'buyer', 'offer', 'cabinet_text', 'advertiser_text', 'account_id',
             ];
             autoCols.forEach((col) => {{
-                const cells = Array.from(table.querySelectorAll(`[data-col="${{col}}"]`)).filter((cell) => {{
+                const allCells = Array.from(table.querySelectorAll(`[data-col="${{col}}"]`));
+                allCells.forEach((cell) => {{
+                    cell.style.width = '';
+                    cell.style.minWidth = '';
+                    cell.style.maxWidth = '';
+                }});
+                const cells = allCells.filter((cell) => {{
                     if (cell.hidden) return false;
                     if (cell.style.display === 'none') return false;
                     const row = cell.closest('tr');
@@ -8531,17 +8545,28 @@ def _render_dashboard_page_v2(
                 }});
                 let maxWidth = 0;
                 cells.forEach((cell) => {{
-                    const previousWidth = cell.style.width;
-                    cell.style.width = 'auto';
-                    maxWidth = Math.max(maxWidth, Math.ceil(cell.scrollWidth + 18));
-                    cell.style.width = previousWidth;
+                    const content = cell.querySelector('.dashboard-tree-toggle, .dashboard-tree-cell, .dashboard-tree-label') || cell;
+                    const width = Math.ceil(content.scrollWidth + 14);
+                    maxWidth = Math.max(maxWidth, width);
                 }});
                 const targetWidth = maxWidth ? `${{maxWidth}}px` : '';
-                table.querySelectorAll(`[data-col="${{col}}"]`).forEach((cell) => {{
+                allCells.forEach((cell) => {{
                     cell.style.width = targetWidth;
                     cell.style.minWidth = targetWidth;
                     cell.style.maxWidth = targetWidth || 'none';
                 }});
+            }});
+        }};
+
+        window.dashboardPersistAllTreeState = () => {{
+            document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
+                const tableId = table.id || 'dashboard-tree-table';
+                const expandedKey = window.teambeadStorageKey(`dashboard-expanded:${{tableId}}`);
+                const openNodes = Array.from(table.querySelectorAll('.dashboard-tree-toggle'))
+                    .filter((button) => button.getAttribute('aria-expanded') === 'true')
+                    .map((button) => button.dataset.target || '')
+                    .filter(Boolean);
+                localStorage.setItem(expandedKey, JSON.stringify(openNodes));
             }});
         }};
 
@@ -8612,6 +8637,17 @@ def _render_dashboard_page_v2(
                 expandNode(button);
             }});
             window.dashboardTreeAutoSize(table);
+        }});
+        document.querySelectorAll('.dashboard-sort-link').forEach((link) => {{
+            link.addEventListener('click', () => {{
+                if (window.dashboardPersistAllTreeState) window.dashboardPersistAllTreeState();
+            }});
+        }});
+        window.addEventListener('pagehide', () => {{
+            if (window.dashboardPersistAllTreeState) window.dashboardPersistAllTreeState();
+        }});
+        window.addEventListener('beforeunload', () => {{
+            if (window.dashboardPersistAllTreeState) window.dashboardPersistAllTreeState();
         }});
         window.addEventListener('resize', () => {{
             document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
