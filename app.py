@@ -7634,9 +7634,54 @@ def _render_dashboard_page_v2(
 
     def aggregate_dashboard_metrics(items):
         totals = {field: 0.0 for field in dashboard_numeric_fields}
+        fb_average_fields = {"fb_frequency", "fb_ctr"}
+        fb_derived_cost_fields = {
+            "fb_cost_per_content_view",
+            "fb_cpc",
+            "fb_cost_per_lead",
+            "fb_cost_per_paid_subscription",
+            "fb_cost_per_contact",
+            "fb_cost_per_completed_registration",
+            "fb_cost_per_purchase",
+        }
+        fb_average_totals = {field: 0.0 for field in fb_average_fields}
+        fb_average_counts = {field: 0 for field in fb_average_fields}
+
         for item in items:
             for field in dashboard_numeric_fields:
+                if field in fb_average_fields or field in fb_derived_cost_fields:
+                    continue
                 totals[field] += safe_number(item.get(field, 0))
+            for field in fb_average_fields:
+                value = safe_number(item.get(field, 0))
+                fb_average_totals[field] += value
+                fb_average_counts[field] += 1
+
+        for field in fb_average_fields:
+            count = fb_average_counts[field]
+            totals[field] = (fb_average_totals[field] / count) if count else 0.0
+
+        totals["fb_cost_per_content_view"] = (
+            totals["spend"] / totals["fb_material_views"] if totals["fb_material_views"] > 0 else 0.0
+        )
+        totals["fb_cpc"] = (
+            totals["spend"] / totals["fb_link_clicks"] if totals["fb_link_clicks"] > 0 else 0.0
+        )
+        totals["fb_cost_per_lead"] = (
+            totals["spend"] / totals["fb_leads"] if totals["fb_leads"] > 0 else 0.0
+        )
+        totals["fb_cost_per_paid_subscription"] = (
+            totals["spend"] / totals["fb_paid_subscriptions"] if totals["fb_paid_subscriptions"] > 0 else 0.0
+        )
+        totals["fb_cost_per_contact"] = (
+            totals["spend"] / totals["fb_contacts"] if totals["fb_contacts"] > 0 else 0.0
+        )
+        totals["fb_cost_per_completed_registration"] = (
+            totals["spend"] / totals["fb_completed_registrations"] if totals["fb_completed_registrations"] > 0 else 0.0
+        )
+        totals["fb_cost_per_purchase"] = (
+            totals["spend"] / totals["fb_purchases"] if totals["fb_purchases"] > 0 else 0.0
+        )
         return totals
 
     def hierarchy_bucket_sort_key(bucket_name, bucket_rows):
