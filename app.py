@@ -7755,8 +7755,16 @@ def _render_dashboard_page_v2(
         for field, label in table_headers
     )
 
-    def render_leaf_row(row, parent_id="", ancestors=None):
+    def render_lineage_label(label, level=0):
+        return (
+            f'<div class="dashboard-tree-cell dashboard-tree-level-{level}">'
+            f'<span class="dashboard-tree-label">{escape(label or "—")}</span>'
+            f'</div>'
+        )
+
+    def render_leaf_row(row, parent_id="", ancestors=None, lineage=None):
         ancestors = ancestors or []
+        lineage = lineage or {}
         row_class = "soft-green" if safe_number(row.get("profit", 0)) > 0 else ("soft-red" if safe_number(row.get("profit", 0)) < 0 else "")
         hidden_attr = ' hidden' if parent_id else ''
         row_key = "leaf|" + "|".join([
@@ -7771,12 +7779,12 @@ def _render_dashboard_page_v2(
         ])
         return f"""
         <tr class="dashboard-leaf-row {row_class}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}" data-row-key="{escape(row_key)}" onclick="window.dashboardHandleRowClick && window.dashboardHandleRowClick(this, event)"{hidden_attr}>
-            <td data-col="platform"></td>
-            <td data-col="geo"></td>
-            <td data-col="manager"></td>
-            <td data-col="campaign_name"></td>
-            <td data-col="adset_name"></td>
-            <td data-col="ad_name">{escape(row.get("ad_name") or "—")}</td>
+            <td data-col="platform">{render_lineage_label(lineage.get("platform", ""), 0) if lineage.get("platform") else ""}</td>
+            <td data-col="geo">{render_lineage_label(lineage.get("geo", ""), 1) if lineage.get("geo") else ""}</td>
+            <td data-col="manager">{render_lineage_label(lineage.get("manager", ""), 2) if lineage.get("manager") else ""}</td>
+            <td data-col="campaign_name">{render_lineage_label(lineage.get("campaign_name", ""), 3) if lineage.get("campaign_name") else ""}</td>
+            <td data-col="adset_name">{render_lineage_label(lineage.get("adset_name", ""), 4) if lineage.get("adset_name") else ""}</td>
+            <td data-col="ad_name">{render_lineage_label(row.get("ad_name") or "—", 5)}</td>
             <td data-col="buyer">{escape(row.get("buyer") or "—")}</td>
             <td data-col="offer">{escape(row.get("offer") or "—")}</td>
             <td data-col="cabinet_text">{escape(row.get("cabinet_text") or "—")}</td>
@@ -7804,19 +7812,21 @@ def _render_dashboard_page_v2(
         </tr>
         """
 
-    def render_tree_rows(nodes, parent_id="", ancestors=None, level=0, variant="caret"):
+    def render_tree_rows(nodes, parent_id="", ancestors=None, level=0, variant="caret", lineage=None):
         ancestors = ancestors or []
+        lineage = lineage or {}
         html = ""
         for node in nodes:
             hidden_attr = ' hidden' if parent_id else ''
             current_ancestors = [*ancestors, node["id"]]
+            current_lineage = {**lineage, node["column"]: node["label"]}
             html += f"""
             <tr class="dashboard-tree-row dashboard-tree-row-level-{level}" data-node-id="{escape(node["id"])}" data-row-key="{escape(node["id"])}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}" onclick="window.dashboardHandleRowClick && window.dashboardHandleRowClick(this, event)"{hidden_attr}>
-                <td data-col="platform">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "platform" else ""}</td>
-                <td data-col="geo">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "geo" else ""}</td>
-                <td data-col="manager">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "manager" else ""}</td>
-                <td data-col="campaign_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "campaign_name" else ""}</td>
-                <td data-col="adset_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "adset_name" else ""}</td>
+                <td data-col="platform">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "platform" else (render_lineage_label(lineage.get("platform", ""), 0) if lineage.get("platform") else "")}</td>
+                <td data-col="geo">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "geo" else (render_lineage_label(lineage.get("geo", ""), 1) if lineage.get("geo") else "")}</td>
+                <td data-col="manager">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "manager" else (render_lineage_label(lineage.get("manager", ""), 2) if lineage.get("manager") else "")}</td>
+                <td data-col="campaign_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "campaign_name" else (render_lineage_label(lineage.get("campaign_name", ""), 3) if lineage.get("campaign_name") else "")}</td>
+                <td data-col="adset_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "adset_name" else (render_lineage_label(lineage.get("adset_name", ""), 4) if lineage.get("adset_name") else "")}</td>
                 <td data-col="ad_name"></td>
                 <td class="dashboard-tree-summary-cell" data-col="buyer"></td>
                 <td class="dashboard-tree-summary-cell" data-col="offer"></td>
@@ -7827,10 +7837,10 @@ def _render_dashboard_page_v2(
             </tr>
             """
             if node["children"]:
-                html += render_tree_rows(node["children"], parent_id=node["id"], ancestors=current_ancestors, level=level + 1, variant=variant)
+                html += render_tree_rows(node["children"], parent_id=node["id"], ancestors=current_ancestors, level=level + 1, variant=variant, lineage=current_lineage)
             else:
                 for leaf_row in _dashboard_sort_rows(node["rows"], sort_by=sort_by, order=order):
-                    html += render_leaf_row(leaf_row, parent_id=node["id"], ancestors=current_ancestors)
+                    html += render_leaf_row(leaf_row, parent_id=node["id"], ancestors=current_ancestors, lineage=current_lineage)
         return html
 
     rows_html = render_tree_rows(tree, variant="caret")
