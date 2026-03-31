@@ -8797,14 +8797,40 @@ def _render_dashboard_page_v2(
     <div class="panel compact-panel dashboard-table-panel">
         <div class="dashboard-table-header">
             <div class="dashboard-table-title">
-                <div class="panel-title">CRM Analytics</div>
-                <div class="panel-subtitle">Power BI style matrix drill-down across Brand, GEO, Cabinet, Campaign, Adset and Ad.</div>
+                <div class="panel-title">CRM Analytics Matrix</div>
+                <div class="panel-subtitle">Power BI style analytical drill-down across Brand, GEO, Cabinet, Campaign, Adset and Ad.</div>
             </div>
         </div>
         <div class="dashboard-matrix-wrap">
             <div class="dashboard-matrix-path" id="dashboardMatrixPath"></div>
             <div class="dashboard-matrix-board" id="dashboardMatrixBoard"></div>
             <div class="dashboard-matrix-detail" id="dashboardMatrixDetail"></div>
+        </div>
+    </div>
+
+    <div class="panel compact-panel dashboard-table-panel">
+        <div class="dashboard-table-header">
+            <div class="dashboard-table-title">
+                <div class="panel-title">CRM Analytics Table</div>
+            </div>
+            <details class="upload-menu upload-menu-right" id="dashboardColumnsMenu">
+                <summary class="ghost-btn small-btn">Columns</summary>
+                <div class="upload-menu-list" style="width:min(560px, calc(100vw - 48px));">
+                    <div class="panel-subtitle">Choose which columns to keep visible in Dashboard.</div>
+                    <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
+                        <button type="button" class="ghost-btn small-btn" id="dashboardShowAllColumns">Show all</button>
+                    </div>
+                    <div style="display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px; margin-top:12px;">
+                        {column_chips}
+                    </div>
+                </div>
+            </details>
+        </div>
+        <div class="dashboard-table-wrap">
+            <table id="dashboardUnifiedTable" data-dashboard-tree-table>
+                <thead><tr>{head_html}</tr></thead>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="31">No dashboard rows for the selected filters</td></tr>'}</tbody>
+            </table>
         </div>
     </div>
     </div>
@@ -9357,7 +9383,7 @@ def _render_dashboard_page_v2(
     (() => {{
         const treeData = {matrix_tree_json};
         const metricFields = {matrix_metric_fields_json};
-        const storageKey = window.teambeadStorageKey('dashboard-ui-state');
+        const stateKey = window.teambeadStorageKey('dashboard-matrix-state');
         const pathEl = document.getElementById('dashboardMatrixPath');
         const boardEl = document.getElementById('dashboardMatrixBoard');
         const detailEl = document.getElementById('dashboardMatrixDetail');
@@ -9374,169 +9400,176 @@ def _render_dashboard_page_v2(
 
         const readState = () => {{
             try {{
-                const parsed = JSON.parse(localStorage.getItem(storageKey) || '{{}}');
+                const parsed = JSON.parse(localStorage.getItem(stateKey) || '{{}}');
                 return parsed && typeof parsed === 'object' ? parsed : {{}};
             }} catch (_error) {{
                 return {{}};
             }}
         }};
+
         const writeState = (state) => {{
             try {{
-                localStorage.setItem(storageKey, JSON.stringify(state || {{}}));
+                localStorage.setItem(stateKey, JSON.stringify(state || {{}}));
             }} catch (_error) {{}}
-        }};
-
-        const getNodeById = (nodes, id) => {{
-            for (const node of nodes || []) {{
-                if (node.id === id) return node;
-                const nested = getNodeById(node.children || [], id);
-                if (nested) return nested;
-            }}
-            return null;
-        }};
-
-        const getItemsForLevel = (path, levelIndex) => {{
-            if (levelIndex === 0) return treeData;
-            let branch = treeData;
-            for (let i = 0; i < levelIndex; i += 1) {{
-                const selectedId = path[i];
-                const selectedNode = (branch || []).find((item) => item.id === selectedId);
-                if (!selectedNode) return [];
-                if (i === levelIndex - 1) return selectedNode.children || [];
-                branch = selectedNode.children || [];
-            }}
-            return [];
-        }};
-
-        const getCurrentBranch = (path) => {{
-            let current = null;
-            let branch = treeData;
-            for (const selectedId of path) {{
-                const next = (branch || []).find((item) => item.id === selectedId);
-                if (!next) break;
-                current = next;
-                branch = next.children || [];
-            }}
-            return current;
         }};
 
         const savePath = (path) => {{
             const state = readState();
-            state.matrixPath = path;
+            state.path = Array.isArray(path) ? path : [];
             writeState(state);
         }};
 
-        const renderPath = (path) => {{
-            const labels = [];
+        const loadPath = () => {{
+            const state = readState();
+            return Array.isArray(state.path) ? state.path.filter(Boolean).slice(0, 6) : [];
+        }};
+
+        const findNodeByPath = (path) => {{
             let branch = treeData;
-            path.forEach((selectedId) => {{
-                const node = (branch || []).find((item) => item.id === selectedId);
+            let current = null;
+            for (const id of path) {{
+                current = (branch || []).find((item) => item.id === id) || null;
+                if (!current) break;
+                branch = current.children || [];
+            }}
+            return current;
+        }};
+
+        const getBranchItems = (path, levelIndex) => {{
+            if (levelIndex === 0) return treeData;
+            let branch = treeData;
+            for (let i = 0; i < levelIndex; i += 1) {{
+                const currentId = path[i];
+                const currentNode = (branch || []).find((item) => item.id === currentId);
+                if (!currentNode) return [];
+                if (i === levelIndex - 1) return currentNode.children || [];
+                branch = currentNode.children || [];
+            }}
+            return [];
+        }};
+
+        const clearNode = (node) => {{
+            while (node.firstChild) node.removeChild(node.firstChild);
+        }};
+
+        const make = (tag, className, text) => {{
+            const node = document.createElement(tag);
+            if (className) node.className = className;
+            if (typeof text === 'string') node.textContent = text;
+            return node;
+        }};
+
+        const renderPath = (path) => {{
+            clearNode(pathEl);
+            if (!path.length) {{
+                pathEl.appendChild(make('span', 'dashboard-matrix-path-chip', 'Choose Brand to start drill-down'));
+                return;
+            }}
+            let branch = treeData;
+            path.forEach((id) => {{
+                const node = (branch || []).find((item) => item.id === id);
                 if (!node) return;
-                labels.push(node.label);
+                pathEl.appendChild(make('span', 'dashboard-matrix-path-chip', node.label));
                 branch = node.children || [];
             }});
-            pathEl.innerHTML = labels.length
-                ? labels.map((label) => `<span class="dashboard-matrix-path-chip">${{label}}</span>`).join('')
-                : '<span class="dashboard-matrix-path-chip">Choose Brand to start drill-down</span>';
+        }};
+
+        const renderMetrics = (container, metrics) => {{
+            const metricsWrap = make('div', 'dashboard-matrix-metrics');
+            metricFields.forEach(([field, label]) => {{
+                const metric = make('div', 'dashboard-matrix-metric');
+                metric.appendChild(make('div', 'dashboard-matrix-metric-label', label));
+                metric.appendChild(make('div', 'dashboard-matrix-metric-value', (metrics && metrics[field]) ? String(metrics[field]) : '—'));
+                metricsWrap.appendChild(metric);
+            }});
+            container.appendChild(metricsWrap);
+        }};
+
+        const renderAdsTable = (container, ads) => {{
+            const adsWrap = make('div', 'dashboard-matrix-ads');
+            adsWrap.appendChild(make('div', 'dashboard-matrix-ads-title', 'Ads inside selected branch'));
+            const table = make('table', 'dashboard-matrix-ads-table');
+            const thead = document.createElement('thead');
+            const headRow = document.createElement('tr');
+            ['Ad', 'Account', 'Buyer', 'Offer', 'Spend', 'Clicks', 'Leads', 'Reg'].forEach((label) => {{
+                headRow.appendChild(make('th', '', label));
+            }});
+            thead.appendChild(headRow);
+            table.appendChild(thead);
+            const tbody = document.createElement('tbody');
+            (ads || []).forEach((ad) => {{
+                const row = document.createElement('tr');
+                [
+                    ad.label,
+                    ad.account_id,
+                    ad.buyer,
+                    ad.offer,
+                    ad.metrics?.spend || '—',
+                    ad.metrics?.clicks || '—',
+                    ad.metrics?.leads || '—',
+                    ad.metrics?.reg || '—',
+                ].forEach((value) => row.appendChild(make('td', '', String(value || '—'))));
+                tbody.appendChild(row);
+            }});
+            table.appendChild(tbody);
+            adsWrap.appendChild(table);
+            container.appendChild(adsWrap);
         }};
 
         const renderDetail = (path) => {{
-            const current = getCurrentBranch(path);
-            if (!current) {{
-                detailEl.innerHTML = `
-                    <div class="dashboard-matrix-detail-head">
-                        <div class="dashboard-matrix-detail-title">No selection</div>
-                        <div class="dashboard-matrix-detail-subtitle">Choose Brand, then keep drilling right.</div>
-                    </div>
-                `;
+            clearNode(detailEl);
+            const currentNode = findNodeByPath(path);
+            const head = make('div', 'dashboard-matrix-detail-head');
+            if (!currentNode) {{
+                head.appendChild(make('div', 'dashboard-matrix-detail-title', 'No selection'));
+                head.appendChild(make('div', 'dashboard-matrix-detail-subtitle', 'Choose Brand, then keep drilling to the right.'));
+                detailEl.appendChild(head);
                 return;
             }}
-            const ads = current.ads || [];
-            const adsTable = ads.length ? `
-                <div class="dashboard-matrix-ads">
-                    <div class="dashboard-matrix-ads-title">Ads inside selected branch</div>
-                    <table class="dashboard-matrix-ads-table">
-                        <thead>
-                            <tr>
-                                <th>Ad</th>
-                                <th>Account</th>
-                                <th>Spend</th>
-                                <th>Clicks</th>
-                                <th>Leads</th>
-                                <th>Reg</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${{ads.map((ad) => `
-                                <tr>
-                                    <td>${{ad.label}}</td>
-                                    <td>${{ad.account_id}}</td>
-                                    <td>${{ad.metrics.spend}}</td>
-                                    <td>${{ad.metrics.clicks}}</td>
-                                    <td>${{ad.metrics.leads}}</td>
-                                    <td>${{ad.metrics.reg}}</td>
-                                </tr>
-                            `).join('')}}
-                        </tbody>
-                    </table>
-                </div>
-            ` : '';
-            detailEl.innerHTML = `
-                <div class="dashboard-matrix-detail-head">
-                    <div class="dashboard-matrix-detail-title">${{current.label}}</div>
-                    <div class="dashboard-matrix-detail-subtitle">${{columns.find((col) => col.key === current.column)?.label || 'Level'}} metrics</div>
-                </div>
-                <div class="dashboard-matrix-metrics">
-                    ${{metricFields.map(([field, label]) => `
-                        <div class="dashboard-matrix-metric">
-                            <div class="dashboard-matrix-metric-label">${{label}}</div>
-                            <div class="dashboard-matrix-metric-value">${{current.metrics[field] || '—'}}</div>
-                        </div>
-                    `).join('')}}
-                </div>
-                ${{adsTable}}
-            `;
+
+            head.appendChild(make('div', 'dashboard-matrix-detail-title', currentNode.label));
+            const currentColumn = columns.find((item) => item.key === currentNode.column);
+            head.appendChild(make('div', 'dashboard-matrix-detail-subtitle', ((currentColumn && currentColumn.label) || 'Level') + ' metrics'));
+            detailEl.appendChild(head);
+            renderMetrics(detailEl, currentNode.metrics);
+            if (Array.isArray(currentNode.ads) && currentNode.ads.length) {{
+                renderAdsTable(detailEl, currentNode.ads);
+            }}
         }};
 
         const renderBoard = (path) => {{
-            boardEl.innerHTML = columns.map((column, index) => {{
-                const items = column.key === 'ad_name'
-                    ? (getCurrentBranch(path)?.ads || []).map((ad) => ({{
-                        id: ad.id,
-                        label: ad.label,
-                        metrics: ad.metrics,
-                        isLeafAd: true,
-                    }}))
-                    : getItemsForLevel(path, index);
-                const selectedId = path[index] || '';
-                return `
-                    <div class="dashboard-matrix-column">
-                        <div class="dashboard-matrix-column-head">${{column.label}}</div>
-                        <div class="dashboard-matrix-column-body">
-                            ${{items.length ? items.map((item) => `
-                                <button
-                                    type="button"
-                                    class="dashboard-matrix-item ${{selectedId === item.id ? 'is-active' : ''}}"
-                                    data-matrix-level="${{index}}"
-                                    data-matrix-id="${{item.id}}">
-                                    <div class="dashboard-matrix-item-label">${{item.label}}</div>
-                                    <div class="dashboard-matrix-item-sub">
-                                        <span>${{item.metrics?.spend || '—'}} spend</span>
-                                        <span>${{item.metrics?.leads || '—'}} leads</span>
-                                        <span>${{item.metrics?.clicks || '—'}} clicks</span>
-                                    </div>
-                                </button>
-                            `).join('') : '<div class="dashboard-matrix-empty">No items on this level yet</div>'}}
-                        </div>
-                    </div>
-                `;
-            }}).join('');
-        }};
-
-        const hydratePath = () => {{
-            const state = readState();
-            const path = Array.isArray(state.matrixPath) ? state.matrixPath.slice(0, 6) : [];
-            return path.filter(Boolean);
+            clearNode(boardEl);
+            columns.forEach((column, levelIndex) => {{
+                const colEl = make('div', 'dashboard-matrix-column');
+                colEl.appendChild(make('div', 'dashboard-matrix-column-head', column.label));
+                const bodyEl = make('div', 'dashboard-matrix-column-body');
+                let items = [];
+                if (column.key === 'ad_name') {{
+                    const currentNode = findNodeByPath(path);
+                    items = currentNode && Array.isArray(currentNode.ads) ? currentNode.ads : [];
+                }} else {{
+                    items = getBranchItems(path, levelIndex);
+                }}
+                if (!items.length) {{
+                    bodyEl.appendChild(make('div', 'dashboard-matrix-empty', 'No items on this level yet'));
+                }} else {{
+                    items.forEach((item) => {{
+                        const button = make('button', 'dashboard-matrix-item' + ((path[levelIndex] || '') === item.id ? ' is-active' : ''));
+                        button.type = 'button';
+                        button.dataset.matrixLevel = String(levelIndex);
+                        button.dataset.matrixId = item.id;
+                        button.appendChild(make('div', 'dashboard-matrix-item-label', item.label));
+                        const sub = make('div', 'dashboard-matrix-item-sub');
+                        sub.appendChild(make('span', '', String((item.metrics && item.metrics.spend) || '—') + ' spend'));
+                        sub.appendChild(make('span', '', String((item.metrics && item.metrics.leads) || '—') + ' leads'));
+                        sub.appendChild(make('span', '', String((item.metrics && item.metrics.clicks) || '—') + ' clicks'));
+                        button.appendChild(sub);
+                        bodyEl.appendChild(button);
+                    }});
+                }}
+                colEl.appendChild(bodyEl);
+                boardEl.appendChild(colEl);
+            }});
         }};
 
         const rerender = (path) => {{
@@ -9551,12 +9584,12 @@ def _render_dashboard_page_v2(
             if (!button) return;
             const level = Number(button.dataset.matrixLevel || '0');
             const id = button.dataset.matrixId || '';
-            const nextPath = hydratePath().slice(0, level);
-            nextPath[level] = id;
+            const nextPath = loadPath().slice(0, level);
+            if (id) nextPath[level] = id;
             rerender(nextPath);
         }});
 
-        rerender(hydratePath());
+        rerender(loadPath());
     }})();
     </script>
     """
