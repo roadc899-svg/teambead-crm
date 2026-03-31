@@ -8310,9 +8310,9 @@ def _render_dashboard_page_v2(
     .dashboard-v2 table[data-dashboard-tree-table] td[data-col="advertiser_text"],
     .dashboard-v2 table[data-dashboard-tree-table] th[data-col="account_id"],
     .dashboard-v2 table[data-dashboard-tree-table] td[data-col="account_id"] {{
-        width:auto;
-        min-width:0;
-        max-width:none;
+        width:auto !important;
+        min-width:0 !important;
+        max-width:none !important;
     }}
     @media (max-width: 1500px) {{
         .dashboard-v2 .dashboard-filter-grid {{
@@ -8467,6 +8467,9 @@ def _render_dashboard_page_v2(
         const periodSelect = document.getElementById("dashboardPeriodSelect");
         if (!periodSelect) return;
         const form = periodSelect.closest('form');
+        const persistDashboardUiState = () => {{
+            if (window.dashboardPersistAllTreeState) window.dashboardPersistAllTreeState();
+        }};
         document.querySelectorAll('.period-jump-btn').forEach((button) => {{
             button.addEventListener('click', () => {{
                 const direction = Number(button.dataset.periodJump || '0');
@@ -8476,7 +8479,10 @@ def _render_dashboard_page_v2(
                 const targetIndex = currentIndex + direction;
                 if (targetIndex < 0 || targetIndex >= options.length) return;
                 periodSelect.value = options[targetIndex].value;
-                if (form) form.requestSubmit();
+                if (form) {{
+                    persistDashboardUiState();
+                    form.requestSubmit();
+                }}
             }});
         }});
 
@@ -8484,8 +8490,6 @@ def _render_dashboard_page_v2(
             if (!button) return false;
             const table = button.closest('[data-dashboard-tree-table]');
             if (!table) return false;
-            const tableId = table.id || 'dashboard-tree-table';
-            const expandedKey = window.teambeadStorageKey(`dashboard-expanded:${{tableId}}`);
             const nodeId = button.dataset.target || '';
             if (!nodeId) return false;
             const treeRows = Array.from(table.querySelectorAll('tbody tr'));
@@ -8519,7 +8523,12 @@ def _render_dashboard_page_v2(
                 .filter((item) => item.getAttribute('aria-expanded') === 'true')
                 .map((item) => item.dataset.target || '')
                 .filter(Boolean);
-            localStorage.setItem(expandedKey, JSON.stringify(openNodes));
+            if (window.dashboardWriteState) {{
+                const state = window.dashboardReadState();
+                state.expanded = state.expanded || {{}};
+                state.expanded[table.id || 'dashboard-tree-table'] = openNodes;
+                window.dashboardWriteState(state);
+            }}
             if (window.dashboardTreeAutoSize) window.dashboardTreeAutoSize(table);
             return false;
         }};
@@ -8537,57 +8546,46 @@ def _render_dashboard_page_v2(
                     cell.style.minWidth = '';
                     cell.style.maxWidth = '';
                 }});
-                const cells = allCells.filter((cell) => {{
-                    if (cell.hidden) return false;
-                    if (cell.style.display === 'none') return false;
-                    const row = cell.closest('tr');
-                    return !row || !row.hidden;
-                }});
-                let maxWidth = 0;
-                cells.forEach((cell) => {{
-                    const content = cell.querySelector('.dashboard-tree-toggle, .dashboard-tree-cell, .dashboard-tree-label') || cell;
-                    const width = Math.ceil(content.scrollWidth + 14);
-                    maxWidth = Math.max(maxWidth, width);
-                }});
-                const targetWidth = maxWidth ? `${{maxWidth}}px` : '';
-                allCells.forEach((cell) => {{
-                    cell.style.width = targetWidth;
-                    cell.style.minWidth = targetWidth;
-                    cell.style.maxWidth = targetWidth || 'none';
-                }});
             }});
+            table.style.tableLayout = 'auto';
         }};
 
+        const dashboardStateKey = window.teambeadStorageKey('dashboard-ui-state');
+        window.dashboardReadState = () => {{
+            try {{
+                const parsed = JSON.parse(localStorage.getItem(dashboardStateKey) || '{{}}');
+                return parsed && typeof parsed === 'object' ? parsed : {{}};
+            }} catch (_error) {{
+                return {{}};
+            }}
+        }};
+        window.dashboardWriteState = (state) => {{
+            try {{
+                localStorage.setItem(dashboardStateKey, JSON.stringify(state || {{}}));
+            }} catch (_error) {{}}
+        }};
         window.dashboardPersistAllTreeState = () => {{
+            const state = window.dashboardReadState();
+            state.expanded = state.expanded || {{}};
             document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
-                const tableId = table.id || 'dashboard-tree-table';
-                const expandedKey = window.teambeadStorageKey(`dashboard-expanded:${{tableId}}`);
                 const openNodes = Array.from(table.querySelectorAll('.dashboard-tree-toggle'))
                     .filter((button) => button.getAttribute('aria-expanded') === 'true')
                     .map((button) => button.dataset.target || '')
                     .filter(Boolean);
-                localStorage.setItem(expandedKey, JSON.stringify(openNodes));
+                state.expanded[table.id || 'dashboard-tree-table'] = openNodes;
             }});
+            window.dashboardWriteState(state);
         }};
 
         document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
-            const tableId = table.id || 'dashboard-tree-table';
-            const expandedKey = window.teambeadStorageKey(`dashboard-expanded:${{tableId}}`);
             const getTreeButtons = () => Array.from(table.querySelectorAll('.dashboard-tree-toggle'));
             const getTreeRows = () => Array.from(table.querySelectorAll('tbody tr'));
             const getButtonMap = () => new Map(getTreeButtons().map((button) => [button.dataset.target || '', button]));
             const readExpandedNodes = () => {{
-                try {{
-                    const parsed = JSON.parse(localStorage.getItem(expandedKey) || '[]');
-                    return Array.isArray(parsed) ? parsed : [];
-                }} catch (_error) {{
-                    return [];
-                }}
-            }};
-            const writeExpandedNodes = (items) => {{
-                try {{
-                    localStorage.setItem(expandedKey, JSON.stringify(items));
-                }} catch (_error) {{}}
+                const state = window.dashboardReadState();
+                const expanded = state.expanded || {{}};
+                const value = expanded[table.id || 'dashboard-tree-table'];
+                return Array.isArray(value) ? value : [];
             }};
             const hideDescendants = (nodeId) => {{
                 getTreeRows().forEach((row) => {{
@@ -8605,7 +8603,10 @@ def _render_dashboard_page_v2(
                     .filter((button) => button.getAttribute('aria-expanded') === 'true')
                     .map((button) => button.dataset.target || '')
                     .filter(Boolean);
-                writeExpandedNodes(openNodes);
+                const state = window.dashboardReadState();
+                state.expanded = state.expanded || {{}};
+                state.expanded[table.id || 'dashboard-tree-table'] = openNodes;
+                window.dashboardWriteState(state);
             }};
             const showDirectChildren = (nodeId) => {{
                 getTreeRows().forEach((row) => {{
@@ -8625,29 +8626,34 @@ def _render_dashboard_page_v2(
                 button.setAttribute('aria-expanded', 'false');
                 hideDescendants(nodeId);
             }};
-            readExpandedNodes().forEach((nodeId) => {{
-                const button = getButtonMap().get(nodeId);
-                if (!button) return;
-                const parentRow = button.closest('tr');
-                const ancestors = (parentRow?.dataset.ancestors || '').split(',').filter(Boolean);
-                ancestors.forEach((ancestorId) => {{
-                    const ancestorButton = getButtonMap().get(ancestorId);
-                    if (ancestorButton) expandNode(ancestorButton);
+            requestAnimationFrame(() => {{
+                readExpandedNodes().forEach((nodeId) => {{
+                    const button = getButtonMap().get(nodeId);
+                    if (!button) return;
+                    const parentRow = button.closest('tr');
+                    const ancestors = (parentRow?.dataset.ancestors || '').split(',').filter(Boolean);
+                    ancestors.forEach((ancestorId) => {{
+                        const ancestorButton = getButtonMap().get(ancestorId);
+                        if (ancestorButton) expandNode(ancestorButton);
+                    }});
+                    expandNode(button);
                 }});
-                expandNode(button);
+                window.dashboardTreeAutoSize(table);
             }});
-            window.dashboardTreeAutoSize(table);
         }});
         document.querySelectorAll('.dashboard-sort-link').forEach((link) => {{
             link.addEventListener('click', () => {{
-                if (window.dashboardPersistAllTreeState) window.dashboardPersistAllTreeState();
+                persistDashboardUiState();
             }});
         }});
+        form?.addEventListener('submit', () => {{
+            persistDashboardUiState();
+        }});
         window.addEventListener('pagehide', () => {{
-            if (window.dashboardPersistAllTreeState) window.dashboardPersistAllTreeState();
+            persistDashboardUiState();
         }});
         window.addEventListener('beforeunload', () => {{
-            if (window.dashboardPersistAllTreeState) window.dashboardPersistAllTreeState();
+            persistDashboardUiState();
         }});
         window.addEventListener('resize', () => {{
             document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
@@ -8660,7 +8666,8 @@ def _render_dashboard_page_v2(
         const applyColumns = () => {{
             let hidden = [];
             try {{
-                hidden = JSON.parse(localStorage.getItem(hiddenKey) || '[]');
+                const state = window.dashboardReadState();
+                hidden = Array.isArray(state.hiddenColumns) ? state.hiddenColumns : JSON.parse(localStorage.getItem(hiddenKey) || '[]');
             }} catch (_error) {{
                 hidden = [];
             }}
@@ -8676,6 +8683,9 @@ def _render_dashboard_page_v2(
         }};
         const saveColumns = () => {{
             const hidden = toggles.filter((toggle) => !toggle.checked).map((toggle) => toggle.value);
+            const state = window.dashboardReadState();
+            state.hiddenColumns = hidden;
+            window.dashboardWriteState(state);
             localStorage.setItem(hiddenKey, JSON.stringify(hidden));
             applyColumns();
         }};
