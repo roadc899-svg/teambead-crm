@@ -7513,6 +7513,7 @@ def _render_dashboard_page_v2(
     has_players = safe_text(request.query_params.get("has_players"))
     sort_by = safe_text(request.query_params.get("sort_by") or "spend")
     order = safe_text(request.query_params.get("order") or "desc")
+    dashboard_state_param = safe_text(request.query_params.get("dashboard_state"))
 
     base_rows = build_dashboard_rows_v2(user, buyer=buyer, period_label=effective_period_label)
     buyer_values = [value for value, _label in get_fb_buyer_name_options()] or sorted({safe_text(row.get("buyer")) for row in base_rows if safe_text(row.get("buyer"))})
@@ -7596,6 +7597,7 @@ def _render_dashboard_page_v2(
         "period_label": effective_period_label,
         "sort_by": sort_by,
         "order": order,
+        "dashboard_state": dashboard_state_param,
     }
 
     dashboard_numeric_fields = [
@@ -7756,7 +7758,7 @@ def _render_dashboard_page_v2(
             safe_text(row.get("account_id")).strip() or "—",
         ])
         return f"""
-        <tr class="dashboard-leaf-row {row_class}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}" data-row-key="{escape(row_key)}"{hidden_attr}>
+        <tr class="dashboard-leaf-row {row_class}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}" data-row-key="{escape(row_key)}" onclick="window.dashboardHandleRowClick && window.dashboardHandleRowClick(this, event)"{hidden_attr}>
             <td data-col="platform"></td>
             <td data-col="geo"></td>
             <td data-col="manager"></td>
@@ -7797,7 +7799,7 @@ def _render_dashboard_page_v2(
             hidden_attr = ' hidden' if parent_id else ''
             current_ancestors = [*ancestors, node["id"]]
             html += f"""
-            <tr class="dashboard-tree-row dashboard-tree-row-level-{level}" data-node-id="{escape(node["id"])}" data-row-key="{escape(node["id"])}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}"{hidden_attr}>
+            <tr class="dashboard-tree-row dashboard-tree-row-level-{level}" data-node-id="{escape(node["id"])}" data-row-key="{escape(node["id"])}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}" onclick="window.dashboardHandleRowClick && window.dashboardHandleRowClick(this, event)"{hidden_attr}>
                 <td data-col="platform">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "platform" else ""}</td>
                 <td data-col="geo">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "geo" else ""}</td>
                 <td data-col="manager">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "manager" else ""}</td>
@@ -8505,9 +8507,10 @@ def _render_dashboard_page_v2(
             </label>
             <input type="hidden" name="sort_by" value="{escape(sort_by)}">
             <input type="hidden" name="order" value="{escape(order)}">
+            <input type="hidden" name="dashboard_state" id="dashboardStateInput" value="{escape(dashboard_state_param)}">
             <div class="dashboard-filter-actions" style="grid-column:span 2;">
                 <button type="submit" class="btn small-btn">Filter</button>
-                <a href="/dashboard?period_view=period&period_label={quote_plus(effective_period_label)}" class="ghost-btn small-btn" data-reset-filters="dashboard-v2">Reset</a>
+                <a href="/dashboard?period_view=period&period_label={quote_plus(effective_period_label)}&dashboard_state={quote_plus(dashboard_state_param)}" class="ghost-btn small-btn" data-reset-filters="dashboard-v2">Reset</a>
             </div>
         </form>
     </div>
@@ -8545,8 +8548,36 @@ def _render_dashboard_page_v2(
         const periodSelect = document.getElementById("dashboardPeriodSelect");
         if (!periodSelect) return;
         const form = periodSelect.closest('form');
+        const dashboardStateInput = document.getElementById('dashboardStateInput');
+        const initialDashboardStateParam = {json.dumps(dashboard_state_param)};
+        const applyDashboardStateToLinks = (serializedState) => {{
+            const value = serializedState || '';
+            document.querySelectorAll('.dashboard-sort-link, [data-reset-filters="dashboard-v2"]').forEach((link) => {{
+                try {{
+                    const url = new URL(link.href, window.location.origin);
+                    if (value) url.searchParams.set('dashboard_state', value);
+                    else url.searchParams.delete('dashboard_state');
+                    link.href = url.pathname + url.search;
+                }} catch (_error) {{}}
+            }});
+            if (dashboardStateInput) dashboardStateInput.value = value;
+        }};
+        const syncDashboardStateParam = () => {{
+            try {{
+                const rawState = localStorage.getItem(window.teambeadStorageKey('dashboard-ui-state')) || '';
+                applyDashboardStateToLinks(rawState);
+            }} catch (_error) {{
+                applyDashboardStateToLinks('');
+            }}
+        }};
+        if (initialDashboardStateParam) {{
+            try {{
+                localStorage.setItem(window.teambeadStorageKey('dashboard-ui-state'), initialDashboardStateParam);
+            }} catch (_error) {{}}
+        }}
         const persistDashboardUiState = () => {{
             if (window.dashboardPersistAllTreeState) window.dashboardPersistAllTreeState();
+            syncDashboardStateParam();
         }};
         document.querySelectorAll('.period-jump-btn').forEach((button) => {{
             button.addEventListener('click', () => {{
@@ -8583,8 +8614,20 @@ def _render_dashboard_page_v2(
                     row.hidden = true;
                     if (row.dataset.nodeId) {{
                         const nestedButton = row.querySelector('.dashboard-tree-toggle');
-                        if (nestedButton) nestedButton.setAttribute('aria-expanded', 'false');
+                    if (nestedButton) nestedButton.setAttribute('aria-expanded', 'false');
                     }}
+                }});
+            }};
+            const collapseSiblingBranches = (currentNodeId) => {{
+                const currentRow = table.querySelector(`tbody tr[data-node-id="${{CSS.escape(currentNodeId)}}"]`);
+                const parentId = currentRow?.dataset.parentId || '';
+                treeRows.forEach((row) => {{
+                    if ((row.dataset.parentId || '') !== parentId) return;
+                    const siblingNodeId = row.dataset.nodeId || '';
+                    if (!siblingNodeId || siblingNodeId === currentNodeId) return;
+                    const siblingButton = row.querySelector('.dashboard-tree-toggle');
+                    if (siblingButton) siblingButton.setAttribute('aria-expanded', 'false');
+                    hideDescendants(siblingNodeId);
                 }});
             }};
             const showDirectChildren = (currentNodeId) => {{
@@ -8598,6 +8641,7 @@ def _render_dashboard_page_v2(
                 button.setAttribute('aria-expanded', 'false');
                 hideDescendants(nodeId);
             }} else {{
+                collapseSiblingBranches(nodeId);
                 button.setAttribute('aria-expanded', 'true');
                 showDirectChildren(nodeId);
             }}
@@ -8681,6 +8725,7 @@ def _render_dashboard_page_v2(
             try {{
                 localStorage.setItem(dashboardStateKey, JSON.stringify(state || {{}}));
             }} catch (_error) {{}}
+            syncDashboardStateParam();
         }};
         window.dashboardPersistAllTreeState = () => {{
             const state = window.dashboardReadState();
@@ -8726,24 +8771,35 @@ def _render_dashboard_page_v2(
             if (!row) return;
             const table = row.closest('[data-dashboard-tree-table]');
             if (!table) return;
-            const wasSelected = row.classList.contains('dashboard-row-selected');
             const rowKey = row.dataset.rowKey || '';
             const ancestors = (row.dataset.ancestors || '').split(',').filter(Boolean);
             const selectionPath = rowKey ? [...ancestors, rowKey] : [...ancestors];
-            Array.from(table.querySelectorAll('tbody tr.dashboard-row-selected')).forEach((selectedRow) => {{
-                selectedRow.classList.remove('dashboard-row-selected');
+            const selectedKeys = new Set(
+                Array.from(table.querySelectorAll('tbody tr.dashboard-row-selected[data-row-key]'))
+                    .map((selectedRow) => selectedRow.dataset.rowKey || '')
+                    .filter(Boolean)
+            );
+            const shouldSelect = forceSelect || !selectionPath.every((key) => selectedKeys.has(key));
+            selectionPath.forEach((key) => {{
+                if (!key) return;
+                if (shouldSelect) selectedKeys.add(key);
+                else selectedKeys.delete(key);
             }});
-            if (!wasSelected || forceSelect) {{
-                Array.from(table.querySelectorAll('tbody tr[data-row-key]')).forEach((candidateRow) => {{
-                    const candidateKey = candidateRow.dataset.rowKey || '';
-                    candidateRow.classList.toggle('dashboard-row-selected', selectionPath.includes(candidateKey));
-                }});
-            }}
+            Array.from(table.querySelectorAll('tbody tr[data-row-key]')).forEach((candidateRow) => {{
+                const candidateKey = candidateRow.dataset.rowKey || '';
+                candidateRow.classList.toggle('dashboard-row-selected', selectedKeys.has(candidateKey));
+            }});
             table.classList.toggle(
                 'dashboard-has-row-selection',
                 Array.from(table.querySelectorAll('tbody tr.dashboard-row-selected')).length > 0
             );
             window.dashboardPersistSelectedRows(table);
+        }};
+        window.dashboardHandleRowClick = (row, event) => {{
+            if (!row) return false;
+            if (event?.target?.closest('.dashboard-tree-toggle, a, input, select, label, summary, button')) return false;
+            if (window.dashboardToggleRowSelection) window.dashboardToggleRowSelection(row);
+            return false;
         }};
         window.dashboardApplySelectedColumns = (table) => {{
             if (!table) return;
@@ -8901,6 +8957,7 @@ def _render_dashboard_page_v2(
             }}, 180);
         }};
         scheduleDashboardUiRestore();
+        syncDashboardStateParam();
         document.querySelectorAll('.dashboard-sort-link').forEach((link) => {{
             link.addEventListener('click', () => {{
                 persistDashboardUiState();
@@ -8986,13 +9043,6 @@ def _render_dashboard_page_v2(
         }}
         applyColumns();
         document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
-            table.addEventListener('click', (event) => {{
-                if (event.target.closest('.dashboard-tree-toggle')) return;
-                if (event.target.closest('a, input, select, label, summary, button')) return;
-                const row = event.target.closest('tbody tr[data-row-key]');
-                if (!row || !table.contains(row)) return;
-                if (window.dashboardToggleRowSelection) window.dashboardToggleRowSelection(row);
-            }});
             table.addEventListener('dblclick', (event) => {{
                 if (event.target.closest('a, input, select, label, summary')) return;
                 const cell = event.target.closest('[data-col]');
