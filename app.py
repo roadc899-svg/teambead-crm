@@ -7726,41 +7726,41 @@ def _render_dashboard_page_v2(
 
     def render_dashboard_metric_cells(values):
         return "".join([
-            f'<td data-col="budget">{format_money(values.get("budget", 0))}</td>',
-            f'<td data-col="spend">{format_money(values.get("spend", 0))}</td>',
-            f'<td data-col="fb_material_views">{format_int_or_float(values.get("fb_material_views", 0))}</td>',
-            f'<td data-col="fb_cost_per_content_view">{format_money(values.get("fb_cost_per_content_view", 0))}</td>',
-            f'<td data-col="fb_link_clicks">{format_int_or_float(values.get("fb_link_clicks", 0))}</td>',
-            f'<td data-col="fb_cpc">{format_money(values.get("fb_cpc", 0))}</td>',
-            f'<td data-col="fb_frequency">{format_int_or_float(values.get("fb_frequency", 0))}</td>',
-            f'<td data-col="fb_ctr">{format_percent(values.get("fb_ctr", 0))}</td>',
-            f'<td data-col="fb_leads">{format_int_or_float(values.get("fb_leads", 0))}</td>',
-            f'<td data-col="fb_cost_per_lead">{format_money(values.get("fb_cost_per_lead", 0))}</td>',
-            f'<td data-col="fb_paid_subscriptions">{format_int_or_float(values.get("fb_paid_subscriptions", 0))}</td>',
-            f'<td data-col="fb_cost_per_paid_subscription">{format_money(values.get("fb_cost_per_paid_subscription", 0))}</td>',
-            f'<td data-col="fb_contacts">{format_int_or_float(values.get("fb_contacts", 0))}</td>',
-            f'<td data-col="fb_cost_per_contact">{format_money(values.get("fb_cost_per_contact", 0))}</td>',
-            f'<td data-col="fb_completed_registrations">{format_int_or_float(values.get("fb_completed_registrations", 0))}</td>',
-            f'<td data-col="fb_cost_per_completed_registration">{format_money(values.get("fb_cost_per_completed_registration", 0))}</td>',
-            f'<td data-col="fb_purchases">{format_int_or_float(values.get("fb_purchases", 0))}</td>',
-            f'<td data-col="fb_cost_per_purchase">{format_money(values.get("fb_cost_per_purchase", 0))}</td>',
-            f'<td data-col="clicks">{format_int_or_float(values.get("clicks", 0))}</td>',
-            f'<td data-col="leads">{format_int_or_float(values.get("leads", 0))}</td>',
-            f'<td data-col="reg">{format_int_or_float(values.get("reg", 0))}</td>',
-            f'<td data-col="rate">{format_money(values.get("rate", 0))}</td>',
-            f'<td data-col="cost_reg">{format_money(values.get("cost_reg", 0))}</td>',
-            f'<td data-col="fb_ftd">{format_int_or_float(values.get("fb_ftd", 0))}</td>',
-            f'<td data-col="cpa">{format_money(values.get("cpa", 0))}</td>',
-            f'<td data-col="chatterfy">{format_int_or_float(values.get("chatterfy", 0))}</td>',
-            f'<td data-col="players_ftd">{format_int_or_float(values.get("players_ftd", 0))}</td>',
-            f'<td data-col="qual_ftd">{format_int_or_float(values.get("qual_ftd", 0))}</td>',
-            f'<td data-col="hold_count">{format_int_or_float(values.get("hold_count", 0))}</td>',
-            f'<td data-col="hold_split">—</td>',
-            f'<td data-col="cap_total">{format_int_or_float(values.get("cap_total", 0))}</td>',
-            f'<td data-col="cap_fill">{format_percent(values.get("cap_fill", 0))}</td>',
-            f'<td data-col="income">{format_money(values.get("income", 0))}</td>',
-            f'<td data-col="profit">{format_money(values.get("profit", 0))}</td>',
-            f'<td data-col="roi">{format_percent(values.get("roi", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="budget">{format_money(values.get("budget", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="spend">{format_money(values.get("spend", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="fb_material_views">{format_int_or_float(values.get("fb_material_views", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="fb_cost_per_content_view">{format_money(values.get("fb_cost_per_content_view", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="fb_link_clicks">{format_int_or_float(values.get("fb_link_clicks", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="fb_cpc">{format_money(values.get("fb_cpc", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="fb_frequency">{format_int_or_float(values.get("fb_frequency", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="fb_ctr">{format_percent(values.get("fb_ctr", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="fb_leads">{format_int_or_float(values.get("fb_leads", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="fb_cost_per_lead">{format_money(values.get("fb_cost_per_lead", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="fb_paid_subscriptions">{format_int_or_float(values.get("fb_paid_subscriptions", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="fb_cost_per_paid_subscription">{format_money(values.get("fb_cost_per_paid_subscription", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="fb_contacts">{format_int_or_float(values.get("fb_contacts", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="fb_cost_per_contact">{format_money(values.get("fb_cost_per_contact", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="fb_completed_registrations">{format_int_or_float(values.get("fb_completed_registrations", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="fb_cost_per_completed_registration">{format_money(values.get("fb_cost_per_completed_registration", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="fb_purchases">{format_int_or_float(values.get("fb_purchases", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="fb_cost_per_purchase">{format_money(values.get("fb_cost_per_purchase", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="clicks">{format_int_or_float(values.get("clicks", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="leads">{format_int_or_float(values.get("leads", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="reg">{format_int_or_float(values.get("reg", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="rate">{format_money(values.get("rate", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="cost_reg">{format_money(values.get("cost_reg", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="fb_ftd">{format_int_or_float(values.get("fb_ftd", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="cpa">{format_money(values.get("cpa", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chatterfy">{format_int_or_float(values.get("chatterfy", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="players_ftd">{format_int_or_float(values.get("players_ftd", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="qual_ftd">{format_int_or_float(values.get("qual_ftd", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="hold_count">{format_int_or_float(values.get("hold_count", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="hold_split">—</td>',
+            f'<td class="dashboard-metric-cell" data-col="cap_total">{format_int_or_float(values.get("cap_total", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="cap_fill">{format_percent(values.get("cap_fill", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="income">{format_money(values.get("income", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="profit">{format_money(values.get("profit", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="roi">{format_percent(values.get("roi", 0))}</td>',
         ])
 
     def render_hierarchy_label(node, level, variant="caret"):
@@ -7857,41 +7857,41 @@ def _render_dashboard_page_v2(
             <td data-col="adset_name"></td>
             <td data-col="ad_name">{escape(row.get("ad_name") or "—")}</td>
             <td data-col="buyer">{escape(row.get("buyer") or "—")}</td>
-            <td data-col="budget">{format_money(row.get("budget", 0))}</td>
-            <td data-col="spend">{format_money(row.get("spend", 0))}</td>
-            <td data-col="fb_material_views">{format_int_or_float(row.get("fb_material_views", 0))}</td>
-            <td data-col="fb_cost_per_content_view">{format_money(row.get("fb_cost_per_content_view", 0))}</td>
-            <td data-col="fb_link_clicks">{format_int_or_float(row.get("fb_link_clicks", 0))}</td>
-            <td data-col="fb_cpc">{format_money(row.get("fb_cpc", 0))}</td>
-            <td data-col="fb_frequency">{format_int_or_float(row.get("fb_frequency", 0))}</td>
-            <td data-col="fb_ctr">{format_percent(row.get("fb_ctr", 0))}</td>
-            <td data-col="fb_leads">{format_int_or_float(row.get("fb_leads", 0))}</td>
-            <td data-col="fb_cost_per_lead">{format_money(row.get("fb_cost_per_lead", 0))}</td>
-            <td data-col="fb_paid_subscriptions">{format_int_or_float(row.get("fb_paid_subscriptions", 0))}</td>
-            <td data-col="fb_cost_per_paid_subscription">{format_money(row.get("fb_cost_per_paid_subscription", 0))}</td>
-            <td data-col="fb_contacts">{format_int_or_float(row.get("fb_contacts", 0))}</td>
-            <td data-col="fb_cost_per_contact">{format_money(row.get("fb_cost_per_contact", 0))}</td>
-            <td data-col="fb_completed_registrations">{format_int_or_float(row.get("fb_completed_registrations", 0))}</td>
-            <td data-col="fb_cost_per_completed_registration">{format_money(row.get("fb_cost_per_completed_registration", 0))}</td>
-            <td data-col="fb_purchases">{format_int_or_float(row.get("fb_purchases", 0))}</td>
-            <td data-col="fb_cost_per_purchase">{format_money(row.get("fb_cost_per_purchase", 0))}</td>
-            <td data-col="clicks">{format_int_or_float(row.get("clicks", 0))}</td>
-            <td data-col="leads">{format_int_or_float(row.get("leads", 0))}</td>
-            <td data-col="reg">{format_int_or_float(row.get("reg", 0))}</td>
-            <td data-col="rate">{format_money(row.get("rate", 0))}</td>
-            <td data-col="cost_reg">{format_money(row.get("cost_reg", 0))}</td>
-            <td data-col="fb_ftd">{format_int_or_float(row.get("fb_ftd", 0))}</td>
-            <td data-col="cpa">{format_money(row.get("cpa", 0))}</td>
-            <td data-col="chatterfy">{format_int_or_float(row.get("chatterfy", 0))}</td>
-            <td data-col="players_ftd">{format_int_or_float(row.get("players_ftd", 0))}</td>
-            <td data-col="qual_ftd">{format_int_or_float(row.get("qual_ftd", 0))}</td>
-            <td data-col="hold_count">{format_int_or_float(row.get("hold_count", 0))}</td>
-            <td data-col="hold_split">{escape(row.get("hold_split") or "0B / 0W")}</td>
-            <td data-col="cap_total">{format_int_or_float(row.get("cap_total", 0))}</td>
-            <td data-col="cap_fill">{format_percent(row.get("cap_fill", 0))}</td>
-            <td data-col="income">{format_money(row.get("income", 0))}</td>
-            <td data-col="profit">{format_money(row.get("profit", 0))}</td>
-            <td data-col="roi">{format_percent(row.get("roi", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="budget">{format_money(row.get("budget", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="spend">{format_money(row.get("spend", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="fb_material_views">{format_int_or_float(row.get("fb_material_views", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="fb_cost_per_content_view">{format_money(row.get("fb_cost_per_content_view", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="fb_link_clicks">{format_int_or_float(row.get("fb_link_clicks", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="fb_cpc">{format_money(row.get("fb_cpc", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="fb_frequency">{format_int_or_float(row.get("fb_frequency", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="fb_ctr">{format_percent(row.get("fb_ctr", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="fb_leads">{format_int_or_float(row.get("fb_leads", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="fb_cost_per_lead">{format_money(row.get("fb_cost_per_lead", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="fb_paid_subscriptions">{format_int_or_float(row.get("fb_paid_subscriptions", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="fb_cost_per_paid_subscription">{format_money(row.get("fb_cost_per_paid_subscription", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="fb_contacts">{format_int_or_float(row.get("fb_contacts", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="fb_cost_per_contact">{format_money(row.get("fb_cost_per_contact", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="fb_completed_registrations">{format_int_or_float(row.get("fb_completed_registrations", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="fb_cost_per_completed_registration">{format_money(row.get("fb_cost_per_completed_registration", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="fb_purchases">{format_int_or_float(row.get("fb_purchases", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="fb_cost_per_purchase">{format_money(row.get("fb_cost_per_purchase", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="clicks">{format_int_or_float(row.get("clicks", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="leads">{format_int_or_float(row.get("leads", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="reg">{format_int_or_float(row.get("reg", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="rate">{format_money(row.get("rate", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="cost_reg">{format_money(row.get("cost_reg", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="fb_ftd">{format_int_or_float(row.get("fb_ftd", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="cpa">{format_money(row.get("cpa", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="chatterfy">{format_int_or_float(row.get("chatterfy", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="players_ftd">{format_int_or_float(row.get("players_ftd", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="qual_ftd">{format_int_or_float(row.get("qual_ftd", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="hold_count">{format_int_or_float(row.get("hold_count", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="hold_split">{escape(row.get("hold_split") or "0B / 0W")}</td>
+            <td class="dashboard-metric-cell" data-col="cap_total">{format_int_or_float(row.get("cap_total", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="cap_fill">{format_percent(row.get("cap_fill", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="income">{format_money(row.get("income", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="profit">{format_money(row.get("profit", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="roi">{format_percent(row.get("roi", 0))}</td>
         </tr>
         """
 
@@ -7902,7 +7902,7 @@ def _render_dashboard_page_v2(
             hidden_attr = ' hidden' if parent_id else ''
             current_ancestors = [*ancestors, node["id"]]
             html += f"""
-            <tr class="dashboard-tree-row dashboard-tree-row-level-{level}" data-node-id="{escape(node["id"])}" data-row-key="{escape(node["id"])}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}"{hidden_attr}>
+            <tr class="dashboard-tree-row dashboard-tree-row-level-{level}" data-node-id="{escape(node["id"])}" data-node-field="{escape(node["field"])}" data-row-key="{escape(node["id"])}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}"{hidden_attr}>
                 <td data-col="platform">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "platform" else ""}</td>
                 <td data-col="geo">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "geo" else ""}</td>
                 <td data-col="manager">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "manager" else ""}</td>
@@ -8125,6 +8125,21 @@ def _render_dashboard_page_v2(
         font-weight:700;
         border-top:1px solid rgba(138, 159, 194, 0.22);
         border-bottom:1px solid rgba(138, 159, 194, 0.22);
+    }}
+    .dashboard-v2 #dashboardUnifiedTable.dashboard-adset-focus-mode tbody .dashboard-metric-cell {{
+        font-weight:400;
+        opacity:0.2;
+        transition:opacity .15s ease, font-weight .15s ease, color .15s ease;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable.dashboard-adset-focus-mode tbody tr.dashboard-adset-focus-parent .dashboard-metric-cell {{
+        font-weight:400;
+        opacity:0.55;
+        color:#31486f;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable.dashboard-adset-focus-mode tbody tr.dashboard-adset-focus-leaf .dashboard-metric-cell {{
+        font-weight:700;
+        opacity:1;
+        color:#1c315c;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-0 td {{
         background:#edf5ff;
@@ -8673,6 +8688,7 @@ def _render_dashboard_page_v2(
                 state.expanded[table.id || 'dashboard-tree-table'] = openNodes;
                 window.dashboardWriteState(state);
             }}
+            if (window.dashboardApplyAdsetFocus) window.dashboardApplyAdsetFocus(table);
             if (window.dashboardTreeAutoSize) window.dashboardTreeAutoSize(table);
             return false;
         }};
@@ -8851,6 +8867,37 @@ def _render_dashboard_page_v2(
             cell.classList.toggle('dashboard-cell-selected');
             window.dashboardPersistSelectedCells(table);
         }};
+        window.dashboardApplyAdsetFocus = (table) => {{
+            if (!table) return;
+            const rows = Array.from(table.querySelectorAll('tbody tr'));
+            table.classList.remove('dashboard-adset-focus-mode');
+            rows.forEach((row) => {{
+                row.classList.remove('dashboard-adset-focus-parent');
+                row.classList.remove('dashboard-adset-focus-leaf');
+            }});
+            const openAdsetNodeIds = Array.from(table.querySelectorAll('.dashboard-tree-toggle[aria-expanded="true"]'))
+                .filter((button) => {{
+                    const row = button.closest('tr[data-node-field]');
+                    return row?.dataset.nodeField === 'adset_name';
+                }})
+                .map((button) => button.dataset.target || '')
+                .filter(Boolean);
+            if (!openAdsetNodeIds.length) return;
+            table.classList.add('dashboard-adset-focus-mode');
+            rows.forEach((row) => {{
+                const rowNodeId = row.dataset.nodeId || '';
+                const parentId = row.dataset.parentId || '';
+                const ancestors = (row.dataset.ancestors || '').split(',').filter(Boolean);
+                const isParentFocus = openAdsetNodeIds.some((nodeId) =>
+                    rowNodeId === nodeId
+                );
+                const isLeafFocus = openAdsetNodeIds.some((nodeId) =>
+                    parentId === nodeId || ancestors.includes(nodeId)
+                );
+                if (isParentFocus) row.classList.add('dashboard-adset-focus-parent');
+                if (isLeafFocus) row.classList.add('dashboard-adset-focus-leaf');
+            }});
+        }};
         window.restoreDashboardUiState = () => {{
             document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
             const getTreeButtons = () => Array.from(table.querySelectorAll('.dashboard-tree-toggle'));
@@ -8920,6 +8967,7 @@ def _render_dashboard_page_v2(
                     expandNode(button);
                 }});
                 window.dashboardTreeAutoSize(table);
+                if (window.dashboardApplyAdsetFocus) window.dashboardApplyAdsetFocus(table);
                 if (window.dashboardApplySelectedRows) window.dashboardApplySelectedRows(table);
                 if (window.dashboardApplySelectedColumns) window.dashboardApplySelectedColumns(table);
                 if (window.dashboardApplySelectedCells) window.dashboardApplySelectedCells(table);
