@@ -7610,7 +7610,6 @@ def _render_dashboard_page_v2(
         ("manager", "manager"),
         ("campaign_name", "campaign_name"),
         ("adset_name", "adset_name"),
-        ("ad_name", "ad_name"),
     ]
 
     def aggregate_dashboard_metrics(items):
@@ -7622,8 +7621,9 @@ def _render_dashboard_page_v2(
 
     node_counter = 0
 
-    def build_dashboard_tree(items, levels):
+    def build_dashboard_tree(items, levels, path=None):
         nonlocal node_counter
+        path = path or []
         if not levels:
             return []
         field, _column = levels[0]
@@ -7636,7 +7636,8 @@ def _render_dashboard_page_v2(
         for bucket_name in sorted(buckets.keys(), key=lambda value: value.lower()):
             bucket_rows = buckets[bucket_name]
             node_counter += 1
-            node_id = f"dashboard-node-{node_counter}"
+            node_path = [*path, f"{field}:{bucket_name}"]
+            node_id = "dashboard-node-" + "|".join(node_path)
             result.append({
                 "id": node_id,
                 "field": field,
@@ -7644,7 +7645,7 @@ def _render_dashboard_page_v2(
                 "label": bucket_name,
                 "rows": bucket_rows,
                 "metrics": aggregate_dashboard_metrics(bucket_rows),
-                "children": build_dashboard_tree(bucket_rows, levels[1:]),
+                "children": build_dashboard_tree(bucket_rows, levels[1:], node_path),
             })
         return result
 
@@ -7782,7 +7783,7 @@ def _render_dashboard_page_v2(
                 <td data-col="manager">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "manager" else ""}</td>
                 <td data-col="campaign_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "campaign_name" else "—"}</td>
                 <td data-col="adset_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "adset_name" else ""}</td>
-                <td data-col="ad_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "ad_name" else "—"}</td>
+                <td data-col="ad_name">—</td>
                 <td data-col="buyer">—</td>
                 <td data-col="offer">—</td>
                 <td data-col="cabinet_text">—</td>
@@ -8005,22 +8006,24 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-cell {{
         display:flex;
         align-items:center;
+        justify-content:flex-start;
         min-height:15px;
+        width:100%;
     }}
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-level-1 {{
-        padding-left:10px;
+        padding-left:0;
     }}
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-level-2 {{
-        padding-left:20px;
+        padding-left:0;
     }}
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-level-3 {{
-        padding-left:30px;
+        padding-left:0;
     }}
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-level-4 {{
-        padding-left:40px;
+        padding-left:0;
     }}
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-level-5 {{
-        padding-left:50px;
+        padding-left:0;
     }}
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-toggle {{
         display:inline-flex;
@@ -8033,6 +8036,8 @@ def _render_dashboard_page_v2(
         color:#213252;
         font:inherit;
         cursor:pointer;
+        justify-content:flex-start;
+        width:100%;
     }}
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-caret {{
         width:10px;
@@ -8507,7 +8512,37 @@ def _render_dashboard_page_v2(
                 .map((item) => item.dataset.target || '')
                 .filter(Boolean);
             localStorage.setItem(expandedKey, JSON.stringify(openNodes));
+            if (window.dashboardTreeAutoSize) window.dashboardTreeAutoSize(table);
             return false;
+        }};
+
+        window.dashboardTreeAutoSize = (table) => {{
+            if (!table) return;
+            const autoCols = [
+                'platform', 'geo', 'manager', 'campaign_name', 'adset_name', 'ad_name',
+                'buyer', 'offer', 'cabinet_text', 'advertiser_text', 'account_id',
+            ];
+            autoCols.forEach((col) => {{
+                const cells = Array.from(table.querySelectorAll(`[data-col="${{col}}"]`)).filter((cell) => {{
+                    if (cell.hidden) return false;
+                    if (cell.style.display === 'none') return false;
+                    const row = cell.closest('tr');
+                    return !row || !row.hidden;
+                }});
+                let maxWidth = 0;
+                cells.forEach((cell) => {{
+                    const previousWidth = cell.style.width;
+                    cell.style.width = 'auto';
+                    maxWidth = Math.max(maxWidth, Math.ceil(cell.scrollWidth + 18));
+                    cell.style.width = previousWidth;
+                }});
+                const targetWidth = maxWidth ? `${{maxWidth}}px` : '';
+                table.querySelectorAll(`[data-col="${{col}}"]`).forEach((cell) => {{
+                    cell.style.width = targetWidth;
+                    cell.style.minWidth = targetWidth;
+                    cell.style.maxWidth = targetWidth || 'none';
+                }});
+            }});
         }};
 
         document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
@@ -8576,6 +8611,12 @@ def _render_dashboard_page_v2(
                 }});
                 expandNode(button);
             }});
+            window.dashboardTreeAutoSize(table);
+        }});
+        window.addEventListener('resize', () => {{
+            document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
+                window.dashboardTreeAutoSize(table);
+            }});
         }});
 
         const hiddenKey = window.teambeadStorageKey('dashboard-columns-hidden');
@@ -8592,6 +8633,9 @@ def _render_dashboard_page_v2(
             }});
             document.querySelectorAll('[data-dashboard-tree-table] [data-col]').forEach((cell) => {{
                 cell.style.display = hidden.includes(cell.dataset.col) ? 'none' : '';
+            }});
+            document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
+                window.dashboardTreeAutoSize(table);
             }});
         }};
         const saveColumns = () => {{
