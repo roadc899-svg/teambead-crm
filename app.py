@@ -8719,11 +8719,17 @@ def _render_dashboard_page_v2(
             const table = row.closest('[data-dashboard-tree-table]');
             if (!table) return;
             const wasSelected = row.classList.contains('dashboard-row-selected');
+            const rowKey = row.dataset.rowKey || '';
+            const ancestors = (row.dataset.ancestors || '').split(',').filter(Boolean);
+            const selectionPath = rowKey ? [...ancestors, rowKey] : [...ancestors];
             Array.from(table.querySelectorAll('tbody tr.dashboard-row-selected')).forEach((selectedRow) => {{
                 selectedRow.classList.remove('dashboard-row-selected');
             }});
             if (!wasSelected || forceSelect) {{
-                row.classList.add('dashboard-row-selected');
+                Array.from(table.querySelectorAll('tbody tr[data-row-key]')).forEach((candidateRow) => {{
+                    const candidateKey = candidateRow.dataset.rowKey || '';
+                    candidateRow.classList.toggle('dashboard-row-selected', selectionPath.includes(candidateKey));
+                }});
             }}
             table.classList.toggle(
                 'dashboard-has-row-selection',
