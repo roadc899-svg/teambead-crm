@@ -7768,7 +7768,6 @@ def _render_dashboard_page_v2(
 
     def render_leaf_row(row, parent_id="", ancestors=None, lineage=None):
         ancestors = ancestors or []
-        lineage = lineage or {}
         row_class = "soft-green" if safe_number(row.get("profit", 0)) > 0 else ("soft-red" if safe_number(row.get("profit", 0)) < 0 else "")
         hidden_attr = ' hidden' if parent_id else ''
         row_key = "leaf|" + "|".join([
@@ -7783,11 +7782,11 @@ def _render_dashboard_page_v2(
         ])
         return f"""
         <tr class="dashboard-leaf-row {row_class}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}" data-row-key="{escape(row_key)}" onclick="window.dashboardHandleRowClick && window.dashboardHandleRowClick(this, event)"{hidden_attr}>
-            <td data-col="platform">{render_lineage_label(lineage.get("platform", {}).get("label", ""), 0, lineage.get("platform", {}).get("id", "")) if lineage.get("platform") else ""}</td>
-            <td data-col="geo">{render_lineage_label(lineage.get("geo", {}).get("label", ""), 1, lineage.get("geo", {}).get("id", "")) if lineage.get("geo") else ""}</td>
-            <td data-col="manager">{render_lineage_label(lineage.get("manager", {}).get("label", ""), 2, lineage.get("manager", {}).get("id", "")) if lineage.get("manager") else ""}</td>
-            <td data-col="campaign_name">{render_lineage_label(lineage.get("campaign_name", {}).get("label", ""), 3, lineage.get("campaign_name", {}).get("id", "")) if lineage.get("campaign_name") else ""}</td>
-            <td data-col="adset_name">{render_lineage_label(lineage.get("adset_name", {}).get("label", ""), 4, lineage.get("adset_name", {}).get("id", "")) if lineage.get("adset_name") else ""}</td>
+            <td data-col="platform"></td>
+            <td data-col="geo"></td>
+            <td data-col="manager"></td>
+            <td data-col="campaign_name"></td>
+            <td data-col="adset_name"></td>
             <td data-col="ad_name">{render_lineage_label(row.get("ad_name") or "—", 5)}</td>
             <td data-col="buyer">{escape(row.get("buyer") or "—")}</td>
             <td data-col="offer">{escape(row.get("offer") or "—")}</td>
