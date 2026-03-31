@@ -8126,20 +8126,8 @@ def _render_dashboard_page_v2(
         border-top:1px solid rgba(138, 159, 194, 0.22);
         border-bottom:1px solid rgba(138, 159, 194, 0.22);
     }}
-    .dashboard-v2 #dashboardUnifiedTable.dashboard-adset-focus-mode tbody .dashboard-metric-cell {{
-        font-weight:400;
-        opacity:0.2;
+    .dashboard-v2 #dashboardUnifiedTable tbody .dashboard-metric-cell {{
         transition:opacity .15s ease, font-weight .15s ease, color .15s ease;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable.dashboard-adset-focus-mode tbody tr.dashboard-adset-focus-parent .dashboard-metric-cell {{
-        font-weight:400;
-        opacity:0.55;
-        color:#31486f;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable.dashboard-adset-focus-mode tbody tr.dashboard-adset-focus-leaf .dashboard-metric-cell {{
-        font-weight:700;
-        opacity:1;
-        color:#1c315c;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-0 td {{
         background:#edf5ff;
@@ -8870,10 +8858,14 @@ def _render_dashboard_page_v2(
         window.dashboardApplyAdsetFocus = (table) => {{
             if (!table) return;
             const rows = Array.from(table.querySelectorAll('tbody tr'));
-            table.classList.remove('dashboard-adset-focus-mode');
             rows.forEach((row) => {{
                 row.classList.remove('dashboard-adset-focus-parent');
                 row.classList.remove('dashboard-adset-focus-leaf');
+                Array.from(row.querySelectorAll('.dashboard-metric-cell')).forEach((cell) => {{
+                    cell.style.opacity = '';
+                    cell.style.fontWeight = '';
+                    cell.style.color = '';
+                }});
             }});
             const openAdsetNodeIds = Array.from(table.querySelectorAll('.dashboard-tree-toggle[aria-expanded="true"]'))
                 .filter((button) => {{
@@ -8883,7 +8875,13 @@ def _render_dashboard_page_v2(
                 .map((button) => button.dataset.target || '')
                 .filter(Boolean);
             if (!openAdsetNodeIds.length) return;
-            table.classList.add('dashboard-adset-focus-mode');
+            rows.forEach((row) => {{
+                Array.from(row.querySelectorAll('.dashboard-metric-cell')).forEach((cell) => {{
+                    cell.style.opacity = '0.2';
+                    cell.style.fontWeight = '400';
+                    cell.style.color = '';
+                }});
+            }});
             rows.forEach((row) => {{
                 const rowNodeId = row.dataset.nodeId || '';
                 const parentId = row.dataset.parentId || '';
@@ -8896,6 +8894,20 @@ def _render_dashboard_page_v2(
                 );
                 if (isParentFocus) row.classList.add('dashboard-adset-focus-parent');
                 if (isLeafFocus) row.classList.add('dashboard-adset-focus-leaf');
+                if (isParentFocus) {{
+                    Array.from(row.querySelectorAll('.dashboard-metric-cell')).forEach((cell) => {{
+                        cell.style.opacity = '0.55';
+                        cell.style.fontWeight = '400';
+                        cell.style.color = '#31486f';
+                    }});
+                }}
+                if (isLeafFocus) {{
+                    Array.from(row.querySelectorAll('.dashboard-metric-cell')).forEach((cell) => {{
+                        cell.style.opacity = '1';
+                        cell.style.fontWeight = '700';
+                        cell.style.color = '#1c315c';
+                    }});
+                }}
             }});
         }};
         window.restoreDashboardUiState = () => {{
