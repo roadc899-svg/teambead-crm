@@ -7925,7 +7925,7 @@ def _render_dashboard_page_v2(
     matrix_tree_json = json.dumps(serialize_tree_payload(tree), ensure_ascii=False)
     matrix_metric_fields_json = json.dumps(matrix_metric_fields, ensure_ascii=False)
 
-    def make_matrix_link(label, **overrides):
+    def make_matrix_link(**overrides):
         params = {**filter_params, **overrides}
         return f'/dashboard?{build_query_string(**params)}'
 
