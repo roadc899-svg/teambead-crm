@@ -7547,35 +7547,7 @@ def _render_dashboard_page_v2(
         has_players=has_players,
         search=search,
     )
-    def _group_text(row, key):
-        return safe_text(row.get(key)).strip().lower()
-
-    def _sort_metric_value(row):
-        if sort_by in {
-            "budget", "spend", "leads", "reg", "cost_reg", "fb_ftd", "cpa", "chatterfy",
-            "players_ftd", "qual_ftd", "income", "profit", "roi", "caps_count",
-            "cap_total", "cap_current_ftd", "cap_fill", "hold_count", "active_cabinets",
-            "clicks", "rate",
-        }:
-            value = safe_number(row.get(sort_by, 0))
-            return value if safe_text(order).lower() == "asc" else -value
-        value = safe_text(row.get(sort_by, "")).lower()
-        if safe_text(order).lower() == "asc":
-            return value
-        return "".join(chr(255 - ord(ch)) for ch in value)
-
-    rows = sorted(
-        rows,
-        key=lambda row: (
-            _group_text(row, "platform"),
-            _group_text(row, "geo"),
-            _group_text(row, "manager"),
-            _group_text(row, "adset_name"),
-            _sort_metric_value(row),
-            _group_text(row, "launch_date"),
-            _group_text(row, "ad_name"),
-        ),
-    )
+    rows = _dashboard_sort_rows(rows, sort_by=sort_by, order=order)
 
     buyer_options = "".join(
         f'<option value="{escape(value)}" {"selected" if safe_text(buyer) == safe_text(value) else ""}>{escape(value)}</option>'
@@ -7626,6 +7598,87 @@ def _render_dashboard_page_v2(
         "order": order,
     }
 
+    dashboard_numeric_fields = [
+        "budget", "spend", "clicks", "leads", "reg", "rate", "cost_reg", "fb_ftd", "cpa",
+        "chatterfy", "players_ftd", "qual_ftd", "hold_count", "cap_total", "cap_fill",
+        "income", "profit", "roi",
+    ]
+
+    hierarchy_levels = [
+        ("platform", "platform"),
+        ("geo", "geo"),
+        ("manager", "manager"),
+        ("adset_name", "adset_name"),
+    ]
+
+    def aggregate_dashboard_metrics(items):
+        totals = {field: 0.0 for field in dashboard_numeric_fields}
+        for item in items:
+            for field in dashboard_numeric_fields:
+                totals[field] += safe_number(item.get(field, 0))
+        return totals
+
+    node_counter = 0
+
+    def build_dashboard_tree(items, levels):
+        nonlocal node_counter
+        if not levels:
+            return []
+        field, _column = levels[0]
+        buckets = {}
+        for item in items:
+            bucket_name = safe_text(item.get(field)).strip() or "—"
+            buckets.setdefault(bucket_name, []).append(item)
+
+        result = []
+        for bucket_name in sorted(buckets.keys(), key=lambda value: value.lower()):
+            bucket_rows = buckets[bucket_name]
+            node_counter += 1
+            node_id = f"dashboard-node-{node_counter}"
+            result.append({
+                "id": node_id,
+                "field": field,
+                "column": field,
+                "label": bucket_name,
+                "rows": bucket_rows,
+                "metrics": aggregate_dashboard_metrics(bucket_rows),
+                "children": build_dashboard_tree(bucket_rows, levels[1:]),
+            })
+        return result
+
+    def render_dashboard_metric_cells(values):
+        return "".join([
+            f'<td data-col="budget">{format_money(values.get("budget", 0))}</td>',
+            f'<td data-col="spend">{format_money(values.get("spend", 0))}</td>',
+            f'<td data-col="clicks">{format_int_or_float(values.get("clicks", 0))}</td>',
+            f'<td data-col="leads">{format_int_or_float(values.get("leads", 0))}</td>',
+            f'<td data-col="reg">{format_int_or_float(values.get("reg", 0))}</td>',
+            f'<td data-col="rate">{format_money(values.get("rate", 0))}</td>',
+            f'<td data-col="cost_reg">{format_money(values.get("cost_reg", 0))}</td>',
+            f'<td data-col="fb_ftd">{format_int_or_float(values.get("fb_ftd", 0))}</td>',
+            f'<td data-col="cpa">{format_money(values.get("cpa", 0))}</td>',
+            f'<td data-col="chatterfy">{format_int_or_float(values.get("chatterfy", 0))}</td>',
+            f'<td data-col="players_ftd">{format_int_or_float(values.get("players_ftd", 0))}</td>',
+            f'<td data-col="qual_ftd">{format_int_or_float(values.get("qual_ftd", 0))}</td>',
+            f'<td data-col="hold_count">{format_int_or_float(values.get("hold_count", 0))}</td>',
+            f'<td data-col="hold_split">—</td>',
+            f'<td data-col="cap_total">{format_int_or_float(values.get("cap_total", 0))}</td>',
+            f'<td data-col="cap_fill">{format_percent(values.get("cap_fill", 0))}</td>',
+            f'<td data-col="income">{format_money(values.get("income", 0))}</td>',
+            f'<td data-col="profit">{format_money(values.get("profit", 0))}</td>',
+            f'<td data-col="roi">{format_percent(values.get("roi", 0))}</td>',
+        ])
+
+    def render_hierarchy_label(node, level):
+        toggle = (
+            f'<button type="button" class="dashboard-tree-toggle" data-target="{escape(node["id"])}" '
+            f'aria-expanded="false"><span class="dashboard-tree-caret">▸</span>'
+            f'<span class="dashboard-tree-label">{escape(node["label"])}</span></button>'
+        )
+        return f'<div class="dashboard-tree-cell dashboard-tree-level-{level}">{toggle}</div>'
+
+    tree = build_dashboard_tree(rows, hierarchy_levels)
+
     table_headers = [
         ("platform", "Brand"),
         ("geo", "Geo"),
@@ -7670,36 +7723,16 @@ def _render_dashboard_page_v2(
         for field, label in table_headers
     )
 
-    rows_html = ""
-    previous_group = None
-    total_rows = len(rows)
-    for index, row in enumerate(rows):
+    def render_leaf_row(row, parent_id="", ancestors=None):
+        ancestors = ancestors or []
         row_class = "soft-green" if safe_number(row.get("profit", 0)) > 0 else ("soft-red" if safe_number(row.get("profit", 0)) < 0 else "")
-        current_group = (
-            safe_text(row.get("platform")).strip().lower(),
-            safe_text(row.get("geo")).strip().lower(),
-            safe_text(row.get("manager")).strip().lower(),
-            safe_text(row.get("adset_name")).strip().lower(),
-        )
-        next_row = rows[index + 1] if index + 1 < total_rows else None
-        next_group = (
-            safe_text(next_row.get("platform")).strip().lower(),
-            safe_text(next_row.get("geo")).strip().lower(),
-            safe_text(next_row.get("manager")).strip().lower(),
-            safe_text(next_row.get("adset_name")).strip().lower(),
-        ) if next_row else None
-        group_classes = []
-        if current_group != previous_group:
-            group_classes.append("group-start")
-        if current_group != next_group:
-            group_classes.append("group-end")
-        row_class = " ".join(value for value in [row_class, *group_classes] if value)
-        rows_html += f"""
-        <tr class="{row_class}">
-            <td data-col="platform">{escape(row.get("platform") or "—")}</td>
-            <td data-col="geo">{escape(row.get("geo") or "—")}</td>
-            <td data-col="manager">{escape(row.get("manager") or "—")}</td>
-            <td data-col="adset_name">{escape(row.get("adset_name") or "—")}</td>
+        hidden_attr = ' hidden' if parent_id else ''
+        return f"""
+        <tr class="dashboard-leaf-row {row_class}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}"{hidden_attr}>
+            <td data-col="platform"></td>
+            <td data-col="geo"></td>
+            <td data-col="manager"></td>
+            <td data-col="adset_name"></td>
             <td data-col="launch_date">{escape(row.get("launch_date") or "—")}</td>
             <td data-col="buyer">{escape(row.get("buyer") or "—")}</td>
             <td data-col="offer">{escape(row.get("offer") or "—")}</td>
@@ -7729,7 +7762,38 @@ def _render_dashboard_page_v2(
             <td data-col="roi">{format_percent(row.get("roi", 0))}</td>
         </tr>
         """
-        previous_group = current_group
+
+    def render_tree_rows(nodes, parent_id="", ancestors=None, level=0):
+        ancestors = ancestors or []
+        html = ""
+        for node in nodes:
+            hidden_attr = ' hidden' if parent_id else ''
+            current_ancestors = [*ancestors, node["id"]]
+            html += f"""
+            <tr class="dashboard-tree-row dashboard-tree-row-level-{level}" data-node-id="{escape(node["id"])}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}"{hidden_attr}>
+                <td data-col="platform">{render_hierarchy_label(node, level) if node["column"] == "platform" else ""}</td>
+                <td data-col="geo">{render_hierarchy_label(node, level) if node["column"] == "geo" else ""}</td>
+                <td data-col="manager">{render_hierarchy_label(node, level) if node["column"] == "manager" else ""}</td>
+                <td data-col="adset_name">{render_hierarchy_label(node, level) if node["column"] == "adset_name" else ""}</td>
+                <td data-col="launch_date">—</td>
+                <td data-col="buyer">—</td>
+                <td data-col="offer">—</td>
+                <td data-col="cabinet_text">—</td>
+                <td data-col="advertiser_text">—</td>
+                <td data-col="account_id">—</td>
+                <td data-col="campaign_name">—</td>
+                <td data-col="ad_name">—</td>
+                {render_dashboard_metric_cells(node["metrics"])}
+            </tr>
+            """
+            if node["children"]:
+                html += render_tree_rows(node["children"], parent_id=node["id"], ancestors=current_ancestors, level=level + 1)
+            else:
+                for leaf_row in _dashboard_sort_rows(node["rows"], sort_by=sort_by, order=order):
+                    html += render_leaf_row(leaf_row, parent_id=node["id"], ancestors=current_ancestors)
+        return html
+
+    rows_html = render_tree_rows(tree)
 
     stats_html = build_dashboard_summary_cards(rows)
 
@@ -7909,11 +7973,62 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td {{
         background:#f6faff;
     }}
-    .dashboard-v2 #dashboardUnifiedTable tbody tr.group-start td {{
-        border-top:1px solid #000000;
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row td {{
+        font-weight:700;
+        border-top:1px solid rgba(138, 159, 194, 0.22);
+        border-bottom:1px solid rgba(138, 159, 194, 0.22);
     }}
-    .dashboard-v2 #dashboardUnifiedTable tbody tr.group-end td {{
-        border-bottom:1px solid #000000;
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-0 td {{
+        background:#edf5ff;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-1 td {{
+        background:#f5f9ff;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-2 td {{
+        background:#f9fbff;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-3 td {{
+        background:#fcfdff;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-cell {{
+        display:flex;
+        align-items:center;
+        min-height:15px;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-level-1 {{
+        padding-left:10px;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-level-2 {{
+        padding-left:20px;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-level-3 {{
+        padding-left:30px;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-toggle {{
+        display:inline-flex;
+        align-items:center;
+        gap:6px;
+        border:0;
+        background:transparent;
+        padding:0;
+        margin:0;
+        color:#213252;
+        font:inherit;
+        cursor:pointer;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-caret {{
+        width:10px;
+        display:inline-flex;
+        justify-content:center;
+        color:#5672a3;
+        transition:transform .18s ease;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-toggle[aria-expanded="true"] .dashboard-tree-caret {{
+        transform:rotate(90deg);
+    }}
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-label {{
+        overflow:hidden;
+        text-overflow:ellipsis;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="launch_date"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="launch_date"] {{
@@ -8263,6 +8378,37 @@ def _render_dashboard_page_v2(
                 if (targetIndex < 0 || targetIndex >= options.length) return;
                 periodSelect.value = options[targetIndex].value;
                 if (form) form.requestSubmit();
+            }});
+        }});
+
+        const treeButtons = Array.from(document.querySelectorAll('.dashboard-tree-toggle'));
+        const treeRows = Array.from(document.querySelectorAll('#dashboardUnifiedTable tbody tr'));
+        const hideDescendants = (nodeId) => {{
+            treeRows.forEach((row) => {{
+                const ancestors = (row.dataset.ancestors || '').split(',').filter(Boolean);
+                if (!ancestors.includes(nodeId)) return;
+                row.hidden = true;
+                if (row.dataset.nodeId) {{
+                    const button = row.querySelector('.dashboard-tree-toggle');
+                    if (button) button.setAttribute('aria-expanded', 'false');
+                }}
+            }});
+        }};
+        treeButtons.forEach((button) => {{
+            button.addEventListener('click', () => {{
+                const nodeId = button.dataset.target || '';
+                if (!nodeId) return;
+                const expanded = button.getAttribute('aria-expanded') === 'true';
+                if (expanded) {{
+                    button.setAttribute('aria-expanded', 'false');
+                    hideDescendants(nodeId);
+                    return;
+                }}
+                button.setAttribute('aria-expanded', 'true');
+                treeRows.forEach((row) => {{
+                    if ((row.dataset.parentId || '') !== nodeId) return;
+                    row.hidden = false;
+                }});
             }});
         }});
 
