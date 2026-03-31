@@ -8016,6 +8016,10 @@ def _render_dashboard_page_v2(
     .dashboard-v2 table[data-dashboard-tree-table] td.dashboard-cell-selected.dashboard-column-selected {{
         background:#c7e3ff !important;
     }}
+    .dashboard-v2 table[data-dashboard-tree-table] td.dashboard-cell-selected .dashboard-tree-toggle,
+    .dashboard-v2 table[data-dashboard-tree-table] td.dashboard-column-selected .dashboard-tree-toggle {{
+        color:#16325c;
+    }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row td {{
         font-weight:700;
         border-top:1px solid rgba(138, 159, 194, 0.22);
@@ -8344,39 +8348,39 @@ def _render_dashboard_page_v2(
     }}
     .dashboard-v2 #dashboardUnifiedTable th[data-col="platform"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="platform"] {{
-        left:0;
+        left:var(--sticky-left-platform, 0px);
         z-index:7;
-        box-shadow:1px 0 0 rgba(191, 212, 244, 0.9);
+        box-shadow:none;
     }}
     .dashboard-v2 #dashboardUnifiedTable th[data-col="geo"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="geo"] {{
-        left:96px;
+        left:var(--sticky-left-geo, 0px);
         z-index:7;
-        box-shadow:1px 0 0 rgba(191, 212, 244, 0.9);
+        box-shadow:none;
     }}
     .dashboard-v2 #dashboardUnifiedTable th[data-col="manager"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="manager"] {{
-        left:160px;
+        left:var(--sticky-left-manager, 0px);
         z-index:7;
-        box-shadow:1px 0 0 rgba(191, 212, 244, 0.9);
+        box-shadow:none;
     }}
     .dashboard-v2 #dashboardUnifiedTable th[data-col="campaign_name"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="campaign_name"] {{
-        left:270px;
+        left:var(--sticky-left-campaign_name, 0px);
         z-index:7;
-        box-shadow:1px 0 0 rgba(191, 212, 244, 0.9);
+        box-shadow:none;
     }}
     .dashboard-v2 #dashboardUnifiedTable th[data-col="adset_name"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="adset_name"] {{
-        left:458px;
+        left:var(--sticky-left-adset_name, 0px);
         z-index:7;
-        box-shadow:1px 0 0 rgba(191, 212, 244, 0.9);
+        box-shadow:none;
     }}
     .dashboard-v2 #dashboardUnifiedTable th[data-col="ad_name"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="ad_name"] {{
-        left:646px;
+        left:var(--sticky-left-ad_name, 0px);
         z-index:7;
-        box-shadow:2px 0 0 rgba(173, 198, 234, 0.95);
+        box-shadow:none;
     }}
     .dashboard-v2 #dashboardUnifiedTable thead th[data-col="platform"],
     .dashboard-v2 #dashboardUnifiedTable thead th[data-col="geo"],
@@ -8385,6 +8389,14 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable thead th[data-col="adset_name"],
     .dashboard-v2 #dashboardUnifiedTable thead th[data-col="ad_name"] {{
         z-index:9;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td[data-col="platform"],
+    .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td[data-col="geo"],
+    .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td[data-col="manager"],
+    .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td[data-col="campaign_name"],
+    .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td[data-col="adset_name"],
+    .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td[data-col="ad_name"] {{
+        background:#f6faff;
     }}
     @media (max-width: 1500px) {{
         .dashboard-v2 .dashboard-filter-grid {{
@@ -8592,6 +8604,7 @@ def _render_dashboard_page_v2(
                 'platform', 'geo', 'manager', 'campaign_name', 'adset_name', 'ad_name',
                 'buyer', 'offer', 'cabinet_text', 'advertiser_text', 'account_id',
             ];
+            const stickyCols = ['platform', 'geo', 'manager', 'campaign_name', 'adset_name', 'ad_name'];
             autoCols.forEach((col) => {{
                 const allCells = Array.from(table.querySelectorAll(`[data-col="${{col}}"]`));
                 allCells.forEach((cell) => {{
@@ -8601,6 +8614,41 @@ def _render_dashboard_page_v2(
                 }});
             }});
             table.style.tableLayout = 'auto';
+            requestAnimationFrame(() => {{
+                const measureColumnWidth = (col) => {{
+                    const cells = Array.from(table.querySelectorAll(`[data-col="${{col}}"]`)).filter((cell) => {{
+                        if (!cell) return false;
+                        const style = window.getComputedStyle(cell);
+                        return style.display !== 'none';
+                    }});
+                    if (!cells.length) return 0;
+                    let width = 0;
+                    cells.forEach((cell) => {{
+                        const style = window.getComputedStyle(cell);
+                        const paddingLeft = parseFloat(style.paddingLeft || '0') || 0;
+                        const paddingRight = parseFloat(style.paddingRight || '0') || 0;
+                        const contentWidth = Math.max(cell.scrollWidth, cell.firstElementChild?.scrollWidth || 0, cell.textContent?.trim() ? cell.scrollWidth : 0);
+                        width = Math.max(width, Math.ceil(contentWidth + paddingLeft + paddingRight + 2));
+                    }});
+                    return width;
+                }};
+                const widths = {{}};
+                autoCols.forEach((col) => {{
+                    const measuredWidth = measureColumnWidth(col);
+                    if (!measuredWidth) return;
+                    widths[col] = measuredWidth;
+                    Array.from(table.querySelectorAll(`[data-col="${{col}}"]`)).forEach((cell) => {{
+                        cell.style.width = `${{measuredWidth}}px`;
+                        cell.style.minWidth = `${{measuredWidth}}px`;
+                        cell.style.maxWidth = `${{measuredWidth}}px`;
+                    }});
+                }});
+                let currentLeft = 0;
+                stickyCols.forEach((col) => {{
+                    table.style.setProperty(`--sticky-left-${{col}}`, `${{currentLeft}}px`);
+                    currentLeft += widths[col] || 0;
+                }});
+            }});
         }};
 
         const dashboardStateKey = window.teambeadStorageKey('dashboard-ui-state');
@@ -8902,15 +8950,15 @@ def _render_dashboard_page_v2(
         applyColumns();
         document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
             table.addEventListener('click', (event) => {{
-                if (event.target.closest('.dashboard-tree-toggle, a, input, select, label, summary, button')) return;
                 const cell = event.target.closest('tbody td[data-col]');
+                if (!cell || !table.contains(cell)) return;
+                if (event.target.closest('a, input, select, label, summary')) return;
                 if (cell && table.contains(cell)) {{
                     if (window.dashboardToggleCellSelection) window.dashboardToggleCellSelection(cell);
-                    return;
                 }}
             }});
             table.addEventListener('dblclick', (event) => {{
-                if (event.target.closest('.dashboard-tree-toggle, a, input, select, label, summary, button')) return;
+                if (event.target.closest('a, input, select, label, summary')) return;
                 const cell = event.target.closest('[data-col]');
                 const columnName = cell?.dataset.col || '';
                 if (!columnName || !table.contains(cell)) return;
