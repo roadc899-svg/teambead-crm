@@ -7694,15 +7694,24 @@ def _render_dashboard_page_v2(
     .dashboard-v2 {{
         display:grid;
         gap:18px;
+        width:100%;
+        min-width:0;
+        max-width:100%;
+        overflow-x:hidden;
     }}
     .dashboard-v2 .dashboard-filters-panel {{
         padding:18px 18px 16px;
+        width:100%;
+        min-width:0;
+        overflow:hidden;
     }}
     .dashboard-v2 .dashboard-filter-grid {{
         display:grid;
-        grid-template-columns:repeat(12, minmax(0, 1fr));
+        grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));
         gap:10px;
         align-items:end;
+        width:100%;
+        min-width:0;
     }}
     .dashboard-v2 .dashboard-filter-field {{
         display:grid;
@@ -7753,7 +7762,7 @@ def _render_dashboard_page_v2(
         border-radius:14px;
     }}
     .dashboard-v2 .dashboard-summary-wrap .stats-grid {{
-        grid-template-columns:repeat(9, minmax(0, 1fr));
+        grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));
         gap:10px;
     }}
     .dashboard-v2 .dashboard-summary-wrap .stat-card {{
@@ -7773,6 +7782,8 @@ def _render_dashboard_page_v2(
     }}
     .dashboard-v2 .dashboard-table-panel {{
         padding:18px;
+        min-width:0;
+        overflow:hidden;
     }}
     .dashboard-v2 .dashboard-table-header {{
         display:flex;
@@ -7797,6 +7808,9 @@ def _render_dashboard_page_v2(
         border-radius:20px;
         overflow:auto;
         background:#fdfefe;
+        width:100%;
+        min-width:0;
+        max-width:100%;
     }}
     .dashboard-v2 #dashboardUnifiedTable {{
         min-width:3220px;
@@ -8040,10 +8054,14 @@ def _render_dashboard_page_v2(
     }}
     @media (max-width: 1500px) {{
         .dashboard-v2 .dashboard-filter-grid {{
-            grid-template-columns:repeat(8, minmax(0, 1fr));
+            grid-template-columns:repeat(auto-fit, minmax(140px, 1fr));
         }}
         .dashboard-v2 .dashboard-summary-wrap .stats-grid {{
-            grid-template-columns:repeat(3, minmax(0, 1fr));
+            grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));
+        }}
+        .dashboard-v2 .dashboard-table-header {{
+            flex-direction:column;
+            align-items:stretch;
         }}
     }}
     </style>
