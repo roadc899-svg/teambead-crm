@@ -7306,6 +7306,22 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
             "launch_date": safe_text(item.get("launch_date")),
             "budget": safe_number(item.get("budget", 0)),
             "spend": safe_number(item.get("spend", 0)),
+            "fb_material_views": safe_number(item.get("material_views", 0)),
+            "fb_cost_per_content_view": safe_number(item.get("cost_per_content_view", 0)),
+            "fb_link_clicks": safe_number(item.get("clicks", 0)),
+            "fb_cpc": safe_number(item.get("cpc_real", 0)),
+            "fb_frequency": safe_number(item.get("frequency", 0)),
+            "fb_ctr": safe_number(item.get("ctr", 0)),
+            "fb_leads": safe_number(item.get("leads", 0)),
+            "fb_cost_per_lead": safe_number(item.get("cpl_real", 0)),
+            "fb_paid_subscriptions": safe_number(item.get("paid_subscriptions", 0)),
+            "fb_cost_per_paid_subscription": safe_number(item.get("cost_per_paid_subscription", 0)),
+            "fb_contacts": safe_number(item.get("contacts", 0)),
+            "fb_cost_per_contact": safe_number(item.get("cost_per_contact", 0)),
+            "fb_completed_registrations": safe_number(item.get("reg", 0)),
+            "fb_cost_per_completed_registration": safe_number(item.get("cost_per_completed_registration", 0)),
+            "fb_purchases": safe_number(item.get("ftd", 0)),
+            "fb_cost_per_purchase": safe_number(item.get("cpa_real", 0)),
             "clicks": safe_number(item.get("clicks", 0)),
             "leads": safe_number(item.get("leads", 0)),
             "reg": safe_number(item.get("reg", 0)),
@@ -7602,6 +7618,10 @@ def _render_dashboard_page_v2(
         "budget", "spend", "clicks", "leads", "reg", "rate", "cost_reg", "fb_ftd", "cpa",
         "chatterfy", "players_ftd", "qual_ftd", "hold_count", "cap_total", "cap_fill",
         "income", "profit", "roi",
+        "fb_material_views", "fb_cost_per_content_view", "fb_link_clicks", "fb_cpc",
+        "fb_frequency", "fb_ctr", "fb_leads", "fb_cost_per_lead",
+        "fb_paid_subscriptions", "fb_cost_per_paid_subscription", "fb_contacts", "fb_cost_per_contact",
+        "fb_completed_registrations", "fb_cost_per_completed_registration", "fb_purchases", "fb_cost_per_purchase",
     ]
 
     hierarchy_levels = [
@@ -7663,6 +7683,22 @@ def _render_dashboard_page_v2(
         return "".join([
             f'<td data-col="budget">{format_money(values.get("budget", 0))}</td>',
             f'<td data-col="spend">{format_money(values.get("spend", 0))}</td>',
+            f'<td data-col="fb_material_views">{format_int_or_float(values.get("fb_material_views", 0))}</td>',
+            f'<td data-col="fb_cost_per_content_view">{format_money(values.get("fb_cost_per_content_view", 0))}</td>',
+            f'<td data-col="fb_link_clicks">{format_int_or_float(values.get("fb_link_clicks", 0))}</td>',
+            f'<td data-col="fb_cpc">{format_money(values.get("fb_cpc", 0))}</td>',
+            f'<td data-col="fb_frequency">{format_int_or_float(values.get("fb_frequency", 0))}</td>',
+            f'<td data-col="fb_ctr">{format_percent(values.get("fb_ctr", 0))}</td>',
+            f'<td data-col="fb_leads">{format_int_or_float(values.get("fb_leads", 0))}</td>',
+            f'<td data-col="fb_cost_per_lead">{format_money(values.get("fb_cost_per_lead", 0))}</td>',
+            f'<td data-col="fb_paid_subscriptions">{format_int_or_float(values.get("fb_paid_subscriptions", 0))}</td>',
+            f'<td data-col="fb_cost_per_paid_subscription">{format_money(values.get("fb_cost_per_paid_subscription", 0))}</td>',
+            f'<td data-col="fb_contacts">{format_int_or_float(values.get("fb_contacts", 0))}</td>',
+            f'<td data-col="fb_cost_per_contact">{format_money(values.get("fb_cost_per_contact", 0))}</td>',
+            f'<td data-col="fb_completed_registrations">{format_int_or_float(values.get("fb_completed_registrations", 0))}</td>',
+            f'<td data-col="fb_cost_per_completed_registration">{format_money(values.get("fb_cost_per_completed_registration", 0))}</td>',
+            f'<td data-col="fb_purchases">{format_int_or_float(values.get("fb_purchases", 0))}</td>',
+            f'<td data-col="fb_cost_per_purchase">{format_money(values.get("fb_cost_per_purchase", 0))}</td>',
             f'<td data-col="clicks">{format_int_or_float(values.get("clicks", 0))}</td>',
             f'<td data-col="leads">{format_int_or_float(values.get("leads", 0))}</td>',
             f'<td data-col="reg">{format_int_or_float(values.get("reg", 0))}</td>',
@@ -7706,12 +7742,24 @@ def _render_dashboard_page_v2(
         ("adset_name", "Adset"),
         ("ad_name", "Ad"),
         ("buyer", "Buyer"),
-        ("offer", "Offer"),
-        ("cabinet_text", "Cabinets"),
-        ("advertiser_text", "Advertiser"),
-        ("account_id", "Account"),
         ("budget", "Budget"),
         ("spend", "Spend"),
+        ("fb_material_views", "Просмотры материалов"),
+        ("fb_cost_per_content_view", "Цена за просмотр контента"),
+        ("fb_link_clicks", "Клики по ссылке"),
+        ("fb_cpc", "CPC"),
+        ("fb_frequency", "Частота"),
+        ("fb_ctr", "CTR (все)"),
+        ("fb_leads", "Лиды FB"),
+        ("fb_cost_per_lead", "Цена за лид"),
+        ("fb_paid_subscriptions", "Подписки"),
+        ("fb_cost_per_paid_subscription", "Цена за платную подписку"),
+        ("fb_contacts", "Контакты"),
+        ("fb_cost_per_contact", "Цена за контакт"),
+        ("fb_completed_registrations", "Завершенные регистрации"),
+        ("fb_cost_per_completed_registration", "Цена за завершенную регистрацию"),
+        ("fb_purchases", "Покупки"),
+        ("fb_cost_per_purchase", "Цена за покупку"),
         ("clicks", "Clicks"),
         ("leads", "Leads"),
         ("reg", "Reg"),
@@ -7764,12 +7812,24 @@ def _render_dashboard_page_v2(
             <td data-col="adset_name"></td>
             <td data-col="ad_name">{escape(row.get("ad_name") or "—")}</td>
             <td data-col="buyer">{escape(row.get("buyer") or "—")}</td>
-            <td data-col="offer">{escape(row.get("offer") or "—")}</td>
-            <td data-col="cabinet_text">{escape(row.get("cabinet_text") or "—")}</td>
-            <td data-col="advertiser_text">{escape(row.get("advertiser_text") or "—")}</td>
-            <td data-col="account_id">{escape(row.get("account_id") or "—")}</td>
             <td data-col="budget">{format_money(row.get("budget", 0))}</td>
             <td data-col="spend">{format_money(row.get("spend", 0))}</td>
+            <td data-col="fb_material_views">{format_int_or_float(row.get("fb_material_views", 0))}</td>
+            <td data-col="fb_cost_per_content_view">{format_money(row.get("fb_cost_per_content_view", 0))}</td>
+            <td data-col="fb_link_clicks">{format_int_or_float(row.get("fb_link_clicks", 0))}</td>
+            <td data-col="fb_cpc">{format_money(row.get("fb_cpc", 0))}</td>
+            <td data-col="fb_frequency">{format_int_or_float(row.get("fb_frequency", 0))}</td>
+            <td data-col="fb_ctr">{format_percent(row.get("fb_ctr", 0))}</td>
+            <td data-col="fb_leads">{format_int_or_float(row.get("fb_leads", 0))}</td>
+            <td data-col="fb_cost_per_lead">{format_money(row.get("fb_cost_per_lead", 0))}</td>
+            <td data-col="fb_paid_subscriptions">{format_int_or_float(row.get("fb_paid_subscriptions", 0))}</td>
+            <td data-col="fb_cost_per_paid_subscription">{format_money(row.get("fb_cost_per_paid_subscription", 0))}</td>
+            <td data-col="fb_contacts">{format_int_or_float(row.get("fb_contacts", 0))}</td>
+            <td data-col="fb_cost_per_contact">{format_money(row.get("fb_cost_per_contact", 0))}</td>
+            <td data-col="fb_completed_registrations">{format_int_or_float(row.get("fb_completed_registrations", 0))}</td>
+            <td data-col="fb_cost_per_completed_registration">{format_money(row.get("fb_cost_per_completed_registration", 0))}</td>
+            <td data-col="fb_purchases">{format_int_or_float(row.get("fb_purchases", 0))}</td>
+            <td data-col="fb_cost_per_purchase">{format_money(row.get("fb_cost_per_purchase", 0))}</td>
             <td data-col="clicks">{format_int_or_float(row.get("clicks", 0))}</td>
             <td data-col="leads">{format_int_or_float(row.get("leads", 0))}</td>
             <td data-col="reg">{format_int_or_float(row.get("reg", 0))}</td>
@@ -7805,10 +7865,6 @@ def _render_dashboard_page_v2(
                 <td data-col="adset_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "adset_name" else ""}</td>
                 <td data-col="ad_name">—</td>
                 <td data-col="buyer">—</td>
-                <td data-col="offer">—</td>
-                <td data-col="cabinet_text">—</td>
-                <td data-col="advertiser_text">—</td>
-                <td data-col="account_id">—</td>
                 {render_dashboard_metric_cells(node["metrics"])}
             </tr>
             """
@@ -8141,26 +8197,6 @@ def _render_dashboard_page_v2(
         min-width:64px;
         max-width:64px;
     }}
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="offer"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="offer"] {{
-        width:102px;
-        min-width:102px;
-        max-width:102px;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="cabinet_text"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="cabinet_text"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="advertiser_text"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="advertiser_text"] {{
-        width:104px;
-        min-width:104px;
-        max-width:104px;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="account_id"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="account_id"] {{
-        width:122px;
-        min-width:122px;
-        max-width:122px;
-    }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="campaign_name"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="campaign_name"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="adset_name"],
@@ -8179,6 +8215,20 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable th[data-col="budget"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="spend"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="spend"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cost_per_content_view"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cost_per_content_view"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cpc"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cpc"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cost_per_lead"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cost_per_lead"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cost_per_paid_subscription"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cost_per_paid_subscription"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cost_per_contact"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cost_per_contact"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cost_per_completed_registration"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cost_per_completed_registration"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cost_per_purchase"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cost_per_purchase"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="rate"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="rate"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="cost_reg"],
@@ -8192,6 +8242,34 @@ def _render_dashboard_page_v2(
         width:92px;
         min-width:92px;
         max-width:92px;
+        text-align:right;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_material_views"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_material_views"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_link_clicks"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_link_clicks"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_leads"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_leads"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_paid_subscriptions"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_paid_subscriptions"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_contacts"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_contacts"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_completed_registrations"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_completed_registrations"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_purchases"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_purchases"] {{
+        width:88px;
+        min-width:88px;
+        max-width:88px;
+        text-align:right;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_frequency"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_frequency"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_ctr"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_ctr"] {{
+        width:76px;
+        min-width:76px;
+        max-width:76px;
         text-align:right;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="clicks"],
@@ -8242,13 +8320,7 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable th[data-col="manager"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="manager"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="geo"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="geo"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="offer"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="offer"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="cabinet_text"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="cabinet_text"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="advertiser_text"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="advertiser_text"] {{
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="geo"] {{
         background:#f7fbff;
     }}
     .dashboard-v2 #dashboardUnifiedTable th[data-col="budget"],
@@ -8257,6 +8329,42 @@ def _render_dashboard_page_v2(
     }}
     .dashboard-v2 #dashboardUnifiedTable th[data-col="spend"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="spend"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_material_views"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_material_views"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cost_per_content_view"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cost_per_content_view"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_link_clicks"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_link_clicks"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cpc"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cpc"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_frequency"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_frequency"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_ctr"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_ctr"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_leads"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_leads"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cost_per_lead"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cost_per_lead"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_paid_subscriptions"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_paid_subscriptions"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cost_per_paid_subscription"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cost_per_paid_subscription"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_contacts"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_contacts"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cost_per_contact"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cost_per_contact"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_completed_registrations"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_completed_registrations"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cost_per_completed_registration"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cost_per_completed_registration"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_purchases"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_purchases"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cost_per_purchase"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cost_per_purchase"] {{
+        background:#eaf4ff;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="clicks"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="clicks"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="clicks"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="clicks"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="leads"],
@@ -8319,84 +8427,10 @@ def _render_dashboard_page_v2(
         text-overflow:clip;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] th[data-col="buyer"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="buyer"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="offer"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="offer"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="cabinet_text"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="cabinet_text"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="advertiser_text"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="advertiser_text"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="account_id"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="account_id"] {{
+    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="buyer"] {{
         width:auto !important;
         min-width:0 !important;
         max-width:none !important;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="platform"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="platform"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="geo"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="geo"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="manager"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="manager"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="campaign_name"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="campaign_name"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="adset_name"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="adset_name"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="ad_name"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="ad_name"] {{
-        position:sticky;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="platform"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="platform"] {{
-        left:var(--sticky-left-platform, 0px);
-        z-index:7;
-        box-shadow:none;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="geo"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="geo"] {{
-        left:var(--sticky-left-geo, 0px);
-        z-index:7;
-        box-shadow:none;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="manager"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="manager"] {{
-        left:var(--sticky-left-manager, 0px);
-        z-index:7;
-        box-shadow:none;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="campaign_name"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="campaign_name"] {{
-        left:var(--sticky-left-campaign_name, 0px);
-        z-index:7;
-        box-shadow:none;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="adset_name"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="adset_name"] {{
-        left:var(--sticky-left-adset_name, 0px);
-        z-index:7;
-        box-shadow:none;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="ad_name"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="ad_name"] {{
-        left:var(--sticky-left-ad_name, 0px);
-        z-index:7;
-        box-shadow:none;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable thead th[data-col="platform"],
-    .dashboard-v2 #dashboardUnifiedTable thead th[data-col="geo"],
-    .dashboard-v2 #dashboardUnifiedTable thead th[data-col="manager"],
-    .dashboard-v2 #dashboardUnifiedTable thead th[data-col="campaign_name"],
-    .dashboard-v2 #dashboardUnifiedTable thead th[data-col="adset_name"],
-    .dashboard-v2 #dashboardUnifiedTable thead th[data-col="ad_name"] {{
-        z-index:9;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td[data-col="platform"],
-    .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td[data-col="geo"],
-    .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td[data-col="manager"],
-    .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td[data-col="campaign_name"],
-    .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td[data-col="adset_name"],
-    .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td[data-col="ad_name"] {{
-        background:#f6faff;
     }}
     @media (max-width: 1500px) {{
         .dashboard-v2 .dashboard-filter-grid {{
@@ -8602,9 +8636,8 @@ def _render_dashboard_page_v2(
             if (!table) return;
             const autoCols = [
                 'platform', 'geo', 'manager', 'campaign_name', 'adset_name', 'ad_name',
-                'buyer', 'offer', 'cabinet_text', 'advertiser_text', 'account_id',
+                'buyer',
             ];
-            const stickyCols = ['platform', 'geo', 'manager', 'campaign_name', 'adset_name', 'ad_name'];
             autoCols.forEach((col) => {{
                 const allCells = Array.from(table.querySelectorAll(`[data-col="${{col}}"]`));
                 allCells.forEach((cell) => {{
@@ -8642,11 +8675,6 @@ def _render_dashboard_page_v2(
                         cell.style.minWidth = `${{measuredWidth}}px`;
                         cell.style.maxWidth = `${{measuredWidth}}px`;
                     }});
-                }});
-                let currentLeft = 0;
-                stickyCols.forEach((col) => {{
-                    table.style.setProperty(`--sticky-left-${{col}}`, `${{currentLeft}}px`);
-                    currentLeft += widths[col] || 0;
                 }});
             }});
         }};
