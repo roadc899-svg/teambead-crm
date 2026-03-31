@@ -8418,13 +8418,7 @@ def _render_dashboard_page_v2(
                 rendered.extend(group)
         return rendered
 
-    inline_rows = build_dashboard_inline_rows(tree)
-    rows_html = "".join([
-        f'<tr class="{"soft-green" if row.get("_profit_value", 0) > 0 else ("soft-red" if row.get("_profit_value", 0) < 0 else "")}">'
-        + "".join(f'<td data-col="{escape(field)}">{row.get(field, "")}</td>' for field in table_field_order)
-        + "</tr>"
-        for row in inline_rows
-    ])
+    rows_html = render_tree_rows(tree)
     dashboard_table_fields_json = json.dumps(table_field_order, ensure_ascii=False)
     dashboard_hierarchy_fields_json = json.dumps(hierarchy_field_order, ensure_ascii=False)
     dashboard_metric_fields_json = json.dumps(metric_field_order, ensure_ascii=False)
@@ -9850,107 +9844,46 @@ def _render_dashboard_page_v2(
             applyColumns();
         }};
 
-        const emptyInlineRow = () => {{
-            const payload = Object.create(null);
-            dashboardTableFields.forEach((field) => {{
-                payload[field] = '';
-            }});
-            payload._profitValue = 0;
-            return payload;
-        }};
+        const treeRows = (table) => Array.from(table.querySelectorAll('tbody tr'));
+        const treeButtons = (table) => Array.from(table.querySelectorAll('.dashboard-tree-toggle'));
+        const directChildren = (table, nodeId) => treeRows(table).filter((row) => row.dataset.parentId === nodeId);
 
-        const renderLineageLabel = (label, level) => {{
-            const safeLabel = escapeHtml(label || '—');
-            return `<div class="dashboard-tree-cell dashboard-tree-level-${{level}}" data-tree-value="${{safeLabel}}"><span class="dashboard-tree-label" title="${{safeLabel}}">${{safeLabel}}</span></div>`;
-        }};
-
-        const renderHierarchyToggle = (node) => {{
-            const safeLabel = escapeHtml(node.label || '—');
-            const level = hierarchyLevelMap[node.column] ?? 0;
-            const expanded = openNodes.has(node.id);
-            const href = buildStateUrl(getToggledState(node.id));
-            return `<div class="dashboard-tree-cell dashboard-tree-level-${{level}}" data-tree-value="${{safeLabel}}"><a class="dashboard-tree-toggle dashboard-tree-toggle-caret" data-target="${{escapeHtml(node.id)}}" aria-expanded="${{expanded ? 'true' : 'false'}}" title="${{safeLabel}}" href="${{escapeHtml(href)}}"><span class="dashboard-tree-caret">▸</span><span class="dashboard-tree-label">${{safeLabel}}</span></a></div>`;
-        }};
-
-        const makeMetricsPayload = (metrics) => {{
-            const payload = Object.create(null);
-            dashboardMetricFields.forEach((field) => {{
-                payload[field] = escapeHtml(metrics?.[field] || '');
-            }});
-            return payload;
-        }};
-
-        const makeNodeInlineRow = (node) => {{
-            const payload = emptyInlineRow();
-            payload[node.column] = renderHierarchyToggle(node);
-            Object.assign(payload, makeMetricsPayload(node.metrics || Object.create(null)));
-            payload._profitValue = Number(node.profit_value || 0);
-            return payload;
-        }};
-
-        const makeLeafInlineRow = (leaf) => {{
-            const payload = emptyInlineRow();
-            payload.ad_name = renderLineageLabel(leaf.label || '—', hierarchyLevelMap.ad_name ?? 5);
-            dashboardDescriptorFields.forEach((field) => {{
-                payload[field] = escapeHtml(leaf?.[field] || '');
-            }});
-            Object.assign(payload, makeMetricsPayload(leaf.metrics || Object.create(null)));
-            payload._profitValue = Number(leaf.profit_value || 0);
-            return payload;
-        }};
-
-        const mergeInlineRows = (left, right) => {{
-            const payload = emptyInlineRow();
-            dashboardTableFields.forEach((field) => {{
-                payload[field] = right?.[field] || left?.[field] || '';
-            }});
-            payload._profitValue = Number(right?._profitValue ?? left?._profitValue ?? 0);
-            return payload;
-        }};
-
-        const buildInlineRows = (nodes) => {{
-            const rendered = [];
-            (nodes || []).forEach((node) => {{
-                const baseRow = makeNodeInlineRow(node);
-                if (!openNodes.has(node.id)) {{
-                    rendered.push(baseRow);
-                    return;
+        const resetTreeTable = (table) => {{
+            treeRows(table).forEach((row) => {{
+                if (row.dataset.parentId) {{
+                    row.hidden = true;
                 }}
-                const childGroups = (node.children && node.children.length)
-                    ? node.children.map((child) => buildInlineRows([child]))
-                    : (node.ads || []).map((leaf) => [makeLeafInlineRow(leaf)]);
-                if (!childGroups.length) {{
-                    rendered.push(baseRow);
-                    return;
+                row.classList.remove('dashboard-tree-row-open');
+            }});
+            treeButtons(table).forEach((button) => {{
+                button.setAttribute('aria-expanded', 'false');
+                const nodeId = button.dataset.target;
+                if (nodeId) {{
+                    button.setAttribute('href', buildStateUrl(getToggledState(nodeId)));
                 }}
-                const firstGroup = childGroups[0];
-                rendered.push(mergeInlineRows(baseRow, firstGroup[0]));
-                rendered.push(...firstGroup.slice(1));
-                childGroups.slice(1).forEach((group) => {{
-                    rendered.push(...group);
+            }});
+        }};
+
+        const applyTreeState = () => {{
+            treeTables().forEach(resetTreeTable);
+            const orderedNodes = Array.from(openNodes).sort((left, right) => left.split('|').length - right.split('|').length);
+            orderedNodes.forEach((nodeId) => {{
+                treeTables().forEach((table) => {{
+                    const row = treeRows(table).find((item) => item.dataset.nodeId === nodeId);
+                    if (!row) return;
+                    const parentId = row.dataset.parentId || '';
+                    if (parentId && !openNodes.has(parentId)) return;
+                    row.classList.add('dashboard-tree-row-open');
+                    const button = treeButtons(table).find((item) => item.dataset.target === nodeId);
+                    if (button) {{
+                        button.setAttribute('aria-expanded', 'true');
+                        button.setAttribute('href', buildStateUrl(getToggledState(nodeId)));
+                    }}
+                    directChildren(table, nodeId).forEach((child) => {{
+                        child.hidden = false;
+                    }});
                 }});
             }});
-            return rendered;
-        }};
-
-        const renderInlineRowHtml = (row) => {{
-            const rowClass = row._profitValue > 0 ? 'soft-green' : (row._profitValue < 0 ? 'soft-red' : '');
-            const cells = dashboardTableFields.map((field) => `<td data-col="${{escapeHtml(field)}}">${{row[field] || ''}}</td>`).join('');
-            return `<tr class="${{rowClass}}">${{cells}}</tr>`;
-        }};
-
-        const renderTreeTable = (table) => {{
-            if (!table) return;
-            const tbody = table.tBodies && table.tBodies[0];
-            if (!tbody) return;
-            const inlineRows = buildInlineRows(dashboardTreePayload);
-            tbody.innerHTML = inlineRows.length
-                ? inlineRows.map(renderInlineRowHtml).join('')
-                : dashboardNoRowsHtml;
-        }};
-
-        const renderTreeTables = () => {{
-            treeTables().forEach(renderTreeTable);
             syncTreeState();
             applyColumns();
         }};
@@ -9970,7 +9903,7 @@ def _render_dashboard_page_v2(
             const nodeId = toggle.dataset.target;
             if (!nodeId) return;
             openNodes = getToggledState(nodeId);
-            renderTreeTables();
+            applyTreeState();
         }});
 
         const groupingForm = document.getElementById('dashboardGroupingForm');
@@ -9999,7 +9932,7 @@ def _render_dashboard_page_v2(
         }});
 
         requestAnimationFrame(() => {{
-            renderTreeTables();
+            applyTreeState();
         }});
     }})();
     </script>
