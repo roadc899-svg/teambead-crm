@@ -8001,10 +8001,15 @@ def _render_dashboard_page_v2(
         cursor:pointer;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-row-selected td {{
-        background:#d9edff !important;
+        background:#beddff !important;
+        opacity:1 !important;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-row-selected:hover td {{
-        background:#d9edff !important;
+        background:#beddff !important;
+        opacity:1 !important;
+    }}
+    .dashboard-v2 table[data-dashboard-tree-table].dashboard-has-row-selection tbody tr:not(.dashboard-row-selected) td {{
+        opacity:.2;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] td.dashboard-cell-selected {{
         background:#cfe8ff !important;
@@ -8555,6 +8560,10 @@ def _render_dashboard_page_v2(
             if (!button) return false;
             const table = button.closest('[data-dashboard-tree-table]');
             if (!table) return false;
+            const parentRow = button.closest('tr[data-row-key]');
+            if (parentRow && window.dashboardToggleRowSelection) {{
+                window.dashboardToggleRowSelection(parentRow, true);
+            }}
             const nodeId = button.dataset.target || '';
             if (!nodeId) return false;
             const treeRows = Array.from(table.querySelectorAll('tbody tr'));
@@ -8689,6 +8698,10 @@ def _render_dashboard_page_v2(
             Array.from(table.querySelectorAll('tbody tr[data-row-key]')).forEach((row) => {{
                 row.classList.toggle('dashboard-row-selected', selectedKeys.has(row.dataset.rowKey || ''));
             }});
+            table.classList.toggle(
+                'dashboard-has-row-selection',
+                Array.from(table.querySelectorAll('tbody tr.dashboard-row-selected')).length > 0
+            );
         }};
         window.dashboardPersistSelectedRows = (table) => {{
             if (!table) return;
@@ -8701,11 +8714,21 @@ def _render_dashboard_page_v2(
                 .filter(Boolean);
             window.dashboardWriteState(state);
         }};
-        window.dashboardToggleRowSelection = (row) => {{
+        window.dashboardToggleRowSelection = (row, forceSelect = false) => {{
             if (!row) return;
             const table = row.closest('[data-dashboard-tree-table]');
             if (!table) return;
-            row.classList.toggle('dashboard-row-selected');
+            const wasSelected = row.classList.contains('dashboard-row-selected');
+            Array.from(table.querySelectorAll('tbody tr.dashboard-row-selected')).forEach((selectedRow) => {{
+                selectedRow.classList.remove('dashboard-row-selected');
+            }});
+            if (!wasSelected || forceSelect) {{
+                row.classList.add('dashboard-row-selected');
+            }}
+            table.classList.toggle(
+                'dashboard-has-row-selection',
+                Array.from(table.querySelectorAll('tbody tr.dashboard-row-selected')).length > 0
+            );
             window.dashboardPersistSelectedRows(table);
         }};
         window.dashboardApplySelectedColumns = (table) => {{
@@ -8950,12 +8973,11 @@ def _render_dashboard_page_v2(
         applyColumns();
         document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
             table.addEventListener('click', (event) => {{
-                const cell = event.target.closest('tbody td[data-col]');
-                if (!cell || !table.contains(cell)) return;
-                if (event.target.closest('a, input, select, label, summary')) return;
-                if (cell && table.contains(cell)) {{
-                    if (window.dashboardToggleCellSelection) window.dashboardToggleCellSelection(cell);
-                }}
+                if (event.target.closest('.dashboard-tree-toggle')) return;
+                if (event.target.closest('a, input, select, label, summary, button')) return;
+                const row = event.target.closest('tbody tr[data-row-key]');
+                if (!row || !table.contains(row)) return;
+                if (window.dashboardToggleRowSelection) window.dashboardToggleRowSelection(row);
             }});
             table.addEventListener('dblclick', (event) => {{
                 if (event.target.closest('a, input, select, label, summary')) return;
