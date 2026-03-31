@@ -7159,95 +7159,6 @@ def build_dashboard_cabinet_flow_map():
     return result
 
 
-def build_dashboard_players_scope_map(period_label=""):
-    ensure_partner_table()
-    ensure_caps_table()
-    db = SessionLocal()
-    try:
-        partner_query = db.query(PartnerRow)
-        caps_query = db.query(CapRow)
-        if period_label:
-            partner_query = partner_query.filter(PartnerRow.period_label == period_label)
-            caps_query = caps_query.filter(CapRow.period_label == period_label)
-        partner_rows = partner_query.all()
-        caps = caps_query.all()
-    finally:
-        db.close()
-
-    cabinet_platform_map = get_cabinet_platform_map()
-    caps_by_promo, caps_by_scope = build_cap_match_maps(caps)
-    result = {}
-    for row in partner_rows:
-        scope_key = build_cap_scope_key(getattr(row, "cabinet_name", ""), getattr(row, "country", ""))
-        if not all(scope_key):
-            continue
-        bucket = result.setdefault(scope_key, {
-            "players_ftd": 0.0,
-            "qual_ftd": 0.0,
-        })
-        if safe_number(getattr(row, "deposit_amount", 0)) > 0:
-            bucket["players_ftd"] += 1
-        matched_caps = get_caps_for_partner_row(row, caps_by_promo, caps_by_scope, cabinet_platform_map)
-        if any(is_partner_row_qualified_for_cap(row, cap, cabinet_platform_map) for cap in matched_caps):
-            bucket["qual_ftd"] += 1
-    return result
-
-
-def build_dashboard_caps_scope_map(period_label=""):
-    ensure_caps_table()
-    db = SessionLocal()
-    try:
-        query = db.query(CapRow)
-        if period_label:
-            query = query.filter(CapRow.period_label == period_label)
-        caps = query.all()
-    finally:
-        db.close()
-
-    result = {}
-    for cap in caps:
-        scope_key = build_cap_scope_key(getattr(cap, "cabinet_name", "") or getattr(cap, "buyer", ""), getattr(cap, "geo", "") or getattr(cap, "code", ""))
-        if not all(scope_key):
-            continue
-        bucket = result.setdefault(scope_key, {
-            "caps_count": 0.0,
-            "cap_total": 0.0,
-            "cap_current_ftd": 0.0,
-            "rate_values": [],
-        })
-        bucket["caps_count"] += 1
-        bucket["cap_total"] += safe_number(getattr(cap, "cap_value", 0))
-        bucket["cap_current_ftd"] += safe_number(getattr(cap, "current_ftd", 0))
-        rate_value = safe_cap_number(getattr(cap, "rate", 0))
-        if rate_value > 0:
-            bucket["rate_values"].append(rate_value)
-    for bucket in result.values():
-        rate_values = bucket.pop("rate_values", [])
-        bucket["rate"] = (sum(rate_values) / len(rate_values)) if rate_values else 0.0
-        bucket["cap_fill"] = cap_fill_percent(bucket["cap_current_ftd"], bucket["cap_total"])
-    return result
-
-
-def build_dashboard_hold_scope_map(period_label=""):
-    result = {}
-    for item in get_hold_wager_rows(period_label=period_label):
-        scope_key = build_cap_scope_key(item.get("cabinet_name"), item.get("country"))
-        if not all(scope_key):
-            continue
-        bucket = result.setdefault(scope_key, {
-            "hold_count": 0.0,
-            "baseline_fail_count": 0.0,
-            "wager_fail_count": 0.0,
-        })
-        bucket["hold_count"] += 1
-        reason = safe_text(item.get("reason")).lower()
-        if "baseline" in reason:
-            bucket["baseline_fail_count"] += 1
-        if "wager" in reason:
-            bucket["wager_fail_count"] += 1
-    return result
-
-
 def pick_dashboard_primary_cabinet(cabinets, fb_item=None):
     if not cabinets:
         return None
@@ -7356,13 +7267,11 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
     fb_rows = aggregate_grouped_rows(get_filtered_data(buyer=buyer_scope, period_label=period_label))
     fb_rows = enrich_statistic_rows(fb_rows, period_label=period_label)
     cabinet_map = build_dashboard_cabinet_flow_map()
-    players_scope_map = build_dashboard_players_scope_map(period_label=period_label)
-    caps_scope_map = build_dashboard_caps_scope_map(period_label=period_label)
-    hold_scope_map = build_dashboard_hold_scope_map(period_label=period_label)
+    caps_map = build_dashboard_caps_flow_map(period_label=period_label)
+    hold_map = build_dashboard_hold_flow_map(period_label=period_label)
 
-    row_contexts = []
-    scope_bucket_weights = {}
-    scope_bucket_counts = {}
+    rows = []
+
     for item in fb_rows:
         platform_key = normalize_dashboard_platform(item.get("platform"))
         flow_key = build_flow_key(platform_key, item.get("manager"), item.get("geo"))
@@ -7374,67 +7283,22 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
         primary_cabinet = pick_dashboard_primary_cabinet(related_cabinets, item)
         primary_cabinet_name = safe_text(getattr(primary_cabinet, "name", ""))
         primary_advertiser = safe_text(getattr(primary_cabinet, "advertiser", ""))
-        related_cabinet_names = sorted({
-            safe_text(getattr(cab, "name", "")).strip()
-            for cab in related_cabinets
-            if safe_text(getattr(cab, "name", "")).strip()
-        })
-        related_advertiser_names = sorted({
-            safe_text(getattr(cab, "advertiser", "")).strip()
-            for cab in related_cabinets
-            if safe_text(getattr(cab, "advertiser", "")).strip()
-        })
-        scope_key = build_cap_scope_key(primary_cabinet_name, item.get("geo")) if primary_cabinet_name else ("", "")
-        row_weight = safe_number(item.get("ftd")) or safe_number(item.get("leads")) or safe_number(item.get("spend")) or 1.0
-        if all(scope_key):
-            scope_bucket_weights[scope_key] = scope_bucket_weights.get(scope_key, 0.0) + row_weight
-            scope_bucket_counts[scope_key] = scope_bucket_counts.get(scope_key, 0) + 1
-        row_contexts.append({
-            "item": item,
-            "flow_key": flow_key,
-            "related_cabinets": related_cabinets,
-            "related_cabinet_names": related_cabinet_names,
-            "related_advertiser_names": related_advertiser_names,
-            "primary_cabinet_name": primary_cabinet_name,
-            "primary_advertiser": primary_advertiser,
-            "scope_key": scope_key,
-            "row_weight": row_weight,
-        })
+        cabinet_names = [primary_cabinet_name] if primary_cabinet_name else []
+        advertiser_names = [primary_advertiser] if primary_advertiser else []
+        active_cabinets = [cab for cab in related_cabinets if safe_text(getattr(cab, "status", "")).lower() == "active"]
+        cap_info = caps_map.get(flow_key, {})
+        hold_info = hold_map.get(flow_key, {})
 
-    rows = []
-    for context in row_contexts:
-        item = context["item"]
-        scope_key = context["scope_key"]
-        players_info = players_scope_map.get(scope_key, {}) if all(scope_key) else {}
-        caps_info = caps_scope_map.get(scope_key, {}) if all(scope_key) else {}
-        hold_info = hold_scope_map.get(scope_key, {}) if all(scope_key) else {}
-        bucket_weight = scope_bucket_weights.get(scope_key, 0.0)
-        bucket_count = scope_bucket_counts.get(scope_key, 1)
-        scope_share = 0.0
-        if all(scope_key):
-            scope_share = (context["row_weight"] / bucket_weight) if bucket_weight > 0 else (1.0 / bucket_count)
-        active_cabinets = [cab for cab in context["related_cabinets"] if safe_text(getattr(cab, "status", "")).lower() == "active"]
-        players_ftd = safe_number(players_info.get("players_ftd", 0)) * scope_share
-        qual_ftd = safe_number(players_info.get("qual_ftd", 0)) * scope_share
-        rate = safe_number(caps_info.get("rate", 0))
-        payout = qual_ftd * rate
-        caps_count = safe_number(caps_info.get("caps_count", 0)) * scope_share
-        cap_total = safe_number(caps_info.get("cap_total", 0)) * scope_share
-        cap_current_ftd = safe_number(caps_info.get("cap_current_ftd", 0)) * scope_share
-        baseline_fail_count = safe_number(hold_info.get("baseline_fail_count", 0)) * scope_share
-        wager_fail_count = safe_number(hold_info.get("wager_fail_count", 0)) * scope_share
-        hold_count = safe_number(hold_info.get("hold_count", 0)) * scope_share
-        profit = payout - safe_number(item.get("spend", 0))
         row = {
             "buyer": safe_text(item.get("buyer")),
             "platform": safe_text(item.get("platform")),
             "manager": safe_text(item.get("manager")),
             "geo": safe_text(item.get("geo")),
             "offer": safe_text(item.get("offer")),
-            "cabinet_names": context["related_cabinet_names"] or ([context["primary_cabinet_name"]] if context["primary_cabinet_name"] else []),
-            "cabinet_text": ", ".join(context["related_cabinet_names"]) if context["related_cabinet_names"] else (context["primary_cabinet_name"] or "—"),
-            "advertiser_names": context["related_advertiser_names"] or ([context["primary_advertiser"]] if context["primary_advertiser"] else []),
-            "advertiser_text": context["primary_advertiser"] or (context["related_advertiser_names"][0] if context["related_advertiser_names"] else "—"),
+            "cabinet_names": cabinet_names,
+            "cabinet_text": primary_cabinet_name or "—",
+            "advertiser_names": advertiser_names,
+            "advertiser_text": primary_advertiser or "—",
             "campaign_name": safe_text(item.get("campaign_name")),
             "adset_name": safe_text(item.get("adset_name")),
             "ad_name": safe_text(item.get("ad_name")),
@@ -7449,22 +7313,20 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
             "fb_ftd": safe_number(item.get("ftd", 0)),
             "cpa": safe_number(item.get("cpa_real", 0)),
             "chatterfy": safe_number(item.get("stat_chatterfy", 0)),
-            "players_ftd": players_ftd,
-            "qual_ftd": qual_ftd,
-            "rate": rate,
-            "income": payout,
-            "profit": profit,
-            "roi": ((profit / safe_number(item.get("spend", 0))) * 100) if safe_number(item.get("spend", 0)) > 0 else 0.0,
-            "caps_count": caps_count,
-            "cap_total": cap_total,
-            "cap_current_ftd": cap_current_ftd,
-            "cap_fill": cap_fill_percent(cap_current_ftd, cap_total),
-            "hold_count": hold_count,
-            "baseline_fail_count": baseline_fail_count,
-            "wager_fail_count": wager_fail_count,
-            "hold_split": f'{format_int_or_float(baseline_fail_count)}B / {format_int_or_float(wager_fail_count)}W',
+            "players_ftd": safe_number(item.get("stat_total_ftd", 0)),
+            "qual_ftd": safe_number(item.get("stat_qual_ftd", 0)),
+            "rate": safe_number(item.get("stat_rate", 0)),
+            "income": safe_number(item.get("stat_income", 0)),
+            "profit": safe_number(item.get("stat_profit", 0)),
+            "roi": safe_number(item.get("stat_roi", 0)),
+            "caps_count": safe_number(cap_info.get("caps_count", 0)),
+            "cap_total": safe_number(cap_info.get("cap_total", 0)),
+            "cap_current_ftd": safe_number(cap_info.get("cap_current_ftd", 0)),
+            "cap_fill": safe_number(cap_info.get("cap_fill", 0)),
+            "hold_count": safe_number(hold_info.get("hold_count", 0)),
+            "hold_split": f'{format_int_or_float(hold_info.get("baseline_fail_count", 0))}B / {format_int_or_float(hold_info.get("wager_fail_count", 0))}W' if hold_info else "0B / 0W",
             "active_cabinets": len(active_cabinets),
-            "flow_key": context["flow_key"],
+            "flow_key": flow_key,
             "flow_label": " / ".join(filter(None, [safe_text(item.get("platform")), safe_text(item.get("manager")), safe_text(item.get("geo"))])),
             "source_name": safe_text(item.get("source_name")),
             "row_kind": "fb",
@@ -7494,7 +7356,7 @@ def build_dashboard_summary_cards(rows):
         ("FB FTD", format_int_or_float(totals["fb_ftd"])),
         ("Players FTD", format_int_or_float(totals["players_ftd"])),
         ("Chatterfy", format_int_or_float(totals["chatterfy"])),
-        ("Payout", format_money(totals["income"])),
+        ("Income", format_money(totals["income"])),
         ("Profit", format_money(totals["profit"])),
     ]
     cards_html = "".join(
@@ -7645,36 +7507,12 @@ def _render_dashboard_page_v2(
     account_id = safe_text(request.query_params.get("account_id"))
     ad_name = safe_text(request.query_params.get("ad_name"))
     source_name = safe_text(request.query_params.get("source_name"))
-    matrix_brand = safe_text(request.query_params.get("matrix_brand"))
-    matrix_geo = safe_text(request.query_params.get("matrix_geo"))
-    matrix_cabinet = safe_text(request.query_params.get("matrix_cabinet"))
-    matrix_campaign = safe_text(request.query_params.get("matrix_campaign"))
-    matrix_adset = safe_text(request.query_params.get("matrix_adset"))
-    matrix_ad = safe_text(request.query_params.get("matrix_ad"))
     has_caps = safe_text(request.query_params.get("has_caps"))
     has_hold = safe_text(request.query_params.get("has_hold"))
     has_chatterfy = safe_text(request.query_params.get("has_chatterfy"))
     has_players = safe_text(request.query_params.get("has_players"))
     sort_by = safe_text(request.query_params.get("sort_by") or "spend")
     order = safe_text(request.query_params.get("order") or "desc")
-    dashboard_state_param = safe_text(request.query_params.get("dashboard_state"))
-    flat_hierarchy_levels = [
-        ("platform", "Brand"),
-        ("geo", "Geo"),
-        ("manager", "Cabinet"),
-        ("campaign_name", "Campaign"),
-        ("adset_name", "Adset"),
-        ("ad_name", "Ad"),
-    ]
-    raw_group_levels = []
-    if hasattr(request.query_params, "getlist"):
-        for value in request.query_params.getlist("group_levels"):
-            raw_group_levels.extend([part.strip() for part in safe_text(value).split(",") if part.strip()])
-    if not raw_group_levels:
-        raw_group_levels = [part.strip() for part in safe_text(request.query_params.get("group_levels")).split(",") if part.strip()]
-    allowed_group_levels = [field for field, _label in flat_hierarchy_levels]
-    selected_group_levels = [field for field in allowed_group_levels if field in raw_group_levels] or list(allowed_group_levels)
-    group_levels_param = ",".join(selected_group_levels)
 
     base_rows = build_dashboard_rows_v2(user, buyer=buyer, period_label=effective_period_label)
     buyer_values = [value for value, _label in get_fb_buyer_name_options()] or sorted({safe_text(row.get("buyer")) for row in base_rows if safe_text(row.get("buyer"))})
@@ -7758,25 +7596,12 @@ def _render_dashboard_page_v2(
         "period_label": effective_period_label,
         "sort_by": sort_by,
         "order": order,
-        "dashboard_state": dashboard_state_param,
-        "group_levels": group_levels_param,
-        "matrix_brand": matrix_brand,
-        "matrix_geo": matrix_geo,
-        "matrix_cabinet": matrix_cabinet,
-        "matrix_campaign": matrix_campaign,
-        "matrix_adset": matrix_adset,
-        "matrix_ad": matrix_ad,
     }
 
     dashboard_numeric_fields = [
         "budget", "spend", "clicks", "leads", "reg", "rate", "cost_reg", "fb_ftd", "cpa",
         "chatterfy", "players_ftd", "qual_ftd", "hold_count", "cap_total", "cap_fill",
         "income", "profit", "roi",
-    ]
-    dashboard_metric_sum_fields = [
-        "budget", "spend", "clicks", "leads", "reg", "fb_ftd", "chatterfy", "players_ftd",
-        "qual_ftd", "hold_count", "cap_total", "cap_current_ftd", "income",
-        "baseline_fail_count", "wager_fail_count",
     ]
 
     hierarchy_levels = [
@@ -7788,33 +7613,11 @@ def _render_dashboard_page_v2(
     ]
 
     def aggregate_dashboard_metrics(items):
-        totals = {field: 0.0 for field in dashboard_metric_sum_fields}
+        totals = {field: 0.0 for field in dashboard_numeric_fields}
         for item in items:
-            for field in dashboard_metric_sum_fields:
+            for field in dashboard_numeric_fields:
                 totals[field] += safe_number(item.get(field, 0))
-        profit = totals["income"] - totals["spend"]
-        return {
-            "budget": totals["budget"],
-            "spend": totals["spend"],
-            "clicks": totals["clicks"],
-            "leads": totals["leads"],
-            "reg": totals["reg"],
-            "rate": (totals["income"] / totals["qual_ftd"]) if totals["qual_ftd"] > 0 else 0.0,
-            "cost_reg": (totals["spend"] / totals["reg"]) if totals["reg"] > 0 else 0.0,
-            "fb_ftd": totals["fb_ftd"],
-            "cpa": (totals["spend"] / totals["fb_ftd"]) if totals["fb_ftd"] > 0 else 0.0,
-            "chatterfy": totals["chatterfy"],
-            "players_ftd": totals["players_ftd"],
-            "qual_ftd": totals["qual_ftd"],
-            "hold_count": totals["hold_count"],
-            "cap_total": totals["cap_total"],
-            "cap_fill": cap_fill_percent(totals["cap_current_ftd"], totals["cap_total"]),
-            "income": totals["income"],
-            "profit": profit,
-            "roi": ((profit / totals["spend"]) * 100) if totals["spend"] > 0 else 0.0,
-            "baseline_fail_count": totals["baseline_fail_count"],
-            "wager_fail_count": totals["wager_fail_count"],
-        }
+        return totals
 
     def hierarchy_bucket_sort_key(bucket_name, bucket_rows):
         text_value = safe_text(bucket_name).strip().lower()
@@ -7824,21 +7627,6 @@ def _render_dashboard_page_v2(
         return (reverse_metric, text_value)
 
     node_counter = 0
-    open_node_ids = {value.strip() for value in safe_text(dashboard_state_param).split(",") if value.strip()}
-
-    def serialize_dashboard_state(values):
-        return ",".join(sorted(values))
-
-    def make_dashboard_state_toggle_link(node_id):
-        next_state = set(open_node_ids)
-        if node_id in next_state:
-            next_state = {
-                value for value in next_state
-                if value != node_id and not value.startswith(f"{node_id}|")
-            }
-        else:
-            next_state.add(node_id)
-        return f'/dashboard?{build_query_string(**{**filter_params, "dashboard_state": serialize_dashboard_state(next_state)})}'
 
     def build_dashboard_tree(items, levels, path=None):
         nonlocal node_counter
@@ -7872,30 +7660,26 @@ def _render_dashboard_page_v2(
         return result
 
     def render_dashboard_metric_cells(values):
-        hold_split = (
-            f'{format_int_or_float(values.get("baseline_fail_count", 0))}B / '
-            f'{format_int_or_float(values.get("wager_fail_count", 0))}W'
-        )
         return "".join([
-            f'<td class="dashboard-tree-summary-cell" data-col="budget">{format_money(values.get("budget", 0))}</td>',
-            f'<td class="dashboard-tree-summary-cell" data-col="spend">{format_money(values.get("spend", 0))}</td>',
-            f'<td class="dashboard-tree-summary-cell" data-col="clicks">{format_int_or_float(values.get("clicks", 0))}</td>',
-            f'<td class="dashboard-tree-summary-cell" data-col="leads">{format_int_or_float(values.get("leads", 0))}</td>',
-            f'<td class="dashboard-tree-summary-cell" data-col="reg">{format_int_or_float(values.get("reg", 0))}</td>',
-            f'<td class="dashboard-tree-summary-cell" data-col="rate">{format_money(values.get("rate", 0))}</td>',
-            f'<td class="dashboard-tree-summary-cell" data-col="cost_reg">{format_money(values.get("cost_reg", 0))}</td>',
-            f'<td class="dashboard-tree-summary-cell" data-col="fb_ftd">{format_int_or_float(values.get("fb_ftd", 0))}</td>',
-            f'<td class="dashboard-tree-summary-cell" data-col="cpa">{format_money(values.get("cpa", 0))}</td>',
-            f'<td class="dashboard-tree-summary-cell" data-col="chatterfy">{format_int_or_float(values.get("chatterfy", 0))}</td>',
-            f'<td class="dashboard-tree-summary-cell" data-col="players_ftd">{format_int_or_float(values.get("players_ftd", 0))}</td>',
-            f'<td class="dashboard-tree-summary-cell" data-col="qual_ftd">{format_int_or_float(values.get("qual_ftd", 0))}</td>',
-            f'<td class="dashboard-tree-summary-cell" data-col="hold_count">{format_int_or_float(values.get("hold_count", 0))}</td>',
-            f'<td class="dashboard-tree-summary-cell" data-col="hold_split">{escape(hold_split)}</td>',
-            f'<td class="dashboard-tree-summary-cell" data-col="cap_total">{format_int_or_float(values.get("cap_total", 0))}</td>',
-            f'<td class="dashboard-tree-summary-cell" data-col="cap_fill">{format_percent(values.get("cap_fill", 0))}</td>',
-            f'<td class="dashboard-tree-summary-cell" data-col="income">{format_money(values.get("income", 0))}</td>',
-            f'<td class="dashboard-tree-summary-cell" data-col="profit">{format_money(values.get("profit", 0))}</td>',
-            f'<td class="dashboard-tree-summary-cell" data-col="roi">{format_percent(values.get("roi", 0))}</td>',
+            f'<td data-col="budget">{format_money(values.get("budget", 0))}</td>',
+            f'<td data-col="spend">{format_money(values.get("spend", 0))}</td>',
+            f'<td data-col="clicks">{format_int_or_float(values.get("clicks", 0))}</td>',
+            f'<td data-col="leads">{format_int_or_float(values.get("leads", 0))}</td>',
+            f'<td data-col="reg">{format_int_or_float(values.get("reg", 0))}</td>',
+            f'<td data-col="rate">{format_money(values.get("rate", 0))}</td>',
+            f'<td data-col="cost_reg">{format_money(values.get("cost_reg", 0))}</td>',
+            f'<td data-col="fb_ftd">{format_int_or_float(values.get("fb_ftd", 0))}</td>',
+            f'<td data-col="cpa">{format_money(values.get("cpa", 0))}</td>',
+            f'<td data-col="chatterfy">{format_int_or_float(values.get("chatterfy", 0))}</td>',
+            f'<td data-col="players_ftd">{format_int_or_float(values.get("players_ftd", 0))}</td>',
+            f'<td data-col="qual_ftd">{format_int_or_float(values.get("qual_ftd", 0))}</td>',
+            f'<td data-col="hold_count">{format_int_or_float(values.get("hold_count", 0))}</td>',
+            f'<td data-col="hold_split">—</td>',
+            f'<td data-col="cap_total">{format_int_or_float(values.get("cap_total", 0))}</td>',
+            f'<td data-col="cap_fill">{format_percent(values.get("cap_fill", 0))}</td>',
+            f'<td data-col="income">{format_money(values.get("income", 0))}</td>',
+            f'<td data-col="profit">{format_money(values.get("profit", 0))}</td>',
+            f'<td data-col="roi">{format_percent(values.get("roi", 0))}</td>',
         ])
 
     def render_hierarchy_label(node, level, variant="caret"):
@@ -7904,14 +7688,13 @@ def _render_dashboard_page_v2(
             if variant == "caret"
             else '<span class="dashboard-tree-plus"></span>'
         )
-        expanded = node["id"] in open_node_ids
         toggle = (
-            f'<a class="dashboard-tree-toggle dashboard-tree-toggle-{escape(variant)}" '
-            f'data-target="{escape(node["id"])}" aria-expanded="{"true" if expanded else "false"}" '
-            f'title="{escape(node["label"])}" href="{escape(make_dashboard_state_toggle_link(node["id"]))}">{icon_html}'
-            f'<span class="dashboard-tree-label">{escape(node["label"])}</span></a>'
+            f'<button type="button" class="dashboard-tree-toggle dashboard-tree-toggle-{escape(variant)}" '
+            f'data-target="{escape(node["id"])}" aria-expanded="false" '
+            f'onclick="window.dashboardTreeToggle && window.dashboardTreeToggle(this); return false;">{icon_html}'
+            f'<span class="dashboard-tree-label">{escape(node["label"])}</span></button>'
         )
-        return f'<div class="dashboard-tree-cell dashboard-tree-level-{level}" data-tree-value="{escape(node["label"])}">{toggle}</div>'
+        return f'<div class="dashboard-tree-cell dashboard-tree-level-{level}">{toggle}</div>'
 
     tree = build_dashboard_tree(rows, hierarchy_levels)
 
@@ -7943,7 +7726,7 @@ def _render_dashboard_page_v2(
         ("hold_split", "Hold Split"),
         ("cap_total", "Cap"),
         ("cap_fill", "Cap Fill"),
-        ("income", "Payout"),
+        ("income", "Income"),
         ("profit", "Profit"),
         ("roi", "ROI"),
     ]
@@ -7958,14 +7741,8 @@ def _render_dashboard_page_v2(
         for field, label in table_headers
     )
 
-    def render_lineage_label(label, level=0, collapse_node_id=""):
-        del collapse_node_id
-        content = f'<span class="dashboard-tree-label" title="{escape(label or "—")}">{escape(label or "—")}</span>'
-        return f'<div class="dashboard-tree-cell dashboard-tree-level-{level}" data-tree-value="{escape(label or "—")}">{content}</div>'
-
-    def render_leaf_row(row, parent_id="", ancestors=None, lineage=None):
+    def render_leaf_row(row, parent_id="", ancestors=None):
         ancestors = ancestors or []
-        lineage = lineage or {}
         row_class = "soft-green" if safe_number(row.get("profit", 0)) > 0 else ("soft-red" if safe_number(row.get("profit", 0)) < 0 else "")
         hidden_attr = ' hidden' if parent_id else ''
         row_key = "leaf|" + "|".join([
@@ -7979,18 +7756,18 @@ def _render_dashboard_page_v2(
             safe_text(row.get("account_id")).strip() or "—",
         ])
         return f"""
-        <tr class="dashboard-leaf-row {row_class}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}" data-row-key="{escape(row_key)}" onclick="window.dashboardHandleRowClick && window.dashboardHandleRowClick(this, event)"{hidden_attr}>
+        <tr class="dashboard-leaf-row {row_class}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}" data-row-key="{escape(row_key)}"{hidden_attr}>
             <td data-col="platform"></td>
             <td data-col="geo"></td>
             <td data-col="manager"></td>
             <td data-col="campaign_name"></td>
             <td data-col="adset_name"></td>
-            <td data-col="ad_name">{render_lineage_label(row.get("ad_name") or "—", 5)}</td>
-            <td data-col="buyer">{escape(row.get("buyer") or "")}</td>
-            <td data-col="offer">{escape(row.get("offer") or "")}</td>
-            <td data-col="cabinet_text">{escape(row.get("cabinet_text") or "")}</td>
-            <td data-col="advertiser_text">{escape(row.get("advertiser_text") or "")}</td>
-            <td data-col="account_id">{escape(row.get("account_id") or "")}</td>
+            <td data-col="ad_name">{escape(row.get("ad_name") or "—")}</td>
+            <td data-col="buyer">{escape(row.get("buyer") or "—")}</td>
+            <td data-col="offer">{escape(row.get("offer") or "—")}</td>
+            <td data-col="cabinet_text">{escape(row.get("cabinet_text") or "—")}</td>
+            <td data-col="advertiser_text">{escape(row.get("advertiser_text") or "—")}</td>
+            <td data-col="account_id">{escape(row.get("account_id") or "—")}</td>
             <td data-col="budget">{format_money(row.get("budget", 0))}</td>
             <td data-col="spend">{format_money(row.get("spend", 0))}</td>
             <td data-col="clicks">{format_int_or_float(row.get("clicks", 0))}</td>
@@ -8013,450 +7790,36 @@ def _render_dashboard_page_v2(
         </tr>
         """
 
-    def render_tree_rows(nodes, parent_id="", ancestors=None, level=0, variant="caret", lineage=None):
+    def render_tree_rows(nodes, parent_id="", ancestors=None, level=0, variant="caret"):
         ancestors = ancestors or []
-        lineage = lineage or {}
         html = ""
         for node in nodes:
             hidden_attr = ' hidden' if parent_id else ''
             current_ancestors = [*ancestors, node["id"]]
-            current_lineage = {**lineage, node["column"]: {"label": node["label"], "id": node["id"]}}
             html += f"""
-            <tr class="dashboard-tree-row dashboard-tree-row-level-{level}" data-node-id="{escape(node["id"])}" data-row-key="{escape(node["id"])}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}" onclick="window.dashboardHandleRowClick && window.dashboardHandleRowClick(this, event)"{hidden_attr}>
+            <tr class="dashboard-tree-row dashboard-tree-row-level-{level}" data-node-id="{escape(node["id"])}" data-row-key="{escape(node["id"])}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}"{hidden_attr}>
                 <td data-col="platform">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "platform" else ""}</td>
                 <td data-col="geo">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "geo" else ""}</td>
                 <td data-col="manager">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "manager" else ""}</td>
-                <td data-col="campaign_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "campaign_name" else ""}</td>
+                <td data-col="campaign_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "campaign_name" else "—"}</td>
                 <td data-col="adset_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "adset_name" else ""}</td>
-                <td data-col="ad_name"></td>
-                <td class="dashboard-tree-summary-cell" data-col="buyer"></td>
-                <td class="dashboard-tree-summary-cell" data-col="offer"></td>
-                <td class="dashboard-tree-summary-cell" data-col="cabinet_text"></td>
-                <td class="dashboard-tree-summary-cell" data-col="advertiser_text"></td>
-                <td class="dashboard-tree-summary-cell" data-col="account_id"></td>
+                <td data-col="ad_name">—</td>
+                <td data-col="buyer">—</td>
+                <td data-col="offer">—</td>
+                <td data-col="cabinet_text">—</td>
+                <td data-col="advertiser_text">—</td>
+                <td data-col="account_id">—</td>
                 {render_dashboard_metric_cells(node["metrics"])}
             </tr>
             """
             if node["children"]:
-                html += render_tree_rows(node["children"], parent_id=node["id"], ancestors=current_ancestors, level=level + 1, variant=variant, lineage=current_lineage)
+                html += render_tree_rows(node["children"], parent_id=node["id"], ancestors=current_ancestors, level=level + 1, variant=variant)
             else:
                 for leaf_row in _dashboard_sort_rows(node["rows"], sort_by=sort_by, order=order):
-                    html += render_leaf_row(leaf_row, parent_id=node["id"], ancestors=current_ancestors, lineage=current_lineage)
+                    html += render_leaf_row(leaf_row, parent_id=node["id"], ancestors=current_ancestors)
         return html
 
-    total_metrics = aggregate_dashboard_metrics(rows)
-
-    matrix_metric_fields = [
-        ("budget", "Budget"),
-        ("spend", "Spend"),
-        ("clicks", "Clicks"),
-        ("leads", "Leads"),
-        ("reg", "Reg"),
-        ("rate", "Rate"),
-        ("cost_reg", "Cost Reg"),
-        ("fb_ftd", "FB FTD"),
-        ("cpa", "CPA"),
-        ("chatterfy", "Chatterfy"),
-        ("players_ftd", "Players FTD"),
-        ("qual_ftd", "Qual FTD"),
-        ("hold_count", "Hold"),
-        ("cap_total", "Cap"),
-        ("cap_fill", "Cap Fill"),
-        ("income", "Payout"),
-        ("profit", "Profit"),
-        ("roi", "ROI"),
-    ]
-
-    def serialize_metric_values(values):
-        hold_split = safe_text(values.get("hold_split"))
-        if not hold_split:
-            hold_split = (
-                f'{format_int_or_float(values.get("baseline_fail_count", 0))}B / '
-                f'{format_int_or_float(values.get("wager_fail_count", 0))}W'
-            )
-        return {
-            "budget": format_money(values.get("budget", 0)),
-            "spend": format_money(values.get("spend", 0)),
-            "clicks": format_int_or_float(values.get("clicks", 0)),
-            "leads": format_int_or_float(values.get("leads", 0)),
-            "reg": format_int_or_float(values.get("reg", 0)),
-            "rate": format_money(values.get("rate", 0)),
-            "cost_reg": format_money(values.get("cost_reg", 0)),
-            "fb_ftd": format_int_or_float(values.get("fb_ftd", 0)),
-            "cpa": format_money(values.get("cpa", 0)),
-            "chatterfy": format_int_or_float(values.get("chatterfy", 0)),
-            "players_ftd": format_int_or_float(values.get("players_ftd", 0)),
-            "qual_ftd": format_int_or_float(values.get("qual_ftd", 0)),
-            "hold_count": format_int_or_float(values.get("hold_count", 0)),
-            "hold_split": hold_split,
-            "cap_total": format_int_or_float(values.get("cap_total", 0)),
-            "cap_fill": format_percent(values.get("cap_fill", 0)),
-            "income": format_money(values.get("income", 0)),
-            "profit": format_money(values.get("profit", 0)),
-            "roi": format_percent(values.get("roi", 0)),
-        }
-
-    def serialize_leaf_payload(row, parent_id="", ancestors=None):
-        ancestors = ancestors or []
-        leaf_key = "leaf|" + "|".join([
-            safe_text(parent_id) or "root",
-            safe_text(row.get("platform")).strip() or "—",
-            safe_text(row.get("geo")).strip() or "—",
-            safe_text(row.get("manager")).strip() or "—",
-            safe_text(row.get("campaign_name")).strip() or "—",
-            safe_text(row.get("adset_name")).strip() or "—",
-            safe_text(row.get("ad_name")).strip() or "—",
-            safe_text(row.get("account_id")).strip() or "—",
-        ])
-        return {
-            "id": leaf_key,
-            "label": safe_text(row.get("ad_name")).strip() or "—",
-            "account_id": safe_text(row.get("account_id")).strip() or "—",
-            "buyer": safe_text(row.get("buyer")).strip() or "—",
-            "offer": safe_text(row.get("offer")).strip() or "—",
-            "cabinet_text": safe_text(row.get("cabinet_text")).strip() or "—",
-            "advertiser_text": safe_text(row.get("advertiser_text")).strip() or "—",
-            "metrics": serialize_metric_values(row),
-            "ancestors": ancestors,
-            "profit_value": safe_number(row.get("profit", 0)),
-        }
-
-    def serialize_tree_payload(nodes, ancestors=None):
-        ancestors = ancestors or []
-        payload = []
-        for node in nodes:
-            node_ancestors = [*ancestors, node["id"]]
-            children = serialize_tree_payload(node["children"], node_ancestors)
-            leaf_rows = [
-                serialize_leaf_payload(leaf_row, parent_id=node["id"], ancestors=node_ancestors)
-                for leaf_row in _dashboard_sort_rows(node["rows"], sort_by=sort_by, order=order)
-            ] if not node["children"] else []
-            payload.append({
-                "id": node["id"],
-                "label": node["label"],
-                "column": node["column"],
-                "metrics": serialize_metric_values(node["metrics"]),
-                "profit_value": safe_number(node["metrics"].get("profit", 0)),
-                "children": children,
-                "ads": leaf_rows,
-            })
-        return payload
-
-    matrix_tree_json = json.dumps(serialize_tree_payload(tree), ensure_ascii=False)
-    matrix_metric_fields_json = json.dumps(matrix_metric_fields, ensure_ascii=False)
-
-    def make_matrix_link(**overrides):
-        params = {**filter_params, **overrides}
-        return f'/dashboard?{build_query_string(**params)}'
-
-    def find_node(nodes, label):
-        clean_label = safe_text(label)
-        if not clean_label:
-            return None
-        for node in nodes or []:
-            if safe_text(node.get("label")) == clean_label:
-                return node
-        return None
-
-    selected_brand_node = find_node(tree, matrix_brand)
-    selected_geo_node = find_node(selected_brand_node["children"], matrix_geo) if selected_brand_node else None
-    selected_cabinet_node = find_node(selected_geo_node["children"], matrix_cabinet) if selected_geo_node else None
-    selected_campaign_node = find_node(selected_cabinet_node["children"], matrix_campaign) if selected_cabinet_node else None
-    selected_adset_node = find_node(selected_campaign_node["children"], matrix_adset) if selected_campaign_node else None
-    selected_ad_items = build_dashboard_tree(selected_adset_node["rows"], [("ad_name", "ad_name")]) if selected_adset_node else []
-    selected_ad_node = find_node(selected_ad_items, matrix_ad) if selected_ad_items else None
-
-    def render_matrix_path_html():
-        chips = []
-        for value in [matrix_brand, matrix_geo, matrix_cabinet, matrix_campaign, matrix_adset, matrix_ad]:
-            if safe_text(value):
-                chips.append(f'<span class="dashboard-matrix-path-chip">{escape(value)}</span>')
-        return "".join(chips) if chips else '<span class="dashboard-matrix-path-chip">Choose Brand to start drill-down</span>'
-
-    def render_matrix_items(items, level_key, selected_value, reset_after=None, is_ad_level=False):
-        if not items:
-            return '<div class="dashboard-matrix-empty">No items on this level yet</div>'
-        rendered = []
-        for item in items:
-            if is_ad_level:
-                label = safe_text(item.get("label") or item.get("ad_name")) or "—"
-                metrics = serialize_metric_values(item.get("metrics", item))
-                href = make_matrix_link(
-                    matrix_ad=label,
-                )
-            else:
-                label = safe_text(item.get("label")) or "—"
-                metrics = item.get("metrics", {})
-                overrides = {
-                    level_key: label,
-                }
-                for key in (reset_after or []):
-                    overrides[key] = ""
-                href = make_matrix_link(**overrides)
-            active_class = " is-active" if safe_text(selected_value) == label else ""
-            rendered.append(
-                f'<a class="dashboard-matrix-item{active_class}" href="{escape(href)}">'
-                f'<div class="dashboard-matrix-item-label">{escape(label)}</div>'
-                f'<div class="dashboard-matrix-item-sub">'
-                f'<span>{escape(safe_text(metrics.get("spend", "—")) or "—")} spend</span>'
-                f'<span>{escape(safe_text(metrics.get("leads", "—")) or "—")} leads</span>'
-                f'<span>{escape(safe_text(metrics.get("clicks", "—")) or "—")} clicks</span>'
-                f'</div>'
-                f'</a>'
-            )
-        return "".join(rendered)
-
-    matrix_columns_html = "".join([
-        f'''
-        <div class="dashboard-matrix-column">
-            <div class="dashboard-matrix-column-head">Brand</div>
-            <div class="dashboard-matrix-column-body">
-                {render_matrix_items(tree, "matrix_brand", matrix_brand, reset_after=["matrix_geo", "matrix_cabinet", "matrix_campaign", "matrix_adset", "matrix_ad"])}
-            </div>
-        </div>
-        ''',
-        f'''
-        <div class="dashboard-matrix-column">
-            <div class="dashboard-matrix-column-head">Geo</div>
-            <div class="dashboard-matrix-column-body">
-                {render_matrix_items(selected_brand_node["children"] if selected_brand_node else [], "matrix_geo", matrix_geo, reset_after=["matrix_cabinet", "matrix_campaign", "matrix_adset", "matrix_ad"])}
-            </div>
-        </div>
-        ''',
-        f'''
-        <div class="dashboard-matrix-column">
-            <div class="dashboard-matrix-column-head">Cabinet</div>
-            <div class="dashboard-matrix-column-body">
-                {render_matrix_items(selected_geo_node["children"] if selected_geo_node else [], "matrix_cabinet", matrix_cabinet, reset_after=["matrix_campaign", "matrix_adset", "matrix_ad"])}
-            </div>
-        </div>
-        ''',
-        f'''
-        <div class="dashboard-matrix-column">
-            <div class="dashboard-matrix-column-head">Campaign</div>
-            <div class="dashboard-matrix-column-body">
-                {render_matrix_items(selected_cabinet_node["children"] if selected_cabinet_node else [], "matrix_campaign", matrix_campaign, reset_after=["matrix_adset", "matrix_ad"])}
-            </div>
-        </div>
-        ''',
-        f'''
-        <div class="dashboard-matrix-column">
-            <div class="dashboard-matrix-column-head">Adset</div>
-            <div class="dashboard-matrix-column-body">
-                {render_matrix_items(selected_campaign_node["children"] if selected_campaign_node else [], "matrix_adset", matrix_adset, reset_after=["matrix_ad"])}
-            </div>
-        </div>
-        ''',
-        f'''
-        <div class="dashboard-matrix-column">
-            <div class="dashboard-matrix-column-head">Ad</div>
-            <div class="dashboard-matrix-column-body">
-                {render_matrix_items(selected_ad_items, "matrix_ad", matrix_ad, is_ad_level=True)}
-            </div>
-        </div>
-        ''',
-    ])
-
-    matrix_focus_metrics = None
-    matrix_focus_title = "No selection"
-    matrix_focus_subtitle = "Choose Brand, then keep drilling to the right."
-    matrix_ads_table_html = ""
-
-    if selected_ad_node:
-        matrix_focus_metrics = serialize_metric_values(selected_ad_node["metrics"])
-        matrix_focus_title = selected_ad_node["label"]
-        matrix_focus_subtitle = "Ad metrics"
-    elif selected_adset_node:
-        matrix_focus_metrics = serialize_metric_values(selected_adset_node["metrics"])
-        matrix_focus_title = selected_adset_node["label"]
-        matrix_focus_subtitle = "Adset metrics"
-        ads_rows = _dashboard_sort_rows(selected_adset_node["rows"], sort_by=sort_by, order=order)
-        ads_table_rows = "".join([
-            f"<tr><td>{escape(row.get('ad_name') or '—')}</td><td>{escape(row.get('account_id') or '—')}</td><td>{escape(row.get('buyer') or '—')}</td><td>{escape(row.get('offer') or '—')}</td><td>{format_money(row.get('spend', 0))}</td><td>{format_int_or_float(row.get('clicks', 0))}</td><td>{format_int_or_float(row.get('leads', 0))}</td><td>{format_int_or_float(row.get('reg', 0))}</td></tr>"
-            for row in ads_rows
-        ])
-        matrix_ads_table_html = f'''
-        <div class="dashboard-matrix-ads">
-            <div class="dashboard-matrix-ads-title">Ads inside selected branch</div>
-            <table class="dashboard-matrix-ads-table">
-                <thead>
-                    <tr><th>Ad</th><th>Account</th><th>Buyer</th><th>Offer</th><th>Spend</th><th>Clicks</th><th>Leads</th><th>Reg</th></tr>
-                </thead>
-                <tbody>{ads_table_rows}</tbody>
-            </table>
-        </div>
-        '''
-    elif selected_campaign_node:
-        matrix_focus_metrics = serialize_metric_values(selected_campaign_node["metrics"])
-        matrix_focus_title = selected_campaign_node["label"]
-        matrix_focus_subtitle = "Campaign metrics"
-    elif selected_cabinet_node:
-        matrix_focus_metrics = serialize_metric_values(selected_cabinet_node["metrics"])
-        matrix_focus_title = selected_cabinet_node["label"]
-        matrix_focus_subtitle = "Cabinet metrics"
-    elif selected_geo_node:
-        matrix_focus_metrics = serialize_metric_values(selected_geo_node["metrics"])
-        matrix_focus_title = selected_geo_node["label"]
-        matrix_focus_subtitle = "Geo metrics"
-    elif selected_brand_node:
-        matrix_focus_metrics = serialize_metric_values(selected_brand_node["metrics"])
-        matrix_focus_title = selected_brand_node["label"]
-        matrix_focus_subtitle = "Brand metrics"
-
-    matrix_metrics_html = ""
-    if matrix_focus_metrics:
-        matrix_metrics_html = '<div class="dashboard-matrix-metrics">' + "".join([
-            f'<div class="dashboard-matrix-metric"><div class="dashboard-matrix-metric-label">{escape(label)}</div><div class="dashboard-matrix-metric-value">{escape(matrix_focus_metrics.get(field, "—"))}</div></div>'
-            for field, label in matrix_metric_fields
-        ]) + '</div>'
-
-    descriptor_fields = [
-        ("buyer", "Buyer"),
-        ("offer", "Offer"),
-        ("cabinet_text", "Cabinets"),
-        ("advertiser_text", "Advertiser"),
-        ("account_id", "Account"),
-    ]
-    metric_fields = [
-        ("budget", "Budget"),
-        ("spend", "Spend"),
-        ("clicks", "Clicks"),
-        ("leads", "Leads"),
-        ("reg", "Reg"),
-        ("rate", "Rate"),
-        ("cost_reg", "Cost Reg"),
-        ("fb_ftd", "FB FTD"),
-        ("cpa", "CPA"),
-        ("chatterfy", "Chatterfy"),
-        ("players_ftd", "Players FTD"),
-        ("qual_ftd", "Qual FTD"),
-        ("hold_count", "Hold"),
-        ("hold_split", "Hold Split"),
-        ("cap_total", "Cap"),
-        ("cap_fill", "Cap Fill"),
-        ("income", "Payout"),
-        ("profit", "Profit"),
-        ("roi", "ROI"),
-    ]
-
-    def summarize_unique_dashboard_value(items, field):
-        values = sorted({
-            safe_text(item.get(field)).strip()
-            for item in items
-            if safe_text(item.get(field)).strip() and safe_text(item.get(field)).strip() != "—"
-        })
-        return values[0] if len(values) == 1 else ""
-
-    def summarize_dashboard_descriptors(items):
-        return {
-            field: summarize_unique_dashboard_value(items, field)
-            for field, _label in descriptor_fields
-        }
-
-    hierarchy_field_order = ["platform", "geo", "manager", "campaign_name", "adset_name", "ad_name"]
-    metric_field_order = [
-        "budget", "spend", "clicks", "leads", "reg", "rate", "cost_reg", "fb_ftd", "cpa",
-        "chatterfy", "players_ftd", "qual_ftd", "hold_count", "hold_split", "cap_total",
-        "cap_fill", "income", "profit", "roi",
-    ]
-    hierarchy_level_map = {field: index for index, field in enumerate(hierarchy_field_order)}
-    table_field_order = [field for field, _label in table_headers]
-
-    def empty_dashboard_inline_row():
-        payload = {field: "" for field in table_field_order}
-        payload["_profit_value"] = 0.0
-        return payload
-
-    def make_metrics_payload(values):
-        serialized = serialize_metric_values(values)
-        return {field: serialized.get(field, "") for field in metric_field_order}
-
-    def make_node_inline_row(node):
-        payload = empty_dashboard_inline_row()
-        payload[node["column"]] = render_hierarchy_label(node, hierarchy_level_map.get(node["column"], 0), variant="caret")
-        payload.update(make_metrics_payload(node["metrics"]))
-        payload["_profit_value"] = safe_number(node["metrics"].get("profit", 0))
-        return payload
-
-    def make_leaf_inline_row(row):
-        payload = empty_dashboard_inline_row()
-        payload["ad_name"] = render_lineage_label(row.get("ad_name") or "—", hierarchy_level_map["ad_name"])
-        payload["buyer"] = escape(row.get("buyer") or "")
-        payload["offer"] = escape(row.get("offer") or "")
-        payload["cabinet_text"] = escape(row.get("cabinet_text") or "")
-        payload["advertiser_text"] = escape(row.get("advertiser_text") or "")
-        payload["account_id"] = escape(row.get("account_id") or "")
-        payload.update(make_metrics_payload(row))
-        payload["_profit_value"] = safe_number(row.get("profit", 0))
-        return payload
-
-    def merge_dashboard_inline_rows(left, right):
-        payload = empty_dashboard_inline_row()
-        for field in table_field_order:
-            payload[field] = right.get(field) or left.get(field) or ""
-        payload["_profit_value"] = right.get("_profit_value", left.get("_profit_value", 0.0))
-        return payload
-
-    def build_dashboard_inline_rows(nodes):
-        rendered = []
-        for node in nodes:
-            base_row = make_node_inline_row(node)
-            if node["id"] not in open_node_ids:
-                rendered.append(base_row)
-                continue
-            if node["children"]:
-                child_groups = [build_dashboard_inline_rows([child]) for child in node["children"]]
-            else:
-                child_groups = [[make_leaf_inline_row(leaf_row)] for leaf_row in _dashboard_sort_rows(node["rows"], sort_by=sort_by, order=order)]
-            if not child_groups:
-                rendered.append(base_row)
-                continue
-            first_group = child_groups[0]
-            rendered.append(merge_dashboard_inline_rows(base_row, first_group[0]))
-            rendered.extend(first_group[1:])
-            for group in child_groups[1:]:
-                rendered.extend(group)
-        return rendered
-
-    rows_html = render_tree_rows(tree)
-    dashboard_table_fields_json = json.dumps(table_field_order, ensure_ascii=False)
-    dashboard_hierarchy_fields_json = json.dumps(hierarchy_field_order, ensure_ascii=False)
-    dashboard_metric_fields_json = json.dumps(metric_field_order, ensure_ascii=False)
-    dashboard_descriptor_fields_json = json.dumps([field for field, _label in descriptor_fields], ensure_ascii=False)
-
-    def render_dashboard_table_panel(title, table_id):
-        body_html = rows_html if rows else f'<tr><td colspan="{len(table_headers)}">No dashboard rows for the selected filters</td></tr>'
-        return f"""
-        <div class="panel compact-panel dashboard-table-panel">
-            <div class="dashboard-table-header">
-                <div class="dashboard-table-title">
-                    <div class="panel-title">{escape(title)}</div>
-                    <div class="panel-subtitle">Compact dashboard view across FB, Players, Chatterfy, Caps, Cabinets and Hold.</div>
-                </div>
-                <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-                    <details class="upload-menu upload-menu-right" id="{'dashboardColumnsMenu' if table_id == 'dashboardUnifiedTable' else 'dashboardColumnsMenuTest'}">
-                        <summary class="ghost-btn small-btn">Columns</summary>
-                        <div class="upload-menu-list" style="width:min(560px, calc(100vw - 48px));">
-                            <div class="panel-subtitle">Choose which columns to keep visible in Dashboard.</div>
-                            <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
-                                <button type="button" class="ghost-btn small-btn dashboard-show-all-columns">Show all</button>
-                            </div>
-                            <div style="display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px; margin-top:12px;">
-                                {column_chips}
-                            </div>
-                        </div>
-                    </details>
-                </div>
-            </div>
-            <div class="dashboard-table-wrap">
-                <table id="{escape(table_id)}" data-dashboard-flat-table data-dashboard-tree-table>
-                    <thead><tr>{head_html}</tr></thead>
-                    <tbody>{body_html}</tbody>
-                </table>
-            </div>
-        </div>
-        """
-
+    rows_html = render_tree_rows(tree, variant="caret")
 
     buyer_filter_html = ""
     if is_admin_role(user) or user.get("role") == "operator":
@@ -8473,7 +7836,6 @@ def _render_dashboard_page_v2(
         min-width:0;
         max-width:100%;
         overflow-x:hidden;
-        font-family:"Segoe UI", "Segoe UI Variable Text", Tahoma, Geneva, Verdana, sans-serif;
     }}
     .dashboard-v2 .dashboard-filters-panel {{
         padding:14px 14px 12px;
@@ -8589,188 +7951,21 @@ def _render_dashboard_page_v2(
         min-width:0;
         max-width:100%;
     }}
-    .dashboard-v2 .dashboard-matrix-wrap {{
-        display:grid;
-        gap:14px;
-    }}
-    .dashboard-v2 .dashboard-matrix-path {{
-        display:flex;
-        flex-wrap:wrap;
-        gap:8px;
-        align-items:center;
-        min-height:34px;
-    }}
-    .dashboard-v2 .dashboard-matrix-path-chip {{
-        display:inline-flex;
-        align-items:center;
-        gap:8px;
-        padding:8px 12px;
-        border-radius:999px;
-        background:#eef5ff;
-        color:#18345d;
-        font-size:13px;
-        font-weight:600;
-    }}
-    .dashboard-v2 .dashboard-matrix-board {{
-        display:grid;
-        grid-template-columns:repeat(6, minmax(180px, 1fr));
-        gap:12px;
-        align-items:start;
-    }}
-    .dashboard-v2 .dashboard-matrix-column {{
-        border:1px solid rgba(197, 214, 241, 0.95);
-        border-radius:18px;
-        background:#fcfdff;
-        overflow:hidden;
-    }}
-    .dashboard-v2 .dashboard-matrix-column-head {{
-        padding:12px 14px;
-        background:#eef5ff;
-        color:#223a60;
-        font-size:11px;
-        font-weight:700;
-        letter-spacing:.04em;
-        text-transform:uppercase;
-        border-bottom:1px solid rgba(214, 228, 248, 0.95);
-    }}
-    .dashboard-v2 .dashboard-matrix-column-body {{
-        display:grid;
-        gap:4px;
-        padding:8px;
-        max-height:420px;
-        overflow:auto;
-    }}
-    .dashboard-v2 .dashboard-matrix-item {{
-        width:100%;
-        display:grid;
-        gap:4px;
-        text-align:left;
-        border:0;
-        border-radius:14px;
-        padding:10px 12px;
-        background:transparent;
-        color:#20385f;
-        cursor:pointer;
-        transition:background .14s ease, box-shadow .14s ease, transform .14s ease;
-    }}
-    .dashboard-v2 .dashboard-matrix-item:hover {{
-        background:#f5f9ff;
-    }}
-    .dashboard-v2 .dashboard-matrix-item.is-active {{
-        background:#beddff;
-        box-shadow:inset 0 0 0 1px rgba(54, 116, 209, 0.26);
-    }}
-    .dashboard-v2 .dashboard-matrix-item-label {{
-        font-size:14px;
-        font-weight:600;
-        line-height:1.2;
-        word-break:break-word;
-    }}
-    .dashboard-v2 .dashboard-matrix-item-sub {{
-        display:flex;
-        gap:10px;
-        flex-wrap:wrap;
-        color:#6f84a7;
-        font-size:11px;
-    }}
-    .dashboard-v2 .dashboard-matrix-empty {{
-        padding:18px 14px;
-        color:#8da0bf;
-        font-size:13px;
-    }}
-    .dashboard-v2 .dashboard-matrix-detail {{
-        border:1px solid rgba(197, 214, 241, 0.95);
-        border-radius:18px;
-        background:#fcfdff;
-        overflow:hidden;
-    }}
-    .dashboard-v2 .dashboard-matrix-detail-head {{
-        padding:14px 16px;
-        background:#eef5ff;
-        border-bottom:1px solid rgba(214, 228, 248, 0.95);
-    }}
-    .dashboard-v2 .dashboard-matrix-detail-title {{
-        color:#1a335b;
-        font-size:18px;
-        font-weight:700;
-    }}
-    .dashboard-v2 .dashboard-matrix-detail-subtitle {{
-        margin-top:4px;
-        color:#6f84a7;
-        font-size:13px;
-    }}
-    .dashboard-v2 .dashboard-matrix-metrics {{
-        display:grid;
-        grid-template-columns:repeat(auto-fit, minmax(118px, 1fr));
-        gap:8px;
-        padding:14px 16px;
-        border-bottom:1px solid rgba(232, 240, 250, 0.95);
-    }}
-    .dashboard-v2 .dashboard-matrix-metric {{
-        padding:10px 12px;
-        border-radius:14px;
-        background:#f6f9ff;
-    }}
-    .dashboard-v2 .dashboard-matrix-metric-label {{
-        color:#7287a8;
-        font-size:10px;
-        font-weight:700;
-        text-transform:uppercase;
-        letter-spacing:.04em;
-    }}
-    .dashboard-v2 .dashboard-matrix-metric-value {{
-        margin-top:6px;
-        color:#19355e;
-        font-size:18px;
-        font-weight:700;
-    }}
-    .dashboard-v2 .dashboard-matrix-ads {{
-        padding:14px 16px 18px;
-    }}
-    .dashboard-v2 .dashboard-matrix-ads-title {{
-        color:#1f3760;
-        font-size:13px;
-        font-weight:700;
-        margin-bottom:10px;
-        text-transform:uppercase;
-        letter-spacing:.04em;
-    }}
-    .dashboard-v2 .dashboard-matrix-ads-table {{
-        width:100%;
-        border-collapse:separate;
-        border-spacing:0;
-        font-size:12px;
-    }}
-    .dashboard-v2 .dashboard-matrix-ads-table th,
-    .dashboard-v2 .dashboard-matrix-ads-table td {{
-        padding:8px 10px;
-        border-bottom:1px solid rgba(229, 238, 249, 0.95);
-        text-align:left;
-        vertical-align:top;
-    }}
-    .dashboard-v2 .dashboard-matrix-ads-table th {{
-        color:#6e83a6;
-        font-size:10px;
-        font-weight:700;
-        text-transform:uppercase;
-        letter-spacing:.04em;
-    }}
     .dashboard-v2 #dashboardUnifiedTable {{
         min-width:2740px;
         table-layout:fixed;
         border-collapse:separate;
         border-spacing:0;
-        font-size:12px;
-        font-family:"Segoe UI", "Segoe UI Variable Text", Tahoma, Geneva, Verdana, sans-serif;
+        font-size:11px;
     }}
     .dashboard-v2 #dashboardUnifiedTable thead th {{
         position:sticky;
         top:0;
         z-index:6;
         padding:4px 7px;
-        font-size:10px;
-        line-height:1.1;
-        letter-spacing:.01em;
+        font-size:9px;
+        line-height:1;
+        letter-spacing:.06em;
         text-transform:uppercase;
         white-space:normal;
         word-break:break-word;
@@ -8789,116 +7984,87 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable tbody td {{
         height:15px;
         padding:0 7px;
-        line-height:1.05;
+        line-height:1;
         vertical-align:middle;
         border-bottom:1px solid rgba(221, 233, 248, 0.9);
         border-right:1px solid rgba(229, 238, 249, 0.9);
         white-space:nowrap;
         overflow:hidden;
         text-overflow:ellipsis;
-        color:rgba(30, 45, 74, 0.82);
-        background:rgba(255, 255, 255, 0.82);
-        user-select:none;
-        -webkit-user-select:none;
-        font-weight:400;
+        color:#1e2d4a;
+        background:#ffffff;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td {{
         background:#f6faff;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] tbody tr {{
-        cursor:default;
+        cursor:pointer;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-row-selected td {{
-        background:#b7f0c2 !important;
-        color:#153726 !important;
-        box-shadow:inset 0 0 0 1px rgba(39, 148, 84, 0.42);
-        opacity:1 !important;
+        background:#d9edff !important;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-row-selected:hover td {{
-        background:#b7f0c2 !important;
-        color:#153726 !important;
-        box-shadow:inset 0 0 0 1px rgba(39, 148, 84, 0.42);
-        opacity:1 !important;
-    }}
-    .dashboard-v2 table[data-dashboard-tree-table].dashboard-has-row-selection tbody tr:not(.dashboard-row-selected) td {{
-        opacity:.2;
+        background:#d9edff !important;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] td.dashboard-cell-selected {{
-        background:#9ae6ae !important;
-        color:#143523 !important;
-        box-shadow:inset 0 0 0 1px rgba(28, 135, 71, 0.45);
+        background:#cfe8ff !important;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] th.dashboard-column-selected,
     .dashboard-v2 table[data-dashboard-tree-table] td.dashboard-column-selected {{
-        background:#c7f3d1 !important;
-        color:#163726 !important;
-        box-shadow:inset 0 0 0 1px rgba(33, 138, 74, 0.35);
+        background:#dff0ff !important;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] td.dashboard-cell-selected.dashboard-column-selected {{
-        background:#8de0a3 !important;
+        background:#c7e3ff !important;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] td.dashboard-cell-selected .dashboard-tree-toggle,
     .dashboard-v2 table[data-dashboard-tree-table] td.dashboard-column-selected .dashboard-tree-toggle {{
         color:#16325c;
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-tree-row td {{
-        font-weight:600;
-        border-top:1px solid rgba(138, 159, 194, 0.14);
-        border-bottom:1px solid rgba(138, 159, 194, 0.14);
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row td {{
+        font-weight:700;
+        border-top:1px solid rgba(138, 159, 194, 0.22);
+        border-bottom:1px solid rgba(138, 159, 194, 0.22);
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-tree-row.dashboard-tree-row-open td.dashboard-tree-summary-cell {{
-        color:#8091af !important;
-        text-shadow:none !important;
-        user-select:text;
-        -webkit-user-select:text;
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-0 td {{
+        background:#edf5ff;
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-tree-row.dashboard-tree-row-open td.dashboard-tree-summary-cell::selection {{
-        background:transparent;
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-1 td {{
+        background:#f5f9ff;
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-tree-row td.dashboard-tree-summary-cell {{
-        color:#8091af;
-        font-weight:500;
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-2 td {{
+        background:#f9fbff;
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-tree-row-level-0 td {{
-        background:#eef5ff;
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-3 td {{
+        background:#fcfdff;
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-tree-row-level-1 td {{
-        background:#f7faff;
-    }}
-    .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-tree-row-level-2 td {{
-        background:#fbfcff;
-    }}
-    .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-tree-row-level-3 td {{
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-4 td {{
         background:#ffffff;
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-tree-row-level-4 td {{
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-5 td {{
         background:#ffffff;
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-tree-row-level-5 td {{
-        background:#ffffff;
-    }}
-    .dashboard-v2 table[data-dashboard-tree-table] .dashboard-tree-cell {{
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-cell {{
         display:flex;
         align-items:center;
         justify-content:flex-start;
         min-height:15px;
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] .dashboard-tree-level-1 {{
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-level-1 {{
         padding-left:0;
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] .dashboard-tree-level-2 {{
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-level-2 {{
         padding-left:0;
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] .dashboard-tree-level-3 {{
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-level-3 {{
         padding-left:0;
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] .dashboard-tree-level-4 {{
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-level-4 {{
         padding-left:0;
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] .dashboard-tree-level-5 {{
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-level-5 {{
         padding-left:0;
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] .dashboard-tree-toggle {{
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-toggle {{
         display:inline-flex;
         align-items:center;
         gap:6px;
@@ -8906,22 +8072,19 @@ def _render_dashboard_page_v2(
         background:transparent;
         padding:0;
         margin:0;
-        color:rgba(33, 50, 82, 0.86);
+        color:#213252;
         font:inherit;
         cursor:pointer;
         justify-content:flex-start;
-        user-select:none;
-        -webkit-user-select:none;
-        font-weight:500;
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] .dashboard-tree-caret {{
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-caret {{
         width:10px;
         display:inline-flex;
         justify-content:center;
-        color:#647da8;
+        color:#5672a3;
         transition:transform .18s ease;
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] .dashboard-tree-toggle[aria-expanded="true"] .dashboard-tree-caret {{
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-toggle[aria-expanded="true"] .dashboard-tree-caret {{
         transform:rotate(90deg);
     }}
     .dashboard-v2 .dashboard-tree-plus {{
@@ -8950,13 +8113,9 @@ def _render_dashboard_page_v2(
     .dashboard-v2 .dashboard-tree-toggle-plus .dashboard-tree-plus::before {{
         content:"+";
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] .dashboard-tree-label {{
-        overflow:visible;
-        text-overflow:clip;
-        white-space:nowrap;
-    }}
-    .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-leaf-row td {{
-        font-weight:400;
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-label {{
+        overflow:hidden;
+        text-overflow:ellipsis;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="buyer"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="buyer"] {{
@@ -9150,301 +8309,6 @@ def _render_dashboard_page_v2(
         color:#d84c57;
         font-weight:800;
     }}
-    .dashboard-v2 table[data-dashboard-flat-table] {{
-        min-width:2740px;
-        table-layout:fixed;
-        border-collapse:separate;
-        border-spacing:0;
-        font-size:12px;
-        font-family:"Segoe UI", "Segoe UI Variable Text", Tahoma, Geneva, Verdana, sans-serif;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] thead th {{
-        position:sticky;
-        top:0;
-        z-index:6;
-        padding:4px 7px;
-        font-size:10px;
-        line-height:1.1;
-        letter-spacing:.01em;
-        text-transform:uppercase;
-        white-space:normal;
-        word-break:break-word;
-        border-bottom:1px solid rgba(191, 212, 244, 0.9);
-        border-right:1px solid rgba(221, 233, 248, 0.9);
-        color:#213252;
-        background:#eef5ff;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] thead th a {{
-        color:inherit;
-        text-decoration:none;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] tbody tr {{
-        height:15px;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] tbody td {{
-        height:15px;
-        padding:0 7px;
-        line-height:1.05;
-        vertical-align:middle;
-        border-bottom:1px solid rgba(221, 233, 248, 0.9);
-        border-right:1px solid rgba(229, 238, 249, 0.9);
-        white-space:nowrap;
-        overflow:hidden;
-        text-overflow:ellipsis;
-        color:rgba(30, 45, 74, 0.82);
-        background:rgba(255, 255, 255, 0.82);
-        user-select:none;
-        -webkit-user-select:none;
-        font-weight:400;
-    }}
-    .dashboard-v2 table[data-dashboard-cascade-table] tbody tr.dashboard-cascade-row {{
-        height:15px;
-    }}
-    .dashboard-v2 table[data-dashboard-cascade-table] tbody tr.dashboard-cascade-row td {{
-        height:15px;
-        vertical-align:middle;
-        padding:0 7px;
-        white-space:nowrap;
-        overflow:hidden;
-        text-overflow:ellipsis;
-    }}
-    .dashboard-v2 table[data-dashboard-cascade-table] td.dashboard-cascade-cell {{
-        color:#20385f;
-    }}
-    .dashboard-v2 .dashboard-cascade-item {{
-        display:inline-flex;
-        align-items:center;
-        min-height:15px;
-        padding:0;
-        border-radius:0;
-        border-bottom:0;
-        color:#20385f;
-        font-size:12px;
-        font-weight:600;
-        line-height:1.05;
-        text-decoration:none;
-        background:transparent;
-        transition:color .14s ease;
-    }}
-    .dashboard-v2 .dashboard-cascade-item:hover {{
-        color:#2a5da8;
-    }}
-    .dashboard-v2 .dashboard-cascade-item.is-active {{
-        color:#18345d;
-        font-weight:700;
-    }}
-    .dashboard-v2 .dashboard-cascade-item-text {{
-        display:inline-block;
-        max-width:100%;
-        overflow:hidden;
-        text-overflow:ellipsis;
-        white-space:nowrap;
-    }}
-    .dashboard-v2 .dashboard-cascade-empty {{
-        display:inline-block;
-        padding:0;
-        color:#8da0bf;
-        font-size:12px;
-        line-height:1.05;
-    }}
-    .dashboard-v2 table[data-dashboard-cascade-table] td.dashboard-cascade-summary-cell {{
-        color:#20385f;
-        font-size:12px;
-        font-weight:600;
-        line-height:1.05;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] tbody tr:hover td {{
-        background:#f6faff;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] tbody tr.soft-green td[data-col="profit"],
-    .dashboard-v2 table[data-dashboard-flat-table] tbody tr.soft-green td[data-col="roi"] {{
-        color:#0f8c58;
-        font-weight:800;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] tbody tr.soft-red td[data-col="profit"],
-    .dashboard-v2 table[data-dashboard-flat-table] tbody tr.soft-red td[data-col="roi"] {{
-        color:#d84c57;
-        font-weight:800;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="buyer"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="buyer"] {{
-        width:78px;
-        min-width:78px;
-        max-width:78px;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="platform"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="platform"] {{
-        width:96px;
-        min-width:96px;
-        max-width:96px;
-        background:#ecf5ff;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="manager"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="manager"] {{
-        width:110px;
-        min-width:110px;
-        max-width:110px;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="geo"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="geo"] {{
-        width:64px;
-        min-width:64px;
-        max-width:64px;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="offer"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="offer"] {{
-        width:102px;
-        min-width:102px;
-        max-width:102px;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="cabinet_text"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="cabinet_text"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="advertiser_text"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="advertiser_text"] {{
-        width:104px;
-        min-width:104px;
-        max-width:104px;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="account_id"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="account_id"] {{
-        width:122px;
-        min-width:122px;
-        max-width:122px;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="campaign_name"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="campaign_name"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="adset_name"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="adset_name"] {{
-        width:188px;
-        min-width:188px;
-        max-width:188px;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="ad_name"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="ad_name"] {{
-        width:220px;
-        min-width:220px;
-        max-width:220px;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="budget"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="budget"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="spend"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="spend"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="rate"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="rate"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="cost_reg"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="cost_reg"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="cpa"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="cpa"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="income"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="income"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="profit"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="profit"] {{
-        width:92px;
-        min-width:92px;
-        max-width:92px;
-        text-align:right;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="clicks"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="clicks"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="leads"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="leads"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="reg"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="reg"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="fb_ftd"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="fb_ftd"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="chatterfy"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="chatterfy"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="players_ftd"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="players_ftd"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="qual_ftd"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="qual_ftd"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="hold_count"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="hold_count"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="cap_total"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="cap_total"] {{
-        width:70px;
-        min-width:70px;
-        max-width:70px;
-        text-align:right;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="hold_split"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="hold_split"] {{
-        width:82px;
-        min-width:82px;
-        max-width:82px;
-        text-align:center;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="cap_fill"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="cap_fill"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="roi"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="roi"] {{
-        width:72px;
-        min-width:72px;
-        max-width:72px;
-        text-align:right;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="buyer"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="buyer"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="manager"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="manager"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="geo"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="geo"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="offer"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="offer"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="cabinet_text"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="cabinet_text"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="advertiser_text"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="advertiser_text"] {{
-        background:#f7fbff;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="budget"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="budget"] {{
-        background:#eef9ef;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="spend"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="spend"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="clicks"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="clicks"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="leads"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="leads"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="reg"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="reg"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="fb_ftd"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="fb_ftd"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="cpa"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="cpa"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="cost_reg"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="cost_reg"] {{
-        background:#fff4e8;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="chatterfy"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="chatterfy"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="players_ftd"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="players_ftd"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="qual_ftd"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="qual_ftd"] {{
-        background:#f3efff;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="hold_count"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="hold_count"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="hold_split"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="hold_split"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="cap_total"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="cap_total"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="cap_fill"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="cap_fill"] {{
-        background:#fff8df;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="income"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="income"] {{
-        background:#edf8e7;
-    }}
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="profit"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="profit"],
-    .dashboard-v2 table[data-dashboard-flat-table] th[data-col="roi"],
-    .dashboard-v2 table[data-dashboard-flat-table] td[data-col="roi"] {{
-        background:#e7f8fb;
-    }}
     .dashboard-v2 table[data-dashboard-tree-table] {{
         table-layout:auto;
         width:max-content;
@@ -9468,107 +8332,63 @@ def _render_dashboard_page_v2(
         min-width:0 !important;
         max-width:none !important;
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="platform"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="platform"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="geo"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="geo"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="manager"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="manager"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="campaign_name"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="campaign_name"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="adset_name"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="adset_name"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="ad_name"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="ad_name"] {{
-        width:auto !important;
-        min-width:0 !important;
-        max-width:none !important;
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="platform"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="platform"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="geo"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="geo"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="manager"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="manager"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="campaign_name"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="campaign_name"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="adset_name"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="adset_name"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="ad_name"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="ad_name"] {{
+        position:sticky;
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] tbody td {{
-        overflow:visible;
-        text-overflow:clip;
-        color:rgba(30, 45, 74, 0.82);
-        background-color:rgba(255, 255, 255, 0.82);
-        font-weight:400;
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="platform"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="platform"] {{
+        left:var(--sticky-left-platform, 0px);
+        z-index:7;
+        box-shadow:none;
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] .dashboard-tree-caret {{
-        color:rgba(100, 125, 168, 0.78);
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="geo"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="geo"] {{
+        left:var(--sticky-left-geo, 0px);
+        z-index:7;
+        box-shadow:none;
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] tbody tr.soft-green td[data-col="profit"],
-    .dashboard-v2 table[data-dashboard-tree-table] tbody tr.soft-green td[data-col="roi"] {{
-        color:#0f8c58;
-        font-weight:600;
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="manager"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="manager"] {{
+        left:var(--sticky-left-manager, 0px);
+        z-index:7;
+        box-shadow:none;
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] tbody tr.soft-red td[data-col="profit"],
-    .dashboard-v2 table[data-dashboard-tree-table] tbody tr.soft-red td[data-col="roi"] {{
-        color:#d84c57;
-        font-weight:600;
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="campaign_name"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="campaign_name"] {{
+        left:var(--sticky-left-campaign_name, 0px);
+        z-index:7;
+        box-shadow:none;
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="platform"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="platform"] {{
-        background:rgba(236, 245, 255, 0.82);
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="adset_name"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="adset_name"] {{
+        left:var(--sticky-left-adset_name, 0px);
+        z-index:7;
+        box-shadow:none;
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="buyer"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="buyer"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="manager"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="manager"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="geo"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="geo"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="offer"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="offer"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="cabinet_text"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="cabinet_text"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="advertiser_text"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="advertiser_text"] {{
-        background:rgba(247, 251, 255, 0.82);
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="ad_name"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="ad_name"] {{
+        left:var(--sticky-left-ad_name, 0px);
+        z-index:7;
+        box-shadow:none;
     }}
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="budget"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="budget"] {{
-        background:rgba(238, 249, 239, 0.82);
-    }}
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="spend"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="spend"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="clicks"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="clicks"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="leads"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="leads"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="reg"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="reg"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="fb_ftd"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="fb_ftd"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="cpa"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="cpa"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="cost_reg"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="cost_reg"] {{
-        background:rgba(255, 244, 232, 0.82);
-    }}
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="chatterfy"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="chatterfy"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="players_ftd"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="players_ftd"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="qual_ftd"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="qual_ftd"] {{
-        background:rgba(243, 239, 255, 0.82);
-    }}
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="hold_count"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="hold_count"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="hold_split"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="hold_split"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="cap_total"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="cap_total"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="cap_fill"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="cap_fill"] {{
-        background:rgba(255, 248, 223, 0.82);
-    }}
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="income"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="income"] {{
-        background:rgba(237, 248, 231, 0.82);
-    }}
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="profit"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="profit"],
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="roi"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="roi"] {{
-        background:rgba(231, 248, 251, 0.82);
+    .dashboard-v2 #dashboardUnifiedTable thead th[data-col="platform"],
+    .dashboard-v2 #dashboardUnifiedTable thead th[data-col="geo"],
+    .dashboard-v2 #dashboardUnifiedTable thead th[data-col="manager"],
+    .dashboard-v2 #dashboardUnifiedTable thead th[data-col="campaign_name"],
+    .dashboard-v2 #dashboardUnifiedTable thead th[data-col="adset_name"],
+    .dashboard-v2 #dashboardUnifiedTable thead th[data-col="ad_name"] {{
+        z-index:9;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td[data-col="platform"],
     .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td[data-col="geo"],
@@ -9672,267 +8492,484 @@ def _render_dashboard_page_v2(
             </label>
             <input type="hidden" name="sort_by" value="{escape(sort_by)}">
             <input type="hidden" name="order" value="{escape(order)}">
-            <input type="hidden" name="group_levels" value="{escape(group_levels_param)}">
-            <input type="hidden" name="matrix_brand" value="{escape(matrix_brand)}">
-            <input type="hidden" name="matrix_geo" value="{escape(matrix_geo)}">
-            <input type="hidden" name="matrix_cabinet" value="{escape(matrix_cabinet)}">
-            <input type="hidden" name="matrix_campaign" value="{escape(matrix_campaign)}">
-            <input type="hidden" name="matrix_adset" value="{escape(matrix_adset)}">
-            <input type="hidden" name="matrix_ad" value="{escape(matrix_ad)}">
-            <input type="hidden" name="dashboard_state" id="dashboardStateInput" value="{escape(dashboard_state_param)}">
             <div class="dashboard-filter-actions" style="grid-column:span 2;">
                 <button type="submit" class="btn small-btn">Filter</button>
-                <a href="/dashboard?period_view=period&period_label={quote_plus(effective_period_label)}&dashboard_state={quote_plus(dashboard_state_param)}" class="ghost-btn small-btn" data-reset-filters="dashboard-v2">Reset</a>
+                <a href="/dashboard?period_view=period&period_label={quote_plus(effective_period_label)}" class="ghost-btn small-btn" data-reset-filters="dashboard-v2">Reset</a>
             </div>
         </form>
     </div>
 
-    {render_dashboard_table_panel("CRM Analytics", "dashboardUnifiedTable")}
+    <div class="panel compact-panel dashboard-table-panel">
+        <div class="dashboard-table-header">
+            <div class="dashboard-table-title">
+                <div class="panel-title">CRM Analytics</div>
+                <div class="panel-subtitle">Compact dashboard view across FB, Players, Chatterfy, Caps, Cabinets and Hold.</div>
+            </div>
+            <details class="upload-menu upload-menu-right" id="dashboardColumnsMenu">
+                <summary class="ghost-btn small-btn">Columns</summary>
+                <div class="upload-menu-list" style="width:min(560px, calc(100vw - 48px));">
+                    <div class="panel-subtitle">Choose which columns to keep visible in Dashboard.</div>
+                    <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
+                        <button type="button" class="ghost-btn small-btn" id="dashboardShowAllColumns">Show all</button>
+                    </div>
+                    <div style="display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px; margin-top:12px;">
+                        {column_chips}
+                    </div>
+                </div>
+            </details>
+        </div>
+        <div class="dashboard-table-wrap">
+            <table id="dashboardUnifiedTable" data-dashboard-tree-table>
+                <thead><tr>{head_html}</tr></thead>
+                <tbody>{rows_html if rows_html else '<tr><td colspan="31">No dashboard rows for the selected filters</td></tr>'}</tbody>
+            </table>
+        </div>
+    </div>
     </div>
 
     <script>
     (() => {{
         const periodSelect = document.getElementById("dashboardPeriodSelect");
-        const filterForm = periodSelect?.closest('form');
-        const tables = () => Array.from(document.querySelectorAll('[data-dashboard-flat-table]'));
-        const treeTables = () => Array.from(document.querySelectorAll('[data-dashboard-tree-table]'));
-        const dashboardTreePayload = {matrix_tree_json};
-        const dashboardTableFields = {dashboard_table_fields_json};
-        const dashboardHierarchyFields = {dashboard_hierarchy_fields_json};
-        const dashboardMetricFields = {dashboard_metric_fields_json};
-        const dashboardDescriptorFields = {dashboard_descriptor_fields_json};
-        const dashboardNoRowsHtml = '<tr><td colspan="{len(table_headers)}">No dashboard rows for the selected filters</td></tr>';
-        const hiddenKey = window.teambeadStorageKey('dashboard-flat-columns-hidden');
-        const treeStateKey = window.teambeadStorageKey('dashboard-tree-open-nodes');
-        const toggles = Array.from(document.querySelectorAll('.dashboard-column-toggle'));
-        const stateInput = document.getElementById('dashboardStateInput');
-        const hierarchyLevelMap = dashboardHierarchyFields.reduce((acc, field, index) => {{
-            acc[field] = index;
-            return acc;
-        }}, Object.create(null));
-        const autoWidthColumns = new Set([
-            'platform',
-            'geo',
-            'manager',
-            'campaign_name',
-            'adset_name',
-            'ad_name',
-            'buyer',
-            'offer',
-            'cabinet_text',
-            'advertiser_text',
-            'account_id',
-        ]);
-        const autoWidthFloors = Object.freeze({{
-            platform: 52,
-            geo: 48,
-            manager: 72,
-            campaign_name: 112,
-            adset_name: 132,
-            ad_name: 150,
-            buyer: 62,
-            offer: 76,
-            cabinet_text: 88,
-            advertiser_text: 88,
-            account_id: 108,
+        if (!periodSelect) return;
+        const form = periodSelect.closest('form');
+        const persistDashboardUiState = () => {{
+            if (window.dashboardPersistAllTreeState) window.dashboardPersistAllTreeState();
+        }};
+        document.querySelectorAll('.period-jump-btn').forEach((button) => {{
+            button.addEventListener('click', () => {{
+                const direction = Number(button.dataset.periodJump || '0');
+                const options = Array.from(periodSelect.options).filter(option => option.value);
+                const currentIndex = options.findIndex(option => option.value === periodSelect.value);
+                if (currentIndex < 0) return;
+                const targetIndex = currentIndex + direction;
+                if (targetIndex < 0 || targetIndex >= options.length) return;
+                periodSelect.value = options[targetIndex].value;
+                if (form) {{
+                    persistDashboardUiState();
+                    form.requestSubmit();
+                }}
+            }});
         }});
 
-        const parseNodeState = (raw) => new Set(
-            String(raw || '').split(',').map((value) => value.trim()).filter(Boolean)
-        );
-        const serializeNodeState = (state) => Array.from(state).sort().join(',');
-        let openNodes = parseNodeState(stateInput?.value || localStorage.getItem(treeStateKey) || '');
-
-        const autoSizeTable = (table) => {{
-            if (!table) return;
-            const cols = Array.from(new Set(
-                Array.from(table.querySelectorAll('[data-col]'))
-                    .map((cell) => cell.dataset.col || '')
-                    .filter((col) => !table.matches('[data-dashboard-tree-table]') || autoWidthColumns.has(col))
-            ));
-            cols.forEach((col) => {{
-                const cells = Array.from(table.querySelectorAll(`[data-col="${{col}}"]`)).filter((cell) => {{
-                    return window.getComputedStyle(cell).display !== 'none';
+        window.dashboardTreeToggle = (button) => {{
+            if (!button) return false;
+            const table = button.closest('[data-dashboard-tree-table]');
+            if (!table) return false;
+            const nodeId = button.dataset.target || '';
+            if (!nodeId) return false;
+            const treeRows = Array.from(table.querySelectorAll('tbody tr'));
+            const treeButtons = Array.from(table.querySelectorAll('.dashboard-tree-toggle'));
+            const hideDescendants = (currentNodeId) => {{
+                treeRows.forEach((row) => {{
+                    const ancestors = (row.dataset.ancestors || '').split(',').filter(Boolean);
+                    if (!ancestors.includes(currentNodeId)) return;
+                    row.hidden = true;
+                    if (row.dataset.nodeId) {{
+                        const nestedButton = row.querySelector('.dashboard-tree-toggle');
+                        if (nestedButton) nestedButton.setAttribute('aria-expanded', 'false');
+                    }}
                 }});
-                if (!cells.length) return;
-                cells.forEach((cell) => {{
+            }};
+            const showDirectChildren = (currentNodeId) => {{
+                treeRows.forEach((row) => {{
+                    if ((row.dataset.parentId || '') !== currentNodeId) return;
+                    row.hidden = false;
+                }});
+            }};
+            const expanded = button.getAttribute('aria-expanded') === 'true';
+            if (expanded) {{
+                button.setAttribute('aria-expanded', 'false');
+                hideDescendants(nodeId);
+            }} else {{
+                button.setAttribute('aria-expanded', 'true');
+                showDirectChildren(nodeId);
+            }}
+            const openNodes = treeButtons
+                .filter((item) => item.getAttribute('aria-expanded') === 'true')
+                .map((item) => item.dataset.target || '')
+                .filter(Boolean);
+            if (window.dashboardWriteState) {{
+                const state = window.dashboardReadState();
+                state.expanded = state.expanded || {{}};
+                state.expanded[table.id || 'dashboard-tree-table'] = openNodes;
+                window.dashboardWriteState(state);
+            }}
+            if (window.dashboardTreeAutoSize) window.dashboardTreeAutoSize(table);
+            return false;
+        }};
+
+        window.dashboardTreeAutoSize = (table) => {{
+            if (!table) return;
+            const autoCols = [
+                'platform', 'geo', 'manager', 'campaign_name', 'adset_name', 'ad_name',
+                'buyer', 'offer', 'cabinet_text', 'advertiser_text', 'account_id',
+            ];
+            const stickyCols = ['platform', 'geo', 'manager', 'campaign_name', 'adset_name', 'ad_name'];
+            autoCols.forEach((col) => {{
+                const allCells = Array.from(table.querySelectorAll(`[data-col="${{col}}"]`));
+                allCells.forEach((cell) => {{
                     cell.style.width = '';
                     cell.style.minWidth = '';
                     cell.style.maxWidth = '';
                 }});
-                let width = autoWidthFloors[col] || 0;
-                cells.forEach((cell) => {{
-                    const style = window.getComputedStyle(cell);
-                    const paddingLeft = parseFloat(style.paddingLeft || '0') || 0;
-                    const paddingRight = parseFloat(style.paddingRight || '0') || 0;
-                    width = Math.max(width, Math.ceil(cell.scrollWidth + paddingLeft + paddingRight + 2));
+            }});
+            table.style.tableLayout = 'auto';
+            requestAnimationFrame(() => {{
+                const measureColumnWidth = (col) => {{
+                    const cells = Array.from(table.querySelectorAll(`[data-col="${{col}}"]`)).filter((cell) => {{
+                        if (!cell) return false;
+                        const style = window.getComputedStyle(cell);
+                        return style.display !== 'none';
+                    }});
+                    if (!cells.length) return 0;
+                    let width = 0;
+                    cells.forEach((cell) => {{
+                        const style = window.getComputedStyle(cell);
+                        const paddingLeft = parseFloat(style.paddingLeft || '0') || 0;
+                        const paddingRight = parseFloat(style.paddingRight || '0') || 0;
+                        const contentWidth = Math.max(cell.scrollWidth, cell.firstElementChild?.scrollWidth || 0, cell.textContent?.trim() ? cell.scrollWidth : 0);
+                        width = Math.max(width, Math.ceil(contentWidth + paddingLeft + paddingRight + 2));
+                    }});
+                    return width;
+                }};
+                const widths = {{}};
+                autoCols.forEach((col) => {{
+                    const measuredWidth = measureColumnWidth(col);
+                    if (!measuredWidth) return;
+                    widths[col] = measuredWidth;
+                    Array.from(table.querySelectorAll(`[data-col="${{col}}"]`)).forEach((cell) => {{
+                        cell.style.width = `${{measuredWidth}}px`;
+                        cell.style.minWidth = `${{measuredWidth}}px`;
+                        cell.style.maxWidth = `${{measuredWidth}}px`;
+                    }});
                 }});
-                cells.forEach((cell) => {{
-                    cell.style.width = `${{width}}px`;
-                    cell.style.minWidth = `${{width}}px`;
-                    cell.style.maxWidth = `${{width}}px`;
+                let currentLeft = 0;
+                stickyCols.forEach((col) => {{
+                    table.style.setProperty(`--sticky-left-${{col}}`, `${{currentLeft}}px`);
+                    currentLeft += widths[col] || 0;
                 }});
             }});
         }};
 
-        const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({{
-            '&': '&amp;',
-            '<': '&lt;',
-            '>': '&gt;',
-            '"': '&quot;',
-            "'": '&#39;',
-        }})[char]);
-
-        const buildStateUrl = (state) => {{
-            const url = new URL(window.location.href);
-            const serialized = serializeNodeState(state);
-            if (serialized) {{
-                url.searchParams.set('dashboard_state', serialized);
-            }} else {{
-                url.searchParams.delete('dashboard_state');
+        const dashboardStateKey = window.teambeadStorageKey('dashboard-ui-state');
+        window.dashboardReadState = () => {{
+            try {{
+                const parsed = JSON.parse(localStorage.getItem(dashboardStateKey) || '{{}}');
+                return parsed && typeof parsed === 'object' ? parsed : {{}};
+            }} catch (_error) {{
+                return {{}};
             }}
-            const query = url.searchParams.toString();
-            return url.pathname + (query ? `?${{query}}` : '');
         }};
-
-        const getToggledState = (nodeId) => {{
-            const nextState = new Set(openNodes);
-            if (nextState.has(nodeId)) {{
-                Array.from(nextState).forEach((openId) => {{
-                    if (openId === nodeId || openId.startsWith(`${{nodeId}}|`)) {{
-                        nextState.delete(openId);
+        window.dashboardWriteState = (state) => {{
+            try {{
+                localStorage.setItem(dashboardStateKey, JSON.stringify(state || {{}}));
+            }} catch (_error) {{}}
+        }};
+        window.dashboardPersistAllTreeState = () => {{
+            const state = window.dashboardReadState();
+            state.expanded = state.expanded || {{}};
+            document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
+                const openNodes = Array.from(table.querySelectorAll('.dashboard-tree-toggle'))
+                    .filter((button) => button.getAttribute('aria-expanded') === 'true')
+                    .map((button) => button.dataset.target || '')
+                    .filter(Boolean);
+                state.expanded[table.id || 'dashboard-tree-table'] = openNodes;
+            }});
+            window.dashboardWriteState(state);
+        }};
+        window.dashboardApplySelectedRows = (table) => {{
+            if (!table) return;
+            const state = window.dashboardReadState();
+            const selectedRows = state.selectedRows || {{}};
+            const selectedKeys = new Set(
+                Array.isArray(selectedRows[table.id || 'dashboard-tree-table'])
+                    ? selectedRows[table.id || 'dashboard-tree-table']
+                    : []
+            );
+            Array.from(table.querySelectorAll('tbody tr[data-row-key]')).forEach((row) => {{
+                row.classList.toggle('dashboard-row-selected', selectedKeys.has(row.dataset.rowKey || ''));
+            }});
+        }};
+        window.dashboardPersistSelectedRows = (table) => {{
+            if (!table) return;
+            const state = window.dashboardReadState();
+            state.selectedRows = state.selectedRows || {{}};
+            state.selectedRows[table.id || 'dashboard-tree-table'] = Array.from(
+                table.querySelectorAll('tbody tr.dashboard-row-selected[data-row-key]')
+            )
+                .map((row) => row.dataset.rowKey || '')
+                .filter(Boolean);
+            window.dashboardWriteState(state);
+        }};
+        window.dashboardToggleRowSelection = (row) => {{
+            if (!row) return;
+            const table = row.closest('[data-dashboard-tree-table]');
+            if (!table) return;
+            row.classList.toggle('dashboard-row-selected');
+            window.dashboardPersistSelectedRows(table);
+        }};
+        window.dashboardApplySelectedColumns = (table) => {{
+            if (!table) return;
+            const state = window.dashboardReadState();
+            const selectedColumns = state.selectedColumns || {{}};
+            const selectedCols = new Set(
+                Array.isArray(selectedColumns[table.id || 'dashboard-tree-table'])
+                    ? selectedColumns[table.id || 'dashboard-tree-table']
+                    : []
+            );
+            Array.from(table.querySelectorAll('[data-col]')).forEach((cell) => {{
+                cell.classList.toggle('dashboard-column-selected', selectedCols.has(cell.dataset.col || ''));
+            }});
+        }};
+        window.dashboardPersistSelectedColumns = (table) => {{
+            if (!table) return;
+            const state = window.dashboardReadState();
+            state.selectedColumns = state.selectedColumns || {{}};
+            const uniqueCols = Array.from(new Set(
+                Array.from(table.querySelectorAll('.dashboard-column-selected[data-col]'))
+                    .map((cell) => cell.dataset.col || '')
+                    .filter(Boolean)
+            ));
+            state.selectedColumns[table.id || 'dashboard-tree-table'] = uniqueCols;
+            window.dashboardWriteState(state);
+        }};
+        window.dashboardToggleColumnSelection = (table, columnName) => {{
+            if (!table || !columnName) return;
+            const columnCells = Array.from(table.querySelectorAll(`[data-col="${{columnName}}"]`));
+            const shouldSelect = !columnCells.every((cell) => cell.classList.contains('dashboard-column-selected'));
+            columnCells.forEach((cell) => {{
+                cell.classList.toggle('dashboard-column-selected', shouldSelect);
+            }});
+            window.dashboardPersistSelectedColumns(table);
+        }};
+        window.dashboardApplySelectedCells = (table) => {{
+            if (!table) return;
+            const state = window.dashboardReadState();
+            const selectedCells = state.selectedCells || {{}};
+            const selectedKeys = new Set(
+                Array.isArray(selectedCells[table.id || 'dashboard-tree-table'])
+                    ? selectedCells[table.id || 'dashboard-tree-table']
+                    : []
+            );
+            Array.from(table.querySelectorAll('tbody td[data-col]')).forEach((cell) => {{
+                const row = cell.closest('tr[data-row-key]');
+                const rowKey = row?.dataset.rowKey || '';
+                const cellKey = rowKey && cell.dataset.col ? `${{rowKey}}::${{cell.dataset.col}}` : '';
+                cell.classList.toggle('dashboard-cell-selected', selectedKeys.has(cellKey));
+            }});
+        }};
+        window.dashboardPersistSelectedCells = (table) => {{
+            if (!table) return;
+            const state = window.dashboardReadState();
+            state.selectedCells = state.selectedCells || {{}};
+            state.selectedCells[table.id || 'dashboard-tree-table'] = Array.from(
+                table.querySelectorAll('tbody td.dashboard-cell-selected[data-col]')
+            ).map((cell) => {{
+                const row = cell.closest('tr[data-row-key]');
+                const rowKey = row?.dataset.rowKey || '';
+                return rowKey && cell.dataset.col ? `${{rowKey}}::${{cell.dataset.col}}` : '';
+            }}).filter(Boolean);
+            window.dashboardWriteState(state);
+        }};
+        window.dashboardToggleCellSelection = (cell) => {{
+            if (!cell) return;
+            const table = cell.closest('[data-dashboard-tree-table]');
+            if (!table) return;
+            cell.classList.toggle('dashboard-cell-selected');
+            window.dashboardPersistSelectedCells(table);
+        }};
+        window.restoreDashboardUiState = () => {{
+            document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
+            const getTreeButtons = () => Array.from(table.querySelectorAll('.dashboard-tree-toggle'));
+            const getTreeRows = () => Array.from(table.querySelectorAll('tbody tr'));
+            const getButtonMap = () => new Map(getTreeButtons().map((button) => [button.dataset.target || '', button]));
+            const readExpandedNodes = () => {{
+                const state = window.dashboardReadState();
+                const expanded = state.expanded || {{}};
+                const value = expanded[table.id || 'dashboard-tree-table'];
+                return Array.isArray(value) ? value : [];
+            }};
+            const hideDescendants = (nodeId) => {{
+                getTreeRows().forEach((row) => {{
+                    const ancestors = (row.dataset.ancestors || '').split(',').filter(Boolean);
+                    if (!ancestors.includes(nodeId)) return;
+                    row.hidden = true;
+                    if (row.dataset.nodeId) {{
+                        const button = row.querySelector('.dashboard-tree-toggle');
+                        if (button) button.setAttribute('aria-expanded', 'false');
                     }}
                 }});
-            }} else {{
-                nextState.add(nodeId);
-            }}
-            return nextState;
+            }};
+            const saveExpandedState = () => {{
+                const openNodes = getTreeButtons()
+                    .filter((button) => button.getAttribute('aria-expanded') === 'true')
+                    .map((button) => button.dataset.target || '')
+                    .filter(Boolean);
+                const state = window.dashboardReadState();
+                state.expanded = state.expanded || {{}};
+                state.expanded[table.id || 'dashboard-tree-table'] = openNodes;
+                window.dashboardWriteState(state);
+            }};
+            const showDirectChildren = (nodeId) => {{
+                getTreeRows().forEach((row) => {{
+                    if ((row.dataset.parentId || '') !== nodeId) return;
+                    row.hidden = false;
+                }});
+            }};
+            const expandNode = (button) => {{
+                const nodeId = button.dataset.target || '';
+                if (!nodeId) return;
+                button.setAttribute('aria-expanded', 'true');
+                showDirectChildren(nodeId);
+            }};
+            const collapseNode = (button) => {{
+                const nodeId = button.dataset.target || '';
+                if (!nodeId) return;
+                button.setAttribute('aria-expanded', 'false');
+                hideDescendants(nodeId);
+            }};
+                getTreeRows().forEach((row) => {{
+                    if (row.dataset.parentId) row.hidden = true;
+                    if (row.dataset.nodeId) {{
+                        const button = row.querySelector('.dashboard-tree-toggle');
+                        if (button) button.setAttribute('aria-expanded', 'false');
+                    }}
+                }});
+                readExpandedNodes().forEach((nodeId) => {{
+                    const button = getButtonMap().get(nodeId);
+                    if (!button) return;
+                    const parentRow = button.closest('tr');
+                    const ancestors = (parentRow?.dataset.ancestors || '').split(',').filter(Boolean);
+                    ancestors.forEach((ancestorId) => {{
+                        const ancestorButton = getButtonMap().get(ancestorId);
+                        if (ancestorButton) expandNode(ancestorButton);
+                    }});
+                    expandNode(button);
+                }});
+                window.dashboardTreeAutoSize(table);
+                if (window.dashboardApplySelectedRows) window.dashboardApplySelectedRows(table);
+                if (window.dashboardApplySelectedColumns) window.dashboardApplySelectedColumns(table);
+                if (window.dashboardApplySelectedCells) window.dashboardApplySelectedCells(table);
+            }});
         }};
-
-        const syncTreeState = () => {{
-            const serialized = serializeNodeState(openNodes);
-            if (stateInput) stateInput.value = serialized;
-            localStorage.setItem(treeStateKey, serialized);
-            if (window.history && typeof window.history.replaceState === 'function') {{
-                window.history.replaceState(null, '', buildStateUrl(openNodes));
-            }}
+        const scheduleDashboardUiRestore = () => {{
+            requestAnimationFrame(() => {{
+                if (window.restoreDashboardUiState) window.restoreDashboardUiState();
+            }});
+            window.setTimeout(() => {{
+                if (window.restoreDashboardUiState) window.restoreDashboardUiState();
+            }}, 60);
+            window.setTimeout(() => {{
+                if (window.restoreDashboardUiState) window.restoreDashboardUiState();
+            }}, 180);
         }};
+        scheduleDashboardUiRestore();
+        document.querySelectorAll('.dashboard-sort-link').forEach((link) => {{
+            link.addEventListener('click', () => {{
+                persistDashboardUiState();
+            }});
+        }});
+        document.querySelectorAll('.dashboard-filter-actions .btn, .dashboard-filter-actions .ghost-btn').forEach((button) => {{
+            button.addEventListener('click', () => {{
+                persistDashboardUiState();
+            }});
+        }});
+        form?.addEventListener('submit', () => {{
+            persistDashboardUiState();
+        }});
+        window.addEventListener('pagehide', () => {{
+            persistDashboardUiState();
+        }});
+        window.addEventListener('beforeunload', () => {{
+            persistDashboardUiState();
+        }});
+        window.addEventListener('resize', () => {{
+            document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
+                window.dashboardTreeAutoSize(table);
+            }});
+        }});
+        window.addEventListener('pageshow', () => {{
+            scheduleDashboardUiRestore();
+        }});
+        document.addEventListener('visibilitychange', () => {{
+            if (!document.hidden) {{
+                scheduleDashboardUiRestore();
+            }}
+        }});
 
+        const hiddenKey = window.teambeadStorageKey('dashboard-columns-hidden');
+        const toggles = Array.from(document.querySelectorAll('.dashboard-column-toggle'));
         const applyColumns = () => {{
             let hidden = [];
             try {{
-                hidden = JSON.parse(localStorage.getItem(hiddenKey) || '[]');
+                const state = window.dashboardReadState();
+                hidden = Array.isArray(state.hiddenColumns) ? state.hiddenColumns : JSON.parse(localStorage.getItem(hiddenKey) || '[]');
             }} catch (_error) {{
                 hidden = [];
             }}
             toggles.forEach((toggle) => {{
                 toggle.checked = !hidden.includes(toggle.value);
             }});
-            document.querySelectorAll('[data-dashboard-flat-table] [data-col]').forEach((cell) => {{
+            document.querySelectorAll('[data-dashboard-tree-table] [data-col]').forEach((cell) => {{
                 cell.style.display = hidden.includes(cell.dataset.col) ? 'none' : '';
             }});
-            window.requestAnimationFrame(() => {{
-                tables().forEach(autoSizeTable);
+            document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
+                window.dashboardTreeAutoSize(table);
             }});
         }};
-
+        document.querySelectorAll('.dashboard-filter-grid select, .dashboard-filter-grid input').forEach((field) => {{
+            const eventName = field.tagName === 'SELECT' ? 'change' : 'input';
+            field.addEventListener(eventName, () => {{
+                persistDashboardUiState();
+            }});
+            if (eventName !== 'change') {{
+                field.addEventListener('change', () => {{
+                    persistDashboardUiState();
+                }});
+            }}
+        }});
         const saveColumns = () => {{
-            const hidden = Array.from(new Set(
-                toggles.filter((toggle) => !toggle.checked).map((toggle) => toggle.value)
-            ));
+            const hidden = toggles.filter((toggle) => !toggle.checked).map((toggle) => toggle.value);
+            const state = window.dashboardReadState();
+            state.hiddenColumns = hidden;
+            window.dashboardWriteState(state);
             localStorage.setItem(hiddenKey, JSON.stringify(hidden));
             applyColumns();
         }};
-
-        const treeRows = (table) => Array.from(table.querySelectorAll('tbody tr'));
-        const treeButtons = (table) => Array.from(table.querySelectorAll('.dashboard-tree-toggle'));
-        const directChildren = (table, nodeId) => treeRows(table).filter((row) => row.dataset.parentId === nodeId);
-
-        const resetTreeTable = (table) => {{
-            treeRows(table).forEach((row) => {{
-                if (row.dataset.parentId) {{
-                    row.hidden = true;
-                }}
-                row.classList.remove('dashboard-tree-row-open');
-            }});
-            treeButtons(table).forEach((button) => {{
-                button.setAttribute('aria-expanded', 'false');
-                const nodeId = button.dataset.target;
-                if (nodeId) {{
-                    button.setAttribute('href', buildStateUrl(getToggledState(nodeId)));
-                }}
-            }});
-        }};
-
-        const applyTreeState = () => {{
-            treeTables().forEach(resetTreeTable);
-            const orderedNodes = Array.from(openNodes).sort((left, right) => left.split('|').length - right.split('|').length);
-            orderedNodes.forEach((nodeId) => {{
-                treeTables().forEach((table) => {{
-                    const row = treeRows(table).find((item) => item.dataset.nodeId === nodeId);
-                    if (!row) return;
-                    const parentId = row.dataset.parentId || '';
-                    if (parentId && !openNodes.has(parentId)) return;
-                    row.classList.add('dashboard-tree-row-open');
-                    const button = treeButtons(table).find((item) => item.dataset.target === nodeId);
-                    if (button) {{
-                        button.setAttribute('aria-expanded', 'true');
-                        button.setAttribute('href', buildStateUrl(getToggledState(nodeId)));
-                    }}
-                    directChildren(table, nodeId).forEach((child) => {{
-                        child.hidden = false;
-                    }});
-                }});
-            }});
-            syncTreeState();
-            applyColumns();
-        }};
-
         toggles.forEach((toggle) => toggle.addEventListener('change', saveColumns));
-        document.querySelectorAll('.dashboard-show-all-columns').forEach((button) => {{
-            button.addEventListener('click', () => {{
+        const showAllButton = document.getElementById('dashboardShowAllColumns');
+        if (showAllButton) {{
+            showAllButton.addEventListener('click', () => {{
+                const state = window.dashboardReadState();
+                state.hiddenColumns = [];
+                window.dashboardWriteState(state);
                 localStorage.setItem(hiddenKey, JSON.stringify([]));
                 applyColumns();
             }});
-        }});
-
-        document.addEventListener('click', (event) => {{
-            const toggle = event.target.closest('.dashboard-tree-toggle');
-            if (!toggle || !toggle.closest('[data-dashboard-tree-table]')) return;
-            event.preventDefault();
-            const nodeId = toggle.dataset.target;
-            if (!nodeId) return;
-            openNodes = getToggledState(nodeId);
-            applyTreeState();
-        }});
-
-        const groupingForm = document.getElementById('dashboardGroupingForm');
-        groupingForm?.addEventListener('submit', (event) => {{
-            const checked = groupingForm.querySelectorAll('input[name="group_levels"]:checked');
-            if (checked.length) return;
-            event.preventDefault();
-        }});
-
-        document.querySelectorAll('.period-jump-btn').forEach((button) => {{
-            button.addEventListener('click', () => {{
-                if (!periodSelect || !filterForm) return;
-                const direction = Number(button.dataset.periodJump || '0');
-                const options = Array.from(periodSelect.options).filter((option) => option.value);
-                const currentIndex = options.findIndex((option) => option.value === periodSelect.value);
-                if (currentIndex < 0) return;
-                const targetIndex = currentIndex + direction;
-                if (targetIndex < 0 || targetIndex >= options.length) return;
-                periodSelect.value = options[targetIndex].value;
-                filterForm.requestSubmit();
+        }}
+        applyColumns();
+        document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
+            table.addEventListener('click', (event) => {{
+                const cell = event.target.closest('tbody td[data-col]');
+                if (!cell || !table.contains(cell)) return;
+                if (event.target.closest('a, input, select, label, summary')) return;
+                if (cell && table.contains(cell)) {{
+                    if (window.dashboardToggleCellSelection) window.dashboardToggleCellSelection(cell);
+                }}
             }});
+            table.addEventListener('dblclick', (event) => {{
+                if (event.target.closest('a, input, select, label, summary')) return;
+                const cell = event.target.closest('[data-col]');
+                const columnName = cell?.dataset.col || '';
+                if (!columnName || !table.contains(cell)) return;
+                if (window.dashboardToggleColumnSelection) window.dashboardToggleColumnSelection(table, columnName);
+            }});
+            if (window.dashboardApplySelectedRows) window.dashboardApplySelectedRows(table);
+            if (window.dashboardApplySelectedColumns) window.dashboardApplySelectedColumns(table);
+            if (window.dashboardApplySelectedCells) window.dashboardApplySelectedCells(table);
         }});
-
-        window.addEventListener('resize', () => {{
-            tables().forEach(autoSizeTable);
-        }});
-
         requestAnimationFrame(() => {{
-            applyTreeState();
+            scheduleDashboardUiRestore();
         }});
     }})();
     </script>
