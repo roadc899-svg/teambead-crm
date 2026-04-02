@@ -6642,11 +6642,7 @@ def get_finance_pending_cpa_map(period_label=""):
     previous_period_label = get_previous_period_label(period_label)
     if not previous_period_label:
         return {}
-    db = SessionLocal()
-    try:
-        rows = db.query(PartnerRow).filter(PartnerRow.period_label == previous_period_label).all()
-    finally:
-        db.close()
+    rows = get_partner_rows_by_period(period_label=previous_period_label)
     result = {}
     for row in rows:
         cabinet_name = safe_text(getattr(row, "cabinet_name", "")).strip()
