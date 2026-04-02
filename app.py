@@ -9828,6 +9828,19 @@ def _render_dashboard_page_v2(
                 'platform', 'geo', 'manager', 'campaign_name', 'adset_name', 'ad_name',
                 'buyer',
             ];
+            const getTargetColumnWidth = (cell) => {{
+                if (!cell) return 0;
+                const inlineWidth = parseFloat(cell.style.width || '0') || 0;
+                if (inlineWidth > 0) return Math.ceil(inlineWidth);
+                const style = window.getComputedStyle(cell);
+                const cssMaxWidth = parseFloat(style.maxWidth || '0') || 0;
+                if (cssMaxWidth > 0 && style.maxWidth !== 'none') return Math.ceil(cssMaxWidth);
+                const cssMinWidth = parseFloat(style.minWidth || '0') || 0;
+                if (cssMinWidth > 0) return Math.ceil(cssMinWidth);
+                const cssWidth = parseFloat(style.width || '0') || 0;
+                if (cssWidth > 0) return Math.ceil(cssWidth);
+                return 0;
+            }};
             const computeVisibleTableWidth = () => {{
                 const headerCells = Array.from(table.querySelectorAll('thead th[data-col]')).filter((cell) => {{
                     if (!cell) return false;
@@ -9835,10 +9848,7 @@ def _render_dashboard_page_v2(
                     return style.display !== 'none';
                 }});
                 return headerCells.reduce((sum, cell) => {{
-                    const rectWidth = Math.ceil(cell.getBoundingClientRect().width || 0);
-                    if (rectWidth > 0) return sum + rectWidth;
-                    const computedWidth = parseFloat(window.getComputedStyle(cell).width || '0') || 0;
-                    return sum + Math.ceil(computedWidth);
+                    return sum + getTargetColumnWidth(cell);
                 }}, 0);
             }};
             const readWidthCache = () => {{
