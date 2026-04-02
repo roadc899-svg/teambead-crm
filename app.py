@@ -7998,7 +7998,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         z-index:1;
         background:var(--table-head);
         color:var(--table-head-text);
-        padding:9px 10px;
+        padding:7px 10px;
         text-align:left;
         font-size:11px;
         text-transform:uppercase;
@@ -8059,10 +8059,13 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
     }}
     .finance-inline-add-form .btn {{
         min-height:36px;
+        min-width:72px;
+        padding:8px 14px;
     }}
     .finance-sheet-cell {{
-        padding:9px 10px;
-        min-height:38px;
+        padding:5px 10px;
+        min-height:26px;
+        line-height:1.15;
         white-space:pre-wrap;
         word-break:break-word;
     }}
