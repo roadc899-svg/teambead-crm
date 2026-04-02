@@ -7450,7 +7450,18 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         </tr>
         """
 
-    def inline_edit_rows(row_key, action, columns, display_values, fields, hidden_fields=None, button_tone="orange"):
+    def inline_edit_rows(
+        row_key,
+        action,
+        columns,
+        display_values,
+        fields,
+        hidden_fields=None,
+        button_tone="orange",
+        delete_action="",
+        delete_field_name="",
+        delete_field_value="",
+    ):
         hidden_fields = hidden_fields or {}
         display_cells = "".join(
             f'<td><div class="finance-sheet-cell">{escape(safe_text(value))}</div></td>'
@@ -7476,22 +7487,36 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
                     f'<input type="text" name="{escape(name)}" value="{value}" placeholder="{escape(placeholder)}" list="{list_id}">'
                     f'<datalist id="{list_id}">{datalist_tags(field.get("options", []))}</datalist>'
                 )
+            elif field_type == "textarea":
+                control = f'<textarea name="{escape(name)}" placeholder="{escape(placeholder)}">{value}</textarea>'
             else:
                 control = f'<input type="{escape(field_type)}" name="{escape(name)}" value="{value}" placeholder="{escape(placeholder)}">'
             field_html += f'<label class="finance-inline-field finance-inline-field-{index + 1} {field_class}">{control}</label>'
+        delete_form_html = ""
+        if delete_action and delete_field_name:
+            delete_form_html = f"""
+            <form method="post" action="{escape(delete_action)}" class="finance-inline-delete-form finance-row-edit-form">
+                {hidden_filter_inputs}
+                <input type="hidden" name="{escape(delete_field_name)}" value="{escape(safe_text(delete_field_value))}">
+                <button type="submit" class="ghost-btn small-btn finance-inline-delete-btn">Delete</button>
+            </form>
+            """
         return f"""
         <tr class="finance-editable-display-row" data-edit-target="{escape(row_key)}" title="Double click to edit">
             {display_cells}
         </tr>
         <tr class="finance-inline-edit-row" data-edit-row="{escape(row_key)}" hidden>
             <td colspan="{columns}">
-                <form method="post" action="{escape(action)}" class="finance-inline-edit-form" style="grid-template-columns:repeat({grid_columns}, minmax(0, 1fr));">
-                    {hidden_filter_inputs}
-                    {hidden_html}
-                    {field_html}
-                    <button type="submit" class="btn small-btn finance-add-submit finance-add-submit-{escape(button_tone)}">Save</button>
-                    <button type="button" class="ghost-btn small-btn finance-inline-edit-cancel">Cancel</button>
-                </form>
+                <div class="finance-inline-edit-actions">
+                    <form method="post" action="{escape(action)}" class="finance-inline-edit-form" style="grid-template-columns:repeat({grid_columns}, minmax(0, 1fr));">
+                        {hidden_filter_inputs}
+                        {hidden_html}
+                        {field_html}
+                        <button type="submit" class="btn small-btn finance-add-submit finance-add-submit-{escape(button_tone)}">Save</button>
+                        <button type="button" class="ghost-btn small-btn finance-inline-edit-cancel">Cancel</button>
+                    </form>
+                    {delete_form_html}
+                </div>
             </td>
         </tr>
         """
@@ -7564,6 +7589,9 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
                 ],
                 hidden_fields={"edit_id": item.id},
                 button_tone="orange",
+                delete_action="/finance/wallets/delete",
+                delete_field_name="wallet_id",
+                delete_field_value=item.id,
             )
         }
         for item in manual.get("wallets", [])
@@ -7603,6 +7631,9 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
                     "paid_by": item.paid_by or "",
                 },
                 button_tone="red",
+                delete_action="/finance/expenses/delete",
+                delete_field_name="expense_id",
+                delete_field_value=item.id,
             )
         }
         for item in manual.get("expenses", [])
@@ -7641,6 +7672,9 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
                     "from_wallet": item.from_wallet or "",
                 },
                 button_tone="green",
+                delete_action="/finance/income/delete",
+                delete_field_name="income_id",
+                delete_field_value=item.id,
             )
         }
         for item in manual.get("income", [])
@@ -7680,18 +7714,25 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
                 <td><div class="finance-sheet-cell">{escape(item.category or '')}</div></td>
                 <td><div class="finance-sheet-cell">{escape(item.description or '')}</div></td>
                 <td>
-                    <form method="post" action="/finance/pending/save" class="finance-row-edit-form">
-                        {hidden_filter_inputs}
-                        <input type="hidden" name="edit_id" value="{item.id}">
-                        <input type="hidden" name="category" value="{escape(item.category or '')}">
-                        <input type="hidden" name="description" value="{escape(item.description or '')}">
-                        <input type="hidden" name="pending_date" value="{escape(item.pending_date or '')}">
-                        <input type="hidden" name="wallet" value="{escape(item.wallet or '')}">
-                        <input type="hidden" name="reconciliation" value="{escape(item.reconciliation or '')}">
-                        <input type="hidden" name="comment" value="">
-                        <input type="number" step="0.01" name="amount" value="{safe_number(item.amount):.2f}">
-                        <button type="submit" class="ghost-btn small-btn">Save</button>
-                    </form>
+                    <div class="finance-inline-edit-actions">
+                        <form method="post" action="/finance/pending/save" class="finance-row-edit-form">
+                            {hidden_filter_inputs}
+                            <input type="hidden" name="edit_id" value="{item.id}">
+                            <input type="hidden" name="category" value="{escape(item.category or '')}">
+                            <input type="hidden" name="description" value="{escape(item.description or '')}">
+                            <input type="hidden" name="pending_date" value="{escape(item.pending_date or '')}">
+                            <input type="hidden" name="wallet" value="{escape(item.wallet or '')}">
+                            <input type="hidden" name="reconciliation" value="{escape(item.reconciliation or '')}">
+                            <input type="hidden" name="comment" value="">
+                            <input type="number" step="0.01" name="amount" value="{safe_number(item.amount):.2f}">
+                            <button type="submit" class="ghost-btn small-btn">Save</button>
+                        </form>
+                        <form method="post" action="/finance/pending/delete" class="finance-inline-delete-form finance-row-edit-form">
+                            {hidden_filter_inputs}
+                            <input type="hidden" name="pending_id" value="{item.id}">
+                            <button type="submit" class="ghost-btn small-btn finance-inline-delete-btn">Delete</button>
+                        </form>
+                    </div>
                 </td>
                 <td><div class="finance-sheet-cell"></div></td>
             </tr>
@@ -7772,6 +7813,9 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
                     "category": item.category or "",
                 },
                 button_tone="blue",
+                delete_action="/finance/transfers/delete",
+                delete_field_name="transfer_id",
+                delete_field_value=item.id,
             )
         }
         for item in manual.get("transfers", [])
@@ -8297,6 +8341,13 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         padding:4px 6px !important;
         background:rgba(255,255,255,.03);
     }}
+    .finance-inline-edit-actions {{
+        display:grid;
+        grid-template-columns:minmax(0, 1fr) auto;
+        gap:8px;
+        align-items:end;
+        width:100%;
+    }}
     .finance-inline-add-form {{
         display:grid;
         grid-template-columns:minmax(0, 1.08fr) minmax(0, 1.18fr) minmax(0, 1.18fr) minmax(88px, 0.72fr) minmax(0, 1.08fr) auto;
@@ -8345,6 +8396,17 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         padding:3px 10px;
         justify-self:start;
         font-size:12px;
+    }}
+    .finance-inline-delete-form {{
+        display:flex;
+        align-items:end;
+        padding:0;
+        min-height:0;
+    }}
+    .finance-inline-delete-btn {{
+        color:#b42318 !important;
+        border-color:rgba(180,35,24,.22) !important;
+        background:rgba(255,255,255,.9) !important;
     }}
     .finance-row-edit-form {{
         display:flex;
@@ -13476,6 +13538,41 @@ def delete_finance_transfer(
     period_label: str = Form(default=""),
 ):
     response = _domain_actions["delete_finance_transfer"](request, transfer_id, date_from, date_to, year)
+    return _preserve_finance_redirect_filters(response, period_view, period_label)
+
+
+@app.post("/finance/pending/delete")
+def delete_finance_pending(
+    request: Request,
+    pending_id: str = Form(...),
+    date_from: str = Form(default=""),
+    date_to: str = Form(default=""),
+    year: str = Form(default=""),
+    period_view: str = Form(default="current"),
+    period_label: str = Form(default=""),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    require_any_role(user, "superadmin")
+    ensure_finance_tables()
+    db = SessionLocal()
+    try:
+        item = db.query(FinancePendingRow).filter(FinancePendingRow.id == safe_number(pending_id)).first()
+        if item:
+            db.delete(item)
+            db.commit()
+    finally:
+        db.close()
+    response = RedirectResponse(
+        url=(
+            f"/finance?date_from={quote_plus(safe_text(date_from))}"
+            f"&date_to={quote_plus(safe_text(date_to))}"
+            f"&year={quote_plus(safe_text(year))}"
+            f"&message=Pending+deleted"
+        ),
+        status_code=303,
+    )
     return _preserve_finance_redirect_filters(response, period_view, period_label)
 
 
