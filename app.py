@@ -8217,9 +8217,13 @@ def build_dashboard_chatterfy_scope_maps(period_label=""):
         "adset_name": {},
     }
     for row in rows:
-        platform_key = normalize_dashboard_platform(getattr(row, "platform", ""))
-        manager_key = safe_text(getattr(row, "manager", ""))
-        geo_key = normalize_geo_value(getattr(row, "geo", ""))
+        platform_key = normalize_dashboard_platform(
+            safe_text(getattr(row, "platform", "")) or safe_text(getattr(row, "flow_platform", ""))
+        )
+        manager_key = safe_text(getattr(row, "manager", "")) or safe_text(getattr(row, "flow_manager", ""))
+        geo_key = normalize_geo_value(
+            safe_text(getattr(row, "geo", "")) or safe_text(getattr(row, "flow_geo", ""))
+        )
         launch_date = safe_text(getattr(row, "launch_date", ""))
         offer_key = safe_text(getattr(row, "offer", ""))
 
