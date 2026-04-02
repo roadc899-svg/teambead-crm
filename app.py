@@ -7450,6 +7450,52 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         </tr>
         """
 
+    def inline_edit_rows(row_key, action, columns, display_values, fields, hidden_fields=None, button_tone="orange"):
+        hidden_fields = hidden_fields or {}
+        display_cells = "".join(
+            f'<td><div class="finance-sheet-cell">{escape(safe_text(value))}</div></td>'
+            for value in display_values
+        )
+        hidden_html = "".join(
+            f'<input type="hidden" name="{escape(name)}" value="{escape(safe_text(value))}">'
+            for name, value in hidden_fields.items()
+        )
+        field_html = ""
+        grid_columns = len(fields) + 2
+        for index, field in enumerate(fields):
+            field_type = field.get("type", "text")
+            name = field["name"]
+            placeholder = field.get("placeholder", "")
+            value = escape(safe_text(field.get("value", "")))
+            field_class = escape(field.get("class_name", ""))
+            if field_type == "select":
+                control = f'<select name="{escape(name)}">{option_tags(field.get("options", []), safe_text(field.get("value", "")))}</select>'
+            elif field_type == "datalist":
+                list_id = escape(field.get("list_id", f"{name}-edit-list-{row_key}"))
+                control = (
+                    f'<input type="text" name="{escape(name)}" value="{value}" placeholder="{escape(placeholder)}" list="{list_id}">'
+                    f'<datalist id="{list_id}">{datalist_tags(field.get("options", []))}</datalist>'
+                )
+            else:
+                control = f'<input type="{escape(field_type)}" name="{escape(name)}" value="{value}" placeholder="{escape(placeholder)}">'
+            field_html += f'<label class="finance-inline-field finance-inline-field-{index + 1} {field_class}">{control}</label>'
+        return f"""
+        <tr class="finance-editable-display-row" data-edit-target="{escape(row_key)}" title="Double click to edit">
+            {display_cells}
+        </tr>
+        <tr class="finance-inline-edit-row" data-edit-row="{escape(row_key)}" hidden>
+            <td colspan="{columns}">
+                <form method="post" action="{escape(action)}" class="finance-inline-edit-form" style="grid-template-columns:repeat({grid_columns}, minmax(0, 1fr));">
+                    {hidden_filter_inputs}
+                    {hidden_html}
+                    {field_html}
+                    <button type="submit" class="btn small-btn finance-add-submit finance-add-submit-{escape(button_tone)}">Save</button>
+                    <button type="button" class="ghost-btn small-btn finance-inline-edit-cancel">Cancel</button>
+                </form>
+            </td>
+        </tr>
+        """
+
     wallet_source_rows = list(snapshot.get("wallets", [])) + [
         {
             "category": item.category or "",
@@ -7496,6 +7542,31 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
             format_money(item.get("amount", 0)),
         )
         for item in wallet_source_rows
+    ] + [
+        {
+            "__html__": inline_edit_rows(
+                f"wallet-{item.id}",
+                "/finance/wallets/save",
+                5,
+                (
+                    item.category or "",
+                    item.description or "",
+                    item.owner_name or "",
+                    item.wallet or "",
+                    format_money(item.amount),
+                ),
+                [
+                    {"name": "category", "type": "select", "options": expense_category_options, "value": item.category or ""},
+                    {"name": "description", "placeholder": "Бренд/Сервис", "value": item.description or ""},
+                    {"name": "owner_name", "type": "datalist", "options": income_cabinet_options, "list_id": f"wallet-cabinets-{item.id}", "placeholder": "Кабинет", "value": item.owner_name or ""},
+                    {"name": "wallet", "placeholder": "Кошелек", "value": item.wallet or ""},
+                    {"name": "amount", "type": "number", "placeholder": "Сумма", "class_name": "finance-inline-field-amount", "value": f"{safe_number(item.amount):.2f}"},
+                ],
+                hidden_fields={"edit_id": item.id},
+                button_tone="orange",
+            )
+        }
+        for item in manual.get("wallets", [])
     ]
     expense_rows = [
         (
@@ -7507,13 +7578,33 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         )
         for item in snapshot.get("expenses", [])
     ] + [
-        (
-            format_finance_date_display(item.expense_date or ""),
-            item.category or "",
-            item.from_wallet or item.paid_by or "",
-            format_money(item.amount),
-            item.comment or "",
-        )
+        {
+            "__html__": inline_edit_rows(
+                f"expense-{item.id}",
+                "/finance/expenses/save",
+                5,
+                (
+                    format_finance_date_display(item.expense_date or ""),
+                    item.category or "",
+                    item.from_wallet or item.paid_by or "",
+                    format_money(item.amount),
+                    item.comment or "",
+                ),
+                [
+                    {"name": "category", "type": "select", "options": expense_category_options, "value": item.category or ""},
+                    {"name": "from_wallet", "type": "select", "options": payer_names, "value": item.from_wallet or item.paid_by or ""},
+                    {"name": "amount", "type": "number", "placeholder": "Сумма", "class_name": "finance-inline-field-amount", "value": f"{safe_number(item.amount):.2f}"},
+                    {"name": "comment", "type": "datalist", "options": expense_comment_options, "list_id": f"expense-comments-{item.id}", "placeholder": "Комментарий", "value": item.comment or ""},
+                ],
+                hidden_fields={
+                    "edit_id": item.id,
+                    "expense_date": item.expense_date or "",
+                    "wallet_name": item.wallet_name or "",
+                    "paid_by": item.paid_by or "",
+                },
+                button_tone="red",
+            )
+        }
         for item in manual.get("expenses", [])
     ]
     income_rows = [
@@ -7526,13 +7617,32 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         )
         for item in snapshot.get("income", [])
     ] + [
-        (
-            format_finance_date_display(item.income_date or ""),
-            item.category or "",
-            item.wallet_name or item.wallet or "",
-            format_money(item.amount),
-            item.comment or item.description or "",
-        )
+        {
+            "__html__": inline_edit_rows(
+                f"income-{item.id}",
+                "/finance/income/save",
+                5,
+                (
+                    format_finance_date_display(item.income_date or ""),
+                    item.category or "",
+                    item.wallet_name or item.wallet or "",
+                    format_money(item.amount),
+                    item.comment or item.description or "",
+                ),
+                [
+                    {"name": "category", "type": "select", "options": income_brand_options, "value": item.category or ""},
+                    {"name": "wallet_name", "type": "select", "options": income_cabinet_options, "value": item.wallet_name or item.wallet or ""},
+                    {"name": "amount", "type": "number", "placeholder": "Сумма", "class_name": "finance-inline-field-amount", "value": f"{safe_number(item.amount):.2f}"},
+                    {"name": "comment", "placeholder": "Комментарий", "value": item.comment or item.description or ""},
+                ],
+                hidden_fields={
+                    "edit_id": item.id,
+                    "income_date": item.income_date or "",
+                    "from_wallet": item.from_wallet or "",
+                },
+                button_tone="green",
+            )
+        }
         for item in manual.get("income", [])
     ]
     previous_period_label = get_previous_period_label(effective_period_label)
@@ -7638,13 +7748,32 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         )
         for item in snapshot.get("transfers", [])
     ] + [
-        (
-            format_finance_date_display(item.transfer_date or ""),
-            format_money(item.amount),
-            item.from_wallet or "",
-            item.to_wallet or "",
-            item.comment or "",
-        )
+        {
+            "__html__": inline_edit_rows(
+                f"transfer-{item.id}",
+                "/finance/transfers/save",
+                5,
+                (
+                    format_finance_date_display(item.transfer_date or ""),
+                    format_money(item.amount),
+                    item.from_wallet or "",
+                    item.to_wallet or "",
+                    item.comment or "",
+                ),
+                [
+                    {"name": "from_wallet", "placeholder": "От куда", "value": item.from_wallet or ""},
+                    {"name": "to_wallet", "placeholder": "Куда", "value": item.to_wallet or ""},
+                    {"name": "amount", "type": "number", "placeholder": "Сумма", "class_name": "finance-inline-field-amount", "value": f"{safe_number(item.amount):.2f}"},
+                    {"name": "comment", "placeholder": "Комментарий", "value": item.comment or ""},
+                ],
+                hidden_fields={
+                    "edit_id": item.id,
+                    "transfer_date": item.transfer_date or "",
+                    "category": item.category or "",
+                },
+                button_tone="blue",
+            )
+        }
         for item in manual.get("transfers", [])
     ]
 
@@ -8158,6 +8287,16 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
     .finance-inline-add-body {{
         padding-top:4px;
     }}
+    .finance-editable-display-row {{
+        cursor:pointer;
+    }}
+    .finance-editable-display-row:hover td {{
+        background:rgba(28,55,108,.03);
+    }}
+    .finance-inline-edit-row td {{
+        padding:4px 6px !important;
+        background:rgba(255,255,255,.03);
+    }}
     .finance-inline-add-form {{
         display:grid;
         grid-template-columns:minmax(0, 1.08fr) minmax(0, 1.18fr) minmax(0, 1.18fr) minmax(88px, 0.72fr) minmax(0, 1.08fr) auto;
@@ -8165,15 +8304,24 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         align-items:end;
         width:100%;
     }}
+    .finance-inline-edit-form {{
+        display:grid;
+        gap:6px;
+        align-items:end;
+        width:100%;
+    }}
     .finance-sheet-board-top .finance-inline-add-form {{
         grid-template-columns:minmax(0, 1.08fr) minmax(0, 1.18fr) minmax(88px, 0.72fr) minmax(0, 1.08fr) auto;
     }}
-    .finance-inline-add-form label {{
+    .finance-inline-add-form label,
+    .finance-inline-edit-form label {{
         display:block;
         min-width:0;
     }}
     .finance-inline-add-form input,
-    .finance-inline-add-form select {{
+    .finance-inline-add-form select,
+    .finance-inline-edit-form input,
+    .finance-inline-edit-form select {{
         width:100%;
         min-height:22px;
         min-width:0;
@@ -8189,7 +8337,9 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         padding-left:8px;
         padding-right:8px;
     }}
-    .finance-inline-add-form .btn {{
+    .finance-inline-add-form .btn,
+    .finance-inline-edit-form .btn,
+    .finance-inline-edit-form .ghost-btn {{
         min-height:22px;
         min-width:52px;
         padding:3px 10px;
@@ -8360,7 +8510,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         }};
 
         const bindAjaxForms = () => {{
-            root.querySelectorAll('.finance-inline-add-form, .finance-row-edit-form').forEach((form) => {{
+            root.querySelectorAll('.finance-inline-add-form, .finance-row-edit-form, .finance-inline-edit-form').forEach((form) => {{
                 if (form.dataset.ajaxBound === '1') return;
                 form.addEventListener('submit', async (event) => {{
                     event.preventDefault();
@@ -8394,8 +8544,34 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
             }});
         }};
 
+        const bindInlineEditors = () => {{
+            root.querySelectorAll('.finance-editable-display-row').forEach((row) => {{
+                if (row.dataset.editBound === '1') return;
+                const target = row.dataset.editTarget;
+                const editRow = target ? root.querySelector(`.finance-inline-edit-row[data-edit-row="${{target}}"]`) : null;
+                if (!editRow) return;
+                row.addEventListener('dblclick', () => {{
+                    editRow.hidden = !editRow.hidden;
+                    if (!editRow.hidden) {{
+                        const firstControl = editRow.querySelector('input, select, textarea');
+                        firstControl?.focus();
+                    }}
+                }});
+                row.dataset.editBound = '1';
+            }});
+            root.querySelectorAll('.finance-inline-edit-cancel').forEach((button) => {{
+                if (button.dataset.cancelBound === '1') return;
+                button.addEventListener('click', () => {{
+                    const editRow = button.closest('.finance-inline-edit-row');
+                    if (editRow) editRow.hidden = true;
+                }});
+                button.dataset.cancelBound = '1';
+            }});
+        }};
+
         bindPendingInlineForms();
         bindAjaxForms();
+        bindInlineEditors();
     }};
     window.initFinancePage();
     </script>
