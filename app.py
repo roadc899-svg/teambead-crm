@@ -8664,7 +8664,23 @@ def _render_dashboard_page_v2(
             extra_html = (
                 '<button type="button" class="dashboard-fb-toggle" id="dashboardFbMetricsToggle" '
                 'aria-expanded="true" title="Toggle FB metrics" '
-                'onclick="window.dashboardToggleFbMetrics && window.dashboardToggleFbMetrics(this); return false;">−</button>'
+                'onclick="if (window.dashboardToggleFbMetrics) return window.dashboardToggleFbMetrics(this); '
+                '(function(btn){'
+                'var table=document.getElementById(\'dashboardUnifiedTable\');'
+                'if(!table) return false;'
+                'var collapsed=!table.classList.contains(\'dashboard-fb-metrics-collapsed\');'
+                'table.classList.toggle(\'dashboard-fb-metrics-collapsed\', collapsed);'
+                'btn.textContent=collapsed?\'+\':\'−\';'
+                'btn.setAttribute(\'aria-expanded\', collapsed?\'false\':\'true\');'
+                'btn.setAttribute(\'title\', collapsed?\'Expand FB metrics\':\'Collapse FB metrics\');'
+                'try{'
+                'var stateKey=window.teambeadStorageKey?window.teambeadStorageKey(\'dashboard-ui-state\'):\'dashboard-ui-state\';'
+                'var state=JSON.parse(localStorage.getItem(stateKey)||\'{}\');'
+                'state.fbMetricsCollapsed=collapsed;'
+                'localStorage.setItem(stateKey, JSON.stringify(state));'
+                '}catch(_error){}'
+                'return false;'
+                '})(this); return false;">−</button>'
             )
         return (
             f'<th data-col="{escape(field)}">'
@@ -9105,6 +9121,12 @@ def _render_dashboard_page_v2(
     }}
     {fb_collapsed_selectors} {{
         display:none !important;
+        visibility:collapse !important;
+        width:0 !important;
+        min-width:0 !important;
+        max-width:0 !important;
+        padding:0 !important;
+        border:0 !important;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="buyer"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="buyer"] {{
@@ -9989,9 +10011,18 @@ def _render_dashboard_page_v2(
         const fbMetricColumns = {json.dumps(fb_detail_columns)};
         const fbToggleButton = document.getElementById('dashboardFbMetricsToggle');
         const toggles = Array.from(document.querySelectorAll('.dashboard-column-toggle'));
+        const dashboardSetColumnVisibility = (col, shouldHide) => {{
+            document.querySelectorAll(`[data-dashboard-tree-table] [data-col="${{col}}"]`).forEach((cell) => {{
+                cell.hidden = !!shouldHide;
+                cell.style.display = shouldHide ? 'none' : '';
+            }});
+        }};
         window.dashboardSetFbMetricsCollapsed = (collapsed) => {{
             document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
                 table.classList.toggle('dashboard-fb-metrics-collapsed', !!collapsed);
+            }});
+            fbMetricColumns.forEach((col) => {{
+                dashboardSetColumnVisibility(col, !!collapsed);
             }});
             if (fbToggleButton) {{
                 fbToggleButton.textContent = collapsed ? '+' : '−';
@@ -10030,7 +10061,9 @@ def _render_dashboard_page_v2(
             }});
             window.dashboardSetFbMetricsCollapsed(fbMetricsCollapsed);
             document.querySelectorAll('[data-dashboard-tree-table] [data-col]').forEach((cell) => {{
-                cell.style.display = hidden.has(cell.dataset.col) ? 'none' : '';
+                const shouldHide = hidden.has(cell.dataset.col);
+                cell.hidden = !!shouldHide;
+                cell.style.display = shouldHide ? 'none' : '';
             }});
             document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
                 window.dashboardTreeAutoSize(table);
