@@ -8105,7 +8105,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
     .finance-sheet-table td {{
         border-right:1px solid var(--border);
         border-bottom:1px solid var(--border);
-        vertical-align:top;
+        vertical-align:middle;
     }}
     .finance-sheet-table th {{
         position:sticky;
@@ -8124,6 +8124,9 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         padding:0;
         background:transparent;
         line-height:1;
+    }}
+    .finance-sheet-table tbody tr {{
+        height:22px;
     }}
     .finance-inline-add-trigger-row td {{
         padding:4px 6px !important;
@@ -8196,19 +8199,31 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         display:flex;
         align-items:center;
         gap:6px;
-        padding:0 4px;
+        padding:0 3px;
+        min-height:20px;
     }}
     .finance-row-edit-form input[type="number"] {{
         width:100%;
         min-width:72px;
-        min-height:22px;
-        border-radius:8px;
+        height:18px;
+        min-height:18px;
+        border-radius:6px;
         border:1px solid var(--border);
         background:var(--panel-3);
         color:var(--text);
-        padding:3px 8px;
+        padding:1px 6px;
         font:inherit;
-        font-size:12px;
+        font-size:11px;
+        line-height:1;
+    }}
+    .finance-row-edit-form .ghost-btn.small-btn {{
+        height:18px;
+        min-height:18px;
+        min-width:44px;
+        padding:0 8px;
+        border-radius:6px;
+        font-size:11px;
+        line-height:1;
     }}
     .finance-sheet-cell {{
         padding:1px 8px;
