@@ -7788,6 +7788,19 @@ def get_dashboard_scope_lookup_keys(cabinet_name="", brand="", geo=""):
     return keys
 
 
+def get_dashboard_flow_people(*values):
+    result = []
+    seen = set()
+    for value in values:
+        token = safe_text(value).strip()
+        normalized = token.lower()
+        if not token or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(token)
+    return result
+
+
 def build_dashboard_flow_lookup_keys(platform="", manager="", geo=""):
     manager_key = safe_text(manager)
     geo_key = normalize_geo_value(geo)
@@ -7833,15 +7846,19 @@ def build_dashboard_cabinet_flow_map():
     result = {}
     for row in get_cabinet_rows():
         platform_key = normalize_dashboard_platform(getattr(row, "platform", ""))
-        manager_key = safe_text(getattr(row, "manager_name", ""))
         geos = split_geo_tokens(getattr(row, "geo_list", "")) or [normalize_geo_value(getattr(row, "geo_list", ""))]
+        flow_people = get_dashboard_flow_people(
+            getattr(row, "name", ""),
+            getattr(row, "manager_name", ""),
+        )
         for geo_code in geos:
-            if not platform_key or not manager_key or not geo_code:
+            if not platform_key or not geo_code:
                 continue
-            for flow_key in build_dashboard_flow_lookup_keys(platform_key, manager_key, geo_code):
-                bucket = result.setdefault(flow_key, [])
-                if row not in bucket:
-                    bucket.append(row)
+            for flow_person in flow_people:
+                for flow_key in build_dashboard_flow_lookup_keys(platform_key, flow_person, geo_code):
+                    bucket = result.setdefault(flow_key, [])
+                    if row not in bucket:
+                        bucket.append(row)
     return result
 
 
@@ -7884,6 +7901,11 @@ def pick_dashboard_primary_cabinet(cabinets, fb_item=None):
 
 def build_dashboard_caps_flow_map(period_label=""):
     ensure_caps_table()
+    cabinet_meta_map = {
+        safe_text(getattr(item, "name", "")): item
+        for item in get_cabinet_rows()
+        if safe_text(getattr(item, "name", ""))
+    }
     db = SessionLocal()
     try:
         query = db.query(CapRow)
@@ -7895,27 +7917,35 @@ def build_dashboard_caps_flow_map(period_label=""):
 
     result = {}
     for cap in caps:
+        cabinet_item = cabinet_meta_map.get(safe_text(getattr(cap, "cabinet_name", "")))
         flow_parts = [part.strip() for part in safe_text(cap.flow).split("/") if part.strip()]
         platform_key = normalize_dashboard_platform(flow_parts[0] if len(flow_parts) > 0 else "")
-        manager_key = flow_parts[1] if len(flow_parts) > 1 else safe_text(cap.owner_name)
         geo_key = normalize_geo_value(flow_parts[2] if len(flow_parts) > 2 else (cap.code or cap.geo))
-        if not platform_key or not manager_key or not geo_key:
+        flow_people = get_dashboard_flow_people(
+            getattr(cap, "cabinet_name", ""),
+            flow_parts[1] if len(flow_parts) > 1 else "",
+            getattr(cap, "buyer", ""),
+            getattr(cap, "owner_name", ""),
+            getattr(cabinet_item, "manager_name", "") if cabinet_item else "",
+        )
+        if not platform_key or not geo_key or not flow_people:
             continue
-        for flow_key in build_dashboard_flow_lookup_keys(platform_key, manager_key, geo_key):
-            bucket = result.setdefault(flow_key, {
-                "caps_count": 0,
-                "cap_total": 0.0,
-                "cap_current_ftd": 0.0,
-                "cap_promos": set(),
-                "cabinet_names": set(),
-            })
-            bucket["caps_count"] += 1
-            bucket["cap_total"] += safe_number(cap.cap_value)
-            bucket["cap_current_ftd"] += safe_number(cap.current_ftd)
-            if safe_text(cap.promo_code):
-                bucket["cap_promos"].add(safe_text(cap.promo_code))
-            if safe_text(cap.cabinet_name):
-                bucket["cabinet_names"].add(safe_text(cap.cabinet_name))
+        for flow_person in flow_people:
+            for flow_key in build_dashboard_flow_lookup_keys(platform_key, flow_person, geo_key):
+                bucket = result.setdefault(flow_key, {
+                    "caps_count": 0,
+                    "cap_total": 0.0,
+                    "cap_current_ftd": 0.0,
+                    "cap_promos": set(),
+                    "cabinet_names": set(),
+                })
+                bucket["caps_count"] += 1
+                bucket["cap_total"] += safe_number(cap.cap_value)
+                bucket["cap_current_ftd"] += safe_number(cap.current_ftd)
+                if safe_text(cap.promo_code):
+                    bucket["cap_promos"].add(safe_text(cap.promo_code))
+                if safe_text(cap.cabinet_name):
+                    bucket["cabinet_names"].add(safe_text(cap.cabinet_name))
     for bucket in result.values():
         bucket["cap_fill"] = cap_fill_percent(bucket["cap_current_ftd"], bucket["cap_total"])
     return result
@@ -7963,24 +7993,29 @@ def build_dashboard_players_flow_map(period_label=""):
         if not cabinet_item:
             continue
         platform_key = normalize_dashboard_platform(getattr(cabinet_item, "platform", ""))
-        manager_key = safe_text(getattr(cabinet_item, "manager_name", ""))
         geo_key = normalize_geo_value(getattr(row, "country", ""))
-        if not platform_key or not manager_key or not geo_key:
+        flow_people = get_dashboard_flow_people(
+            getattr(row, "cabinet_name", ""),
+            getattr(cabinet_item, "name", ""),
+            getattr(cabinet_item, "manager_name", ""),
+        )
+        if not platform_key or not geo_key or not flow_people:
             continue
         deposit_amount = safe_number(getattr(row, "deposit_amount", 0))
         cpa_amount = safe_number(getattr(row, "cpa_amount", 0))
         is_qualified = bool(getattr(row, "is_qualified_ftd", False)) or cpa_amount > 0
-        for flow_key in build_dashboard_flow_lookup_keys(platform_key, manager_key, geo_key):
-            bucket = result.setdefault(flow_key, {
-                "players_ftd": 0.0,
-                "qual_ftd": 0.0,
-                "payout": 0.0,
-            })
-            if deposit_amount > 0:
-                bucket["players_ftd"] += 1
-            if is_qualified:
-                bucket["qual_ftd"] += 1
-                bucket["payout"] += cpa_amount
+        for flow_person in flow_people:
+            for flow_key in build_dashboard_flow_lookup_keys(platform_key, flow_person, geo_key):
+                bucket = result.setdefault(flow_key, {
+                    "players_ftd": 0.0,
+                    "qual_ftd": 0.0,
+                    "payout": 0.0,
+                })
+                if deposit_amount > 0:
+                    bucket["players_ftd"] += 1
+                if is_qualified:
+                    bucket["qual_ftd"] += 1
+                    bucket["payout"] += cpa_amount
     for bucket in result.values():
         bucket["rate"] = (bucket["payout"] / bucket["qual_ftd"]) if bucket["qual_ftd"] > 0 else 0.0
     return result
@@ -8026,29 +8061,43 @@ def build_dashboard_caps_scope_map(period_label=""):
 
 
 def build_dashboard_hold_flow_map(period_label=""):
+    cabinet_meta_map = {
+        safe_text(getattr(item, "name", "")): item
+        for item in get_cabinet_rows()
+        if safe_text(getattr(item, "name", ""))
+    }
     result = {}
     for item in get_hold_wager_rows(period_label=period_label):
+        cabinet_name = safe_text(item.get("cabinet_name"))
+        cabinet_item = cabinet_meta_map.get(cabinet_name)
         flow_parts = [part.strip() for part in safe_text(item.get("flow")).split("/") if part.strip()]
-        platform_key = normalize_dashboard_platform(flow_parts[0] if len(flow_parts) > 0 else "")
-        manager_key = flow_parts[1] if len(flow_parts) > 1 else ""
+        platform_key = normalize_dashboard_platform(
+            flow_parts[0] if len(flow_parts) > 0 else (getattr(cabinet_item, "platform", "") if cabinet_item else "")
+        )
         geo_key = normalize_geo_value(flow_parts[2] if len(flow_parts) > 2 else item.get("country"))
-        if not platform_key or not manager_key or not geo_key:
+        flow_people = get_dashboard_flow_people(
+            cabinet_name,
+            flow_parts[1] if len(flow_parts) > 1 else "",
+            getattr(cabinet_item, "manager_name", "") if cabinet_item else "",
+        )
+        if not platform_key or not geo_key or not flow_people:
             continue
         reason = safe_text(item.get("reason")).lower()
-        for flow_key in build_dashboard_flow_lookup_keys(platform_key, manager_key, geo_key):
-            bucket = result.setdefault(flow_key, {
-                "hold_count": 0,
-                "baseline_fail_count": 0,
-                "wager_fail_count": 0,
-                "hold_cabinets": set(),
-            })
-            bucket["hold_count"] += 1
-            if "baseline" in reason:
-                bucket["baseline_fail_count"] += 1
-            if "wager" in reason:
-                bucket["wager_fail_count"] += 1
-            if safe_text(item.get("cabinet_name")):
-                bucket["hold_cabinets"].add(safe_text(item.get("cabinet_name")))
+        for flow_person in flow_people:
+            for flow_key in build_dashboard_flow_lookup_keys(platform_key, flow_person, geo_key):
+                bucket = result.setdefault(flow_key, {
+                    "hold_count": 0,
+                    "baseline_fail_count": 0,
+                    "wager_fail_count": 0,
+                    "hold_cabinets": set(),
+                })
+                bucket["hold_count"] += 1
+                if "baseline" in reason:
+                    bucket["baseline_fail_count"] += 1
+                if "wager" in reason:
+                    bucket["wager_fail_count"] += 1
+                if cabinet_name:
+                    bucket["hold_cabinets"].add(cabinet_name)
     return result
 
 
