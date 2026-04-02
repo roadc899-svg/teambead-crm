@@ -5258,12 +5258,16 @@ def chatterfy_chat_matches_period(chat_item, start_dt, end_dt):
 def chatterfy_chat_to_import_row(chat_item, step_map=None, bot_id=""):
     tracker_map = chatterfy_tracker_field_map(chat_item)
     chat_id = safe_text(chat_item.get("id"))
+    last_message = chat_item.get("last_message") or {}
+    last_bot_message = chat_item.get("last_bot_message") or {}
     row = {
         "Name": safe_text(chat_item.get("name")),
         "Telegram ID": safe_text(chat_item.get("external_id")),
         "Username": safe_text(chat_item.get("username")),
         "Tags": ", ".join(chatterfy_tag_names(chat_item)),
         "Started": safe_text(chat_item.get("created_at")),
+        "Last User Message": safe_text(last_message.get("content")) if safe_text(last_message.get("sender_type")) == "incoming" else "",
+        "Last Bot Message": safe_text(last_bot_message.get("content")) or (safe_text(last_message.get("content")) if safe_text(last_message.get("sender_type")) == "outcoming" else ""),
         "Status": safe_text(chat_item.get("status")),
         "Step": safe_text(chat_item.get("current_step_name")) or safe_text(step_map.get(safe_text(chat_item.get("current_step_id")))),
         "ID": chat_id,
