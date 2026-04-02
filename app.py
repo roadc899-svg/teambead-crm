@@ -7521,16 +7521,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         </tr>
         """
 
-    wallet_source_rows = list(snapshot.get("wallets", [])) + [
-        {
-            "category": item.category or "",
-            "description": item.description or "",
-            "owner": item.owner_name or "",
-            "wallet": item.wallet or "",
-            "amount": item.amount,
-        }
-        for item in manual_all.get("wallets", [])
-    ]
+    wallet_source_rows = list(snapshot.get("wallets", []))
     cabinet_rows = get_cabinet_rows()
     income_brand_options = sorted({
         safe_text(brand).strip()
@@ -7552,6 +7543,8 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
     payer_names = sorted({
         *(safe_text(item.get("wallet")) for item in wallet_source_rows if safe_text(item.get("wallet"))),
         *(safe_text(item.get("description")) for item in wallet_source_rows if safe_text(item.get("description"))),
+        *(safe_text(item.wallet) for item in manual.get("wallets", []) if safe_text(item.wallet)),
+        *(safe_text(item.description) for item in manual.get("wallets", []) if safe_text(item.description)),
         'Chatterfy',
         'Fun Agency',
         'Brocard',
