@@ -7536,25 +7536,57 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         for item in manual.get("income", [])
     ]
     previous_period_label = get_previous_period_label(effective_period_label)
-    pending_rows = [
-        (
-            format_finance_date_display(item.get("date", "")),
-            item.get("category", ""),
-            item.get("description", ""),
-            format_money(item.get("amount", 0)),
-            item.get("comment", ""),
-        )
-        for item in snapshot.get("pending", [])
-    ] + [
-        (
-            format_finance_date_display(item.pending_date or ""),
-            item.category or "",
-            item.description or "",
-            format_money(item.amount),
-            item.comment or "",
-        )
-        for item in manual.get("pending", [])
-    ]
+    pending_rows = []
+    for item in snapshot.get("pending", []):
+        brand_value = item.get("category", "")
+        cabinet_value = item.get("description", "")
+        amount_value = safe_number(item.get("amount", 0))
+        pending_rows.append({
+            "__html__": f"""
+            <tr>
+                <td><div class="finance-sheet-cell">{escape(brand_value)}</div></td>
+                <td><div class="finance-sheet-cell">{escape(cabinet_value)}</div></td>
+                <td>
+                    <form method="post" action="/finance/pending/save" class="finance-row-edit-form">
+                        {hidden_filter_inputs}
+                        <input type="hidden" name="category" value="{escape(brand_value)}">
+                        <input type="hidden" name="description" value="{escape(cabinet_value)}">
+                        <input type="hidden" name="pending_date" value="">
+                        <input type="hidden" name="wallet" value="">
+                        <input type="hidden" name="reconciliation" value="">
+                        <input type="hidden" name="comment" value="">
+                        <input type="number" step="0.01" name="amount" value="{amount_value:.2f}">
+                        <button type="submit" class="ghost-btn small-btn">Save</button>
+                    </form>
+                </td>
+                <td><div class="finance-sheet-cell"></div></td>
+            </tr>
+            """
+        })
+    for item in manual.get("pending", []):
+        pending_rows.append({
+            "__html__": f"""
+            <tr>
+                <td><div class="finance-sheet-cell">{escape(item.category or '')}</div></td>
+                <td><div class="finance-sheet-cell">{escape(item.description or '')}</div></td>
+                <td>
+                    <form method="post" action="/finance/pending/save" class="finance-row-edit-form">
+                        {hidden_filter_inputs}
+                        <input type="hidden" name="edit_id" value="{item.id}">
+                        <input type="hidden" name="category" value="{escape(item.category or '')}">
+                        <input type="hidden" name="description" value="{escape(item.description or '')}">
+                        <input type="hidden" name="pending_date" value="{escape(item.pending_date or '')}">
+                        <input type="hidden" name="wallet" value="{escape(item.wallet or '')}">
+                        <input type="hidden" name="reconciliation" value="{escape(item.reconciliation or '')}">
+                        <input type="hidden" name="comment" value="">
+                        <input type="number" step="0.01" name="amount" value="{safe_number(item.amount):.2f}">
+                        <button type="submit" class="ghost-btn small-btn">Save</button>
+                    </form>
+                </td>
+                <td><div class="finance-sheet-cell"></div></td>
+            </tr>
+            """
+        })
     pending_existing_cabinets = [
         safe_text(item.get("description", "")).strip()
         for item in snapshot.get("pending", [])
@@ -7573,13 +7605,28 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         amount_value = safe_number(pending_cpa_map.get(cabinet_name, 0))
         if amount_value <= 0:
             continue
-        pending_auto_rows.append((
-            today_finance_label,
-            safe_text(cabinet_primary_brand_map.get(cabinet_name, "")),
-            cabinet_name,
-            format_money(amount_value),
-            f"CPA from {previous_period_label}" if previous_period_label else "",
-        ))
+        pending_auto_rows.append({
+            "__html__": f"""
+            <tr>
+                <td><div class="finance-sheet-cell">{escape(safe_text(cabinet_primary_brand_map.get(cabinet_name, "")))}</div></td>
+                <td><div class="finance-sheet-cell">{escape(cabinet_name)}</div></td>
+                <td>
+                    <form method="post" action="/finance/pending/save" class="finance-row-edit-form">
+                        {hidden_filter_inputs}
+                        <input type="hidden" name="category" value="{escape(safe_text(cabinet_primary_brand_map.get(cabinet_name, '')))}">
+                        <input type="hidden" name="description" value="{escape(cabinet_name)}">
+                        <input type="hidden" name="pending_date" value="">
+                        <input type="hidden" name="wallet" value="">
+                        <input type="hidden" name="reconciliation" value="">
+                        <input type="hidden" name="comment" value="">
+                        <input type="number" step="0.01" name="amount" value="{amount_value:.2f}">
+                        <button type="submit" class="ghost-btn small-btn">Save</button>
+                    </form>
+                </td>
+                <td><div class="finance-sheet-cell"></div></td>
+            </tr>
+            """
+        })
     pending_rows = [*pending_rows, *pending_auto_rows]
     transfer_rows = [
         (
@@ -7635,12 +7682,24 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         ],
         "green",
     )
+    wallet_footer_html = inline_add_row(
+        "/finance/wallets/save",
+        "Add Wallet",
+        5,
+        [
+            {"name": "category", "type": "select", "options": expense_category_options},
+            {"name": "description", "placeholder": "Бренд/Сервис"},
+            {"name": "owner_name", "type": "select", "options": income_cabinet_options},
+            {"name": "wallet", "placeholder": "Кошелек"},
+            {"name": "amount", "type": "number", "placeholder": "Сумма", "class_name": "finance-inline-field-amount"},
+        ],
+        "orange",
+    )
     pending_footer_html = inline_add_row(
         "/finance/pending/save",
         "Add Pending",
-        5,
+        4,
         [
-            {"name": "pending_date", "type": "date"},
             {"name": "category", "type": "select", "options": income_brand_options, "class_name": "finance-pending-brand"},
             {"name": "description", "type": "select", "options": income_cabinet_options, "class_name": "finance-pending-cabinet"},
             {"name": "amount", "type": "number", "placeholder": "Сумма", "class_name": "finance-inline-field-amount finance-pending-amount"},
@@ -7666,7 +7725,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         _render_finance_sheet_section(
             "ОЖИДАЕМ",
             pending_total,
-            ["Дата", "Бренд", "Кабинет", "Сумма", "Комментарии"],
+            ["Бренд", "Кабинет", "Сумма", "Комментарии"],
             pending_rows,
             tone="yellow",
             footer_html=pending_footer_html,
@@ -7674,21 +7733,10 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         _render_finance_sheet_section(
             "ТЕКУЩИЙ ОСТАТОК",
             balances["total"],
-            ["Категория", "Описание", "Владелец", "Кошелек", "Сумма"],
+            ["Категории", "Бренд/Сервис", "Кабинет", "Кошелек", "Сумма"],
             wallet_rows,
             tone="orange",
-            action_html=plus_form(
-                "/finance/wallets/save",
-                [
-                    {"name": "category", "label": "Category"},
-                    {"name": "description", "label": "Description"},
-                    {"name": "owner_name", "label": "Owner"},
-                    {"name": "wallet", "label": "Wallet"},
-                    {"name": "amount", "label": "Amount", "type": "number", "placeholder": "0.00"},
-                ],
-                "Add Wallet",
-                "orange",
-            ),
+            footer_html=wallet_footer_html,
         ),
     ])
 
@@ -8111,6 +8159,9 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         align-items:end;
         width:100%;
     }}
+    .finance-sheet-board-top .finance-inline-add-form {{
+        grid-template-columns:minmax(0, 1.08fr) minmax(0, 1.18fr) minmax(88px, 0.72fr) minmax(0, 1.08fr) auto;
+    }}
     .finance-inline-add-form label {{
         display:block;
         min-width:0;
@@ -8136,6 +8187,23 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         min-width:72px;
         padding:8px 14px;
         justify-self:start;
+    }}
+    .finance-row-edit-form {{
+        display:flex;
+        align-items:center;
+        gap:8px;
+        padding:4px 8px;
+    }}
+    .finance-row-edit-form input[type="number"] {{
+        width:100%;
+        min-width:88px;
+        min-height:32px;
+        border-radius:10px;
+        border:1px solid var(--border);
+        background:var(--panel-3);
+        color:var(--text);
+        padding:6px 10px;
+        font:inherit;
     }}
     .finance-sheet-cell {{
         padding:5px 10px;
@@ -13048,6 +13116,7 @@ def save_finance_transfer(
 @app.post("/finance/pending/save")
 def save_finance_pending(
     request: Request,
+    edit_id: str = Form(default=""),
     pending_date: str = Form(default=""),
     category: str = Form(default=""),
     description: str = Form(default=""),
@@ -13080,15 +13149,17 @@ def save_finance_pending(
         )
     db = SessionLocal()
     try:
-        db.add(FinancePendingRow(
-            pending_date=safe_text(pending_date),
-            category=safe_text(category),
-            description=safe_text(description),
-            amount=safe_cap_number(amount),
-            wallet=safe_text(wallet),
-            reconciliation=safe_text(reconciliation),
-            comment=safe_text(comment),
-        ))
+        item = db.query(FinancePendingRow).filter(FinancePendingRow.id == safe_number(edit_id)).first() if edit_id else None
+        if not item:
+            item = FinancePendingRow()
+            db.add(item)
+        item.pending_date = safe_text(pending_date)
+        item.category = safe_text(category)
+        item.description = safe_text(description)
+        item.amount = safe_cap_number(amount)
+        item.wallet = safe_text(wallet)
+        item.reconciliation = safe_text(reconciliation)
+        item.comment = safe_text(comment)
         db.commit()
     finally:
         db.close()
