@@ -9929,8 +9929,12 @@ def _render_dashboard_page_v2(
                 }}
                 const treeToggle = cell.querySelector('.dashboard-tree-toggle');
                 if (treeToggle && labelNode) {{
-                    const toggleWidth = Math.ceil(treeToggle.scrollWidth || treeToggle.getBoundingClientRect().width || 0);
-                    width = Math.max(width, toggleWidth);
+                    const toggleStyle = window.getComputedStyle(treeToggle);
+                    const gap = parseFloat(toggleStyle.columnGap || toggleStyle.gap || '0') || 0;
+                    const iconWidth = Math.ceil(
+                        treeToggle.querySelector('.dashboard-tree-caret, .dashboard-tree-plus')?.getBoundingClientRect().width || 0
+                    );
+                    width += iconWidth + Math.ceil(gap);
                 }}
                 return width;
             }};
@@ -9974,6 +9978,8 @@ def _render_dashboard_page_v2(
                 const measureColumnWidth = (col) => {{
                     const cells = Array.from(table.querySelectorAll(`[data-col="${{col}}"]`)).filter((cell) => {{
                         if (!cell) return false;
+                        const row = cell.closest('tr');
+                        if (row?.hidden) return false;
                         const style = window.getComputedStyle(cell);
                         return style.display !== 'none';
                     }});
