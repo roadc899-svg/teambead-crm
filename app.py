@@ -9540,6 +9540,13 @@ def _render_dashboard_page_v2(
         gap:16px;
         margin-bottom:12px;
     }}
+    .dashboard-v2 .dashboard-table-actions {{
+        display:flex;
+        align-items:center;
+        justify-content:flex-end;
+        gap:10px;
+        flex-wrap:wrap;
+    }}
     .dashboard-v2 .dashboard-table-title {{
         display:grid;
         gap:4px;
@@ -9732,12 +9739,14 @@ def _render_dashboard_page_v2(
         background:#f2f7ff;
         border-color:rgba(59, 86, 138, 0.45);
     }}
-    .dashboard-v2 .dashboard-floating-metrics-toggle {{
-        position:absolute;
-        top:-22px;
-        left:0;
-        z-index:9;
-        box-shadow:0 2px 7px rgba(29, 55, 95, 0.14);
+    .dashboard-v2 .dashboard-metrics-launcher {{
+        display:inline-flex;
+        align-items:center;
+        gap:8px;
+    }}
+    .dashboard-v2 .dashboard-metrics-launcher .dashboard-fb-toggle {{
+        cursor:inherit;
+        flex:0 0 auto;
     }}
     {fb_collapsed_selectors},
     {chatterfy_collapsed_selectors} {{
@@ -10200,21 +10209,26 @@ def _render_dashboard_page_v2(
                 <div class="panel-title">CRM Analytics</div>
                 <div class="panel-subtitle">Compact dashboard view across FB, Players, Chatterfy, Caps, Cabinets and Hold.</div>
             </div>
-            <details class="upload-menu upload-menu-right" id="dashboardColumnsMenu">
-                <summary class="ghost-btn small-btn">Columns</summary>
-                <div class="upload-menu-list" style="width:min(560px, calc(100vw - 48px));">
-                    <div class="panel-subtitle">Choose which columns to keep visible in Dashboard.</div>
-                    <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
-                        <button type="button" class="ghost-btn small-btn" id="dashboardShowAllColumns">Show all</button>
+            <div class="dashboard-table-actions">
+                <button type="button" class="ghost-btn small-btn dashboard-metrics-launcher" data-dashboard-chatterfy-toggle aria-expanded="true" title="Toggle Chatterfy metrics" onclick="if (window.dashboardToggleChatterfyMetrics) return window.dashboardToggleChatterfyMetrics(this); return false;">
+                    <span class="dashboard-fb-toggle" data-dashboard-toggle-icon aria-hidden="true">−</span>
+                    <span>Chatterfy</span>
+                </button>
+                <details class="upload-menu upload-menu-right" id="dashboardColumnsMenu">
+                    <summary class="ghost-btn small-btn">Columns</summary>
+                    <div class="upload-menu-list" style="width:min(560px, calc(100vw - 48px));">
+                        <div class="panel-subtitle">Choose which columns to keep visible in Dashboard.</div>
+                        <div style="display:flex; gap:10px; margin-top:10px; flex-wrap:wrap;">
+                            <button type="button" class="ghost-btn small-btn" id="dashboardShowAllColumns">Show all</button>
+                        </div>
+                        <div style="display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px; margin-top:12px;">
+                            {column_chips}
+                        </div>
                     </div>
-                    <div style="display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px; margin-top:12px;">
-                        {column_chips}
-                    </div>
-                </div>
-            </details>
+                </details>
+            </div>
         </div>
         <div class="dashboard-table-wrap">
-            <button type="button" class="dashboard-fb-toggle dashboard-floating-metrics-toggle" id="dashboardChatterfyFloatingToggle" data-dashboard-chatterfy-toggle aria-expanded="true" title="Toggle Chatterfy metrics" onclick="if (window.dashboardToggleChatterfyMetrics) return window.dashboardToggleChatterfyMetrics(this); return false;">−</button>
             <table id="dashboardUnifiedTable" data-dashboard-tree-table>
                 <thead><tr>{head_html}</tr></thead>
                 <tbody>{rows_html if rows_html else '<tr><td colspan="31">No dashboard rows for the selected filters</td></tr>'}</tbody>
@@ -10896,12 +10910,6 @@ def _render_dashboard_page_v2(
             document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
                 window.dashboardTreeAutoSize(table);
             }});
-            if (window.dashboardPositionChatterfyToggle) window.dashboardPositionChatterfyToggle();
-        }});
-        document.querySelectorAll('.dashboard-table-wrap').forEach((wrap) => {{
-            wrap.addEventListener('scroll', () => {{
-                if (window.dashboardPositionChatterfyToggle) window.dashboardPositionChatterfyToggle();
-            }}, {{ passive: true }});
         }});
         window.addEventListener('pageshow', () => {{
             scheduleDashboardUiRestore();
@@ -10924,33 +10932,6 @@ def _render_dashboard_page_v2(
                 cell.style.display = shouldHide ? 'none' : '';
             }});
         }};
-        window.dashboardPositionChatterfyToggle = () => {{
-            const button = document.getElementById('dashboardChatterfyFloatingToggle');
-            const wrap = button?.closest('.dashboard-table-wrap');
-            const table = wrap?.querySelector('#dashboardUnifiedTable');
-            if (!button || !wrap || !table) return;
-            const wrapRect = wrap.getBoundingClientRect();
-            const chatterfyHeader = table.querySelector('thead th[data-col="chatterfy"]');
-            const spendHeader = table.querySelector('thead th[data-col="spend"]');
-            const budgetHeader = table.querySelector('thead th[data-col="budget"]');
-            const isVisible = (cell) => !!(cell && cell.style.display !== 'none' && !cell.hidden && cell.getClientRects().length);
-            let anchorLeft = null;
-            if (isVisible(chatterfyHeader)) {{
-                anchorLeft = chatterfyHeader.getBoundingClientRect().left - wrapRect.left + 8;
-            }} else if (isVisible(spendHeader)) {{
-                anchorLeft = spendHeader.getBoundingClientRect().left - wrapRect.left - 10;
-            }} else if (isVisible(budgetHeader)) {{
-                anchorLeft = budgetHeader.getBoundingClientRect().right - wrapRect.left - 10;
-            }}
-            if (anchorLeft === null) {{
-                button.style.display = 'none';
-                return;
-            }}
-            button.style.display = '';
-            const maxLeft = Math.max(0, wrap.clientWidth - button.offsetWidth - 6);
-            const nextLeft = Math.max(6, Math.min(Math.round(anchorLeft), maxLeft));
-            button.style.left = `${{nextLeft}}px`;
-        }};
         window.dashboardSetFbMetricsCollapsed = (collapsed) => {{
             document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
                 table.classList.toggle('dashboard-fb-metrics-collapsed', !!collapsed);
@@ -10972,11 +10953,11 @@ def _render_dashboard_page_v2(
                 dashboardSetColumnVisibility(col, !!collapsed);
             }});
             chatterfyToggleButtons.forEach((button) => {{
-                button.textContent = collapsed ? '+' : '−';
                 button.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
                 button.setAttribute('title', collapsed ? 'Expand Chatterfy metrics' : 'Collapse Chatterfy metrics');
+                const icon = button.querySelector('[data-dashboard-toggle-icon]');
+                if (icon) icon.textContent = collapsed ? '+' : '−';
             }});
-            if (window.dashboardPositionChatterfyToggle) window.dashboardPositionChatterfyToggle();
         }};
         window.dashboardToggleFbMetrics = (button) => {{
             if (button) {{
@@ -11034,7 +11015,6 @@ def _render_dashboard_page_v2(
             document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
                 window.dashboardTreeAutoSize(table);
             }});
-            if (window.dashboardPositionChatterfyToggle) window.dashboardPositionChatterfyToggle();
         }};
         document.querySelectorAll('.dashboard-filter-grid select, .dashboard-filter-grid input').forEach((field) => {{
             const eventName = field.tagName === 'SELECT' ? 'change' : 'input';
