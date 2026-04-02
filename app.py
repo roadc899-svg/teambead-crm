@@ -9088,8 +9088,9 @@ def _render_dashboard_page_v2(
 
     def render_dashboard_metric_cells(values, hierarchy_column=""):
         hide_non_fb_metrics = hierarchy_column in {"campaign_name", "adset_name", "ad_name"}
+        hide_budget_metric = hierarchy_column == "ad_name"
         return "".join([
-            f'<td class="dashboard-metric-cell" data-col="budget">{format_money(values.get("budget", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="budget">{" " if hide_budget_metric else format_money(values.get("budget", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="chatterfy">{" " if hide_non_fb_metrics else format_int_or_float(values.get("chatterfy", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="chat_sub">{" " if hide_non_fb_metrics else format_int_or_float(values.get("chat_sub", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="chat_sub2con_rate">{" " if hide_non_fb_metrics else format_percent(values.get("chat_sub2con_rate", 0))}</td>',
@@ -9240,6 +9241,7 @@ def _render_dashboard_page_v2(
         "fb_cost_per_purchase",
     ]
     chatterfy_detail_columns = [
+        "chatterfy",
         "chat_sub",
         "chat_sub2con_rate",
         "chat_con",
@@ -9307,28 +9309,6 @@ def _render_dashboard_page_v2(
                 'return false;'
                 '})(this); return false;">−</button>'
             )
-        if field == "chatterfy":
-            extra_html = (
-                '<button type="button" class="dashboard-fb-toggle" id="dashboardChatterfyMetricsToggle" '
-                'aria-expanded="true" title="Toggle Chatterfy metrics" '
-                'onclick="if (window.dashboardToggleChatterfyMetrics) return window.dashboardToggleChatterfyMetrics(this); '
-                '(function(btn){'
-                'var table=document.getElementById(\'dashboardUnifiedTable\');'
-                'if(!table) return false;'
-                'var collapsed=!table.classList.contains(\'dashboard-chatterfy-metrics-collapsed\');'
-                'table.classList.toggle(\'dashboard-chatterfy-metrics-collapsed\', collapsed);'
-                'btn.textContent=collapsed?\'+\':\'−\';'
-                'btn.setAttribute(\'aria-expanded\', collapsed?\'false\':\'true\');'
-                'btn.setAttribute(\'title\', collapsed?\'Expand Chatterfy metrics\':\'Collapse Chatterfy metrics\');'
-                'try{'
-                'var stateKey=window.teambeadStorageKey?window.teambeadStorageKey(\'dashboard-ui-state\'):\'dashboard-ui-state\';'
-                'var state=JSON.parse(localStorage.getItem(stateKey)||\'{}\');'
-                'state.chatterfyMetricsCollapsed=collapsed;'
-                'localStorage.setItem(stateKey, JSON.stringify(state));'
-                '}catch(_error){}'
-                'return false;'
-                '})(this); return false;">−</button>'
-            )
         return (
             f'<th data-col="{escape(field)}">'
             f'<div class="dashboard-header-stack">{extra_html}<span class="dashboard-header-label">{header_link}</span></div>'
@@ -9371,7 +9351,7 @@ def _render_dashboard_page_v2(
             <td data-col="adset_name"></td>
             <td data-col="ad_name"{ad_title_attr}>{escape(display_ad_name)}</td>
             <td data-col="buyer">{escape(row.get("buyer") or "—")}</td>
-            <td class="dashboard-metric-cell" data-col="budget">{format_money(row.get("budget", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="budget"></td>
             <td class="dashboard-metric-cell" data-col="chatterfy"></td>
             <td class="dashboard-metric-cell" data-col="chat_sub"></td>
             <td class="dashboard-metric-cell" data-col="chat_sub2con_rate"></td>
@@ -9574,6 +9554,7 @@ def _render_dashboard_page_v2(
     .dashboard-v2 .dashboard-table-wrap {{
         border:1px solid rgba(191, 212, 244, 0.9);
         border-radius:16px;
+        position:relative;
         overflow-x:auto;
         overflow-y:visible;
         background:#fdfefe;
@@ -9593,6 +9574,7 @@ def _render_dashboard_page_v2(
         position:sticky;
         top:0;
         z-index:6;
+        overflow:visible;
         padding:4px 7px;
         font-size:9px;
         line-height:1;
@@ -9749,6 +9731,13 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable .dashboard-fb-toggle:hover {{
         background:#f2f7ff;
         border-color:rgba(59, 86, 138, 0.45);
+    }}
+    .dashboard-v2 .dashboard-floating-metrics-toggle {{
+        position:absolute;
+        top:-10px;
+        left:0;
+        z-index:9;
+        box-shadow:0 2px 7px rgba(29, 55, 95, 0.14);
     }}
     {fb_collapsed_selectors},
     {chatterfy_collapsed_selectors} {{
@@ -10225,6 +10214,7 @@ def _render_dashboard_page_v2(
             </details>
         </div>
         <div class="dashboard-table-wrap">
+            <button type="button" class="dashboard-fb-toggle dashboard-floating-metrics-toggle" id="dashboardChatterfyFloatingToggle" data-dashboard-chatterfy-toggle aria-expanded="true" title="Toggle Chatterfy metrics" onclick="if (window.dashboardToggleChatterfyMetrics) return window.dashboardToggleChatterfyMetrics(this); return false;">−</button>
             <table id="dashboardUnifiedTable" data-dashboard-tree-table>
                 <thead><tr>{head_html}</tr></thead>
                 <tbody>{rows_html if rows_html else '<tr><td colspan="31">No dashboard rows for the selected filters</td></tr>'}</tbody>
@@ -10906,6 +10896,12 @@ def _render_dashboard_page_v2(
             document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
                 window.dashboardTreeAutoSize(table);
             }});
+            if (window.dashboardPositionChatterfyToggle) window.dashboardPositionChatterfyToggle();
+        }});
+        document.querySelectorAll('.dashboard-table-wrap').forEach((wrap) => {{
+            wrap.addEventListener('scroll', () => {{
+                if (window.dashboardPositionChatterfyToggle) window.dashboardPositionChatterfyToggle();
+            }}, {{ passive: true }});
         }});
         window.addEventListener('pageshow', () => {{
             scheduleDashboardUiRestore();
@@ -10920,13 +10916,40 @@ def _render_dashboard_page_v2(
         const fbMetricColumns = {json.dumps(fb_detail_columns)};
         const chatterfyMetricColumns = {json.dumps(chatterfy_detail_columns)};
         const fbToggleButton = document.getElementById('dashboardFbMetricsToggle');
-        const chatterfyToggleButton = document.getElementById('dashboardChatterfyMetricsToggle');
+        const chatterfyToggleButtons = Array.from(document.querySelectorAll('[data-dashboard-chatterfy-toggle]'));
         const toggles = Array.from(document.querySelectorAll('.dashboard-column-toggle'));
         const dashboardSetColumnVisibility = (col, shouldHide) => {{
             document.querySelectorAll(`[data-dashboard-tree-table] [data-col="${{col}}"]`).forEach((cell) => {{
                 cell.hidden = !!shouldHide;
                 cell.style.display = shouldHide ? 'none' : '';
             }});
+        }};
+        window.dashboardPositionChatterfyToggle = () => {{
+            const button = document.getElementById('dashboardChatterfyFloatingToggle');
+            const wrap = button?.closest('.dashboard-table-wrap');
+            const table = wrap?.querySelector('#dashboardUnifiedTable');
+            if (!button || !wrap || !table) return;
+            const wrapRect = wrap.getBoundingClientRect();
+            const chatterfyHeader = table.querySelector('thead th[data-col="chatterfy"]');
+            const spendHeader = table.querySelector('thead th[data-col="spend"]');
+            const budgetHeader = table.querySelector('thead th[data-col="budget"]');
+            const isVisible = (cell) => !!(cell && cell.style.display !== 'none' && !cell.hidden && cell.getClientRects().length);
+            let anchorLeft = null;
+            if (isVisible(chatterfyHeader)) {{
+                anchorLeft = chatterfyHeader.getBoundingClientRect().left - wrapRect.left + 8;
+            }} else if (isVisible(spendHeader)) {{
+                anchorLeft = spendHeader.getBoundingClientRect().left - wrapRect.left - 10;
+            }} else if (isVisible(budgetHeader)) {{
+                anchorLeft = budgetHeader.getBoundingClientRect().right - wrapRect.left - 10;
+            }}
+            if (anchorLeft === null) {{
+                button.style.display = 'none';
+                return;
+            }}
+            button.style.display = '';
+            const maxLeft = Math.max(0, wrap.clientWidth - button.offsetWidth - 6);
+            const nextLeft = Math.max(6, Math.min(Math.round(anchorLeft), maxLeft));
+            button.style.left = `${{nextLeft}}px`;
         }};
         window.dashboardSetFbMetricsCollapsed = (collapsed) => {{
             document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
@@ -10948,11 +10971,12 @@ def _render_dashboard_page_v2(
             chatterfyMetricColumns.forEach((col) => {{
                 dashboardSetColumnVisibility(col, !!collapsed);
             }});
-            if (chatterfyToggleButton) {{
-                chatterfyToggleButton.textContent = collapsed ? '+' : '−';
-                chatterfyToggleButton.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-                chatterfyToggleButton.setAttribute('title', collapsed ? 'Expand Chatterfy metrics' : 'Collapse Chatterfy metrics');
-            }}
+            chatterfyToggleButtons.forEach((button) => {{
+                button.textContent = collapsed ? '+' : '−';
+                button.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+                button.setAttribute('title', collapsed ? 'Expand Chatterfy metrics' : 'Collapse Chatterfy metrics');
+            }});
+            if (window.dashboardPositionChatterfyToggle) window.dashboardPositionChatterfyToggle();
         }};
         window.dashboardToggleFbMetrics = (button) => {{
             if (button) {{
@@ -11010,6 +11034,7 @@ def _render_dashboard_page_v2(
             document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
                 window.dashboardTreeAutoSize(table);
             }});
+            if (window.dashboardPositionChatterfyToggle) window.dashboardPositionChatterfyToggle();
         }};
         document.querySelectorAll('.dashboard-filter-grid select, .dashboard-filter-grid input').forEach((field) => {{
             const eventName = field.tagName === 'SELECT' ? 'change' : 'input';
