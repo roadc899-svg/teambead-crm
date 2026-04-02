@@ -9290,41 +9290,41 @@ def _render_dashboard_page_v2(
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="buyer"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="buyer"] {{
-        width:auto;
-        min-width:44px;
-        max-width:none;
+        width:92px;
+        min-width:92px;
+        max-width:92px;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="platform"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="platform"] {{
-        width:auto;
-        min-width:54px;
-        max-width:none;
+        width:116px;
+        min-width:116px;
+        max-width:116px;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="manager"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="manager"] {{
-        width:auto;
-        min-width:72px;
-        max-width:none;
+        width:132px;
+        min-width:132px;
+        max-width:132px;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="geo"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="geo"] {{
-        width:auto;
-        min-width:44px;
-        max-width:none;
+        width:78px;
+        min-width:78px;
+        max-width:78px;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="campaign_name"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="campaign_name"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="adset_name"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="adset_name"] {{
-        width:auto;
-        min-width:54px;
-        max-width:none;
+        width:142px;
+        min-width:142px;
+        max-width:142px;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="ad_name"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="ad_name"] {{
-        width:auto;
-        min-width:54px;
-        max-width:none;
+        width:112px;
+        min-width:112px;
+        max-width:112px;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="platform"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="platform"],
@@ -9828,8 +9828,20 @@ def _render_dashboard_page_v2(
                 'platform', 'geo', 'manager', 'campaign_name', 'adset_name', 'ad_name',
                 'buyer',
             ];
+            const fixedWidths = {{
+                platform: 116,
+                geo: 78,
+                manager: 132,
+                campaign_name: 142,
+                adset_name: 142,
+                ad_name: 112,
+                buyer: 92,
+            }};
             const getTargetColumnWidth = (cell) => {{
                 if (!cell) return 0;
+                const colName = cell.dataset?.col || '';
+                const fixedWidth = fixedWidths[colName];
+                if (fixedWidth) return fixedWidth;
                 const inlineWidth = parseFloat(cell.style.width || '0') || 0;
                 if (inlineWidth > 0) return Math.ceil(inlineWidth);
                 const style = window.getComputedStyle(cell);
@@ -9897,45 +9909,21 @@ def _render_dashboard_page_v2(
             autoCols.forEach((col) => {{
                 const allCells = Array.from(table.querySelectorAll(`[data-col="${{col}}"]`));
                 allCells.forEach((cell) => {{
-                    cell.style.width = '';
-                    cell.style.minWidth = '';
-                    cell.style.maxWidth = '';
+                    const fixedWidth = fixedWidths[col] || 0;
+                    if (!fixedWidth) return;
+                    cell.style.width = `${{fixedWidth}}px`;
+                    cell.style.minWidth = `${{fixedWidth}}px`;
+                    cell.style.maxWidth = `${{fixedWidth}}px`;
                 }});
             }});
             table.style.width = '';
             table.style.minWidth = '';
             table.style.maxWidth = '';
-            table.style.tableLayout = 'auto';
+            table.style.tableLayout = 'fixed';
             requestAnimationFrame(() => {{
-                const measureColumnWidth = (col) => {{
-                    const cells = Array.from(table.querySelectorAll(`[data-col="${{col}}"]`)).filter((cell) => {{
-                        if (!cell) return false;
-                        const style = window.getComputedStyle(cell);
-                        return style.display !== 'none';
-                    }});
-                    if (!cells.length) return 0;
-                    let width = 0;
-                    cells.forEach((cell) => {{
-                        const style = window.getComputedStyle(cell);
-                        const paddingLeft = parseFloat(style.paddingLeft || '0') || 0;
-                        const paddingRight = parseFloat(style.paddingRight || '0') || 0;
-                        const contentWidth = Math.max(cell.scrollWidth, cell.firstElementChild?.scrollWidth || 0, cell.textContent?.trim() ? cell.scrollWidth : 0);
-                        width = Math.max(width, Math.ceil(contentWidth + paddingLeft + paddingRight + 10));
-                    }});
-                    const minWidths = {{
-                        platform: 54,
-                        geo: 44,
-                        manager: 72,
-                        campaign_name: 54,
-                        adset_name: 54,
-                        ad_name: 54,
-                        buyer: 44,
-                    }};
-                    return Math.max(minWidths[col] || 44, width);
-                }};
                 const widths = {{}};
                 autoCols.forEach((col) => {{
-                    const measuredWidth = measureColumnWidth(col);
+                    const measuredWidth = fixedWidths[col] || 0;
                     if (!measuredWidth) return;
                     widths[col] = measuredWidth;
                     Array.from(table.querySelectorAll(`[data-col="${{col}}"]`)).forEach((cell) => {{
