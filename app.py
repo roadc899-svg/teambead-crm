@@ -8081,6 +8081,10 @@ def normalize_chatterfy_tag_value(value):
     return re.sub(r"\s+", " ", safe_text(value)).strip().upper()
 
 
+def normalize_chatterfy_scope_token(value):
+    return safe_text(value).strip().lower()
+
+
 def get_chatterfy_tag_aliases(token):
     normalized = normalize_chatterfy_tag_value(token)
     aliases = {
@@ -8233,12 +8237,14 @@ def build_dashboard_chatterfy_scope_maps(period_label=""):
         platform_key = normalize_dashboard_platform(
             safe_text(getattr(row, "platform", "")) or safe_text(getattr(row, "flow_platform", ""))
         )
-        manager_key = safe_text(getattr(row, "manager", "")) or safe_text(getattr(row, "flow_manager", ""))
+        manager_key = normalize_chatterfy_scope_token(
+            safe_text(getattr(row, "manager", "")) or safe_text(getattr(row, "flow_manager", ""))
+        )
         geo_key = normalize_geo_value(
             safe_text(getattr(row, "geo", "")) or safe_text(getattr(row, "flow_geo", ""))
         )
         launch_date = safe_text(getattr(row, "launch_date", ""))
-        offer_key = safe_text(getattr(row, "offer", ""))
+        offer_key = normalize_chatterfy_scope_token(getattr(row, "offer", ""))
 
         if platform_key:
             merge_dashboard_chatterfy_row(
@@ -8837,11 +8843,13 @@ def _render_dashboard_page_v2(
         if field not in {"platform", "geo", "manager", "campaign_name", "adset_name"}:
             return base
         sample = (items or [None])[0] or {}
+        parsed_campaign = parse_ad_name(sample.get("campaign_name"))
+        parsed_adset = parse_ad_name(sample.get("adset_name"))
         platform_key = normalize_dashboard_platform(sample.get("platform"))
         geo_key = normalize_geo_value(sample.get("geo"))
-        manager_key = safe_text(sample.get("manager"))
-        launch_date = safe_text(sample.get("launch_date"))
-        offer_key = safe_text(sample.get("offer"))
+        manager_key = normalize_chatterfy_scope_token(sample.get("manager"))
+        launch_date = safe_text(sample.get("launch_date")) or safe_text(parsed_campaign.get("launch_date"))
+        offer_key = normalize_chatterfy_scope_token(sample.get("offer") or parsed_adset.get("offer"))
         lookup_key = None
         if field == "platform" and platform_key:
             lookup_key = platform_key
