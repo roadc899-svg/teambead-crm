@@ -8760,21 +8760,21 @@ def _render_dashboard_page_v2(
         ("budget", "Budget"),
         ("spend", "Spend"),
         ("fb_material_views", "Views"),
-        ("fb_cost_per_content_view", "CPV"),
+        ("fb_cost_per_content_view", "$, VIEW"),
         ("fb_link_clicks", "Clicks"),
-        ("fb_cpc", "CPC"),
+        ("fb_cpc", "$, CLICK"),
         ("fb_frequency", "Freq"),
         ("fb_ctr", "CTR"),
         ("fb_leads", "Leads"),
-        ("fb_cost_per_lead", "CPL"),
-        ("fb_paid_subscriptions", "Follows"),
-        ("fb_cost_per_paid_subscription", "CPF"),
-        ("fb_contacts", "Contacts"),
-        ("fb_cost_per_contact", "CPCt"),
-        ("fb_completed_registrations", "Regs"),
-        ("fb_cost_per_completed_registration", "CPR"),
-        ("fb_purchases", "Purchases"),
-        ("fb_cost_per_purchase", "CPP"),
+        ("fb_cost_per_lead", "$, LEAD"),
+        ("fb_paid_subscriptions", "SUB"),
+        ("fb_cost_per_paid_subscription", "$, SUB"),
+        ("fb_contacts", "CON"),
+        ("fb_cost_per_contact", "$, CON"),
+        ("fb_completed_registrations", "REG"),
+        ("fb_cost_per_completed_registration", "$, REG"),
+        ("fb_purchases", "DEP"),
+        ("fb_cost_per_purchase", "$, BUY"),
         ("players_ftd", "FTD"),
         ("qual_ftd", "Qual FTD"),
         ("hold_count", "Hold"),
@@ -9705,6 +9705,7 @@ def _render_dashboard_page_v2(
         if (!periodSelect) return;
         const form = periodSelect.closest('form');
         const persistDashboardUiState = () => {{
+            if (window.dashboardPersistFilterState) window.dashboardPersistFilterState();
             if (window.dashboardPersistAllTreeState) window.dashboardPersistAllTreeState();
         }};
         document.querySelectorAll('.period-jump-btn').forEach((button) => {{
@@ -9969,6 +9970,75 @@ def _render_dashboard_page_v2(
                 localStorage.setItem(dashboardStateKey, JSON.stringify(state || {{}}));
             }} catch (_error) {{}}
         }};
+        const dashboardFilterKey = form?.dataset.persistFilters || 'dashboard-v2';
+        const dashboardCollectFilterValues = () => {{
+            if (!form) return {{}};
+            const values = {{}};
+            Array.from(form.elements || []).forEach((field) => {{
+                if (!field || !field.name) return;
+                const type = (field.type || '').toLowerCase();
+                if (type === 'submit' || type === 'button' || type === 'reset' || type === 'file') return;
+                values[field.name] = field.value ?? '';
+            }});
+            return values;
+        }};
+        const dashboardApplyFilterValues = (values) => {{
+            if (!form || !values || typeof values !== 'object') return;
+            Array.from(form.elements || []).forEach((field) => {{
+                if (!field || !field.name || !(field.name in values)) return;
+                const nextValue = values[field.name] ?? '';
+                if (field.tagName === 'SELECT') {{
+                    const hasOption = Array.from(field.options || []).some((option) => String(option.value) === String(nextValue));
+                    field.value = hasOption ? nextValue : '';
+                    return;
+                }}
+                field.value = nextValue;
+            }});
+        }};
+        const dashboardFilterValuesEqual = (left, right) => {{
+            const keys = Array.from(new Set([
+                ...Object.keys(left || {{}}),
+                ...Object.keys(right || {{}}),
+            ]));
+            return keys.every((key) => String((left || {{}})[key] ?? '') === String((right || {{}})[key] ?? ''));
+        }};
+        window.dashboardPersistFilterState = () => {{
+            if (!form) return;
+            const state = window.dashboardReadState();
+            state.filters = state.filters || {{}};
+            state.filters[dashboardFilterKey] = dashboardCollectFilterValues();
+            window.dashboardWriteState(state);
+        }};
+        window.dashboardClearFilterState = () => {{
+            const state = window.dashboardReadState();
+            if (state.filters && state.filters[dashboardFilterKey]) {{
+                delete state.filters[dashboardFilterKey];
+            }}
+            if (state.expanded && state.expanded['dashboardUnifiedTable']) {{
+                delete state.expanded['dashboardUnifiedTable'];
+            }}
+            if (state.activeNode && state.activeNode['dashboardUnifiedTable']) {{
+                delete state.activeNode['dashboardUnifiedTable'];
+            }}
+            window.dashboardWriteState(state);
+        }};
+        window.dashboardRestoreFilterState = () => {{
+            if (!form) return false;
+            const state = window.dashboardReadState();
+            const savedFilters = state.filters?.[dashboardFilterKey];
+            if (!savedFilters || typeof savedFilters !== 'object') return false;
+            const currentValues = dashboardCollectFilterValues();
+            if (dashboardFilterValuesEqual(currentValues, savedFilters)) return false;
+            dashboardApplyFilterValues(savedFilters);
+            requestAnimationFrame(() => {{
+                try {{
+                    form.requestSubmit();
+                }} catch (_error) {{
+                    form.submit();
+                }}
+            }});
+            return true;
+        }};
         window.dashboardPersistAllTreeState = () => {{
             const state = window.dashboardReadState();
             state.expanded = state.expanded || {{}};
@@ -10221,6 +10291,11 @@ def _render_dashboard_page_v2(
                 persistDashboardUiState();
             }});
         }});
+        document.querySelectorAll('[data-reset-filters="dashboard-v2"]').forEach((button) => {{
+            button.addEventListener('click', () => {{
+                if (window.dashboardClearFilterState) window.dashboardClearFilterState();
+            }});
+        }});
         form?.addEventListener('submit', () => {{
             persistDashboardUiState();
         }});
@@ -10342,6 +10417,9 @@ def _render_dashboard_page_v2(
                 event.stopPropagation();
                 window.dashboardToggleFbMetrics(fbToggleButton);
             }});
+        }}
+        if (window.dashboardRestoreFilterState && window.dashboardRestoreFilterState()) {{
+            return;
         }}
         applyColumns();
         document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
