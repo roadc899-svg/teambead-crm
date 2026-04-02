@@ -9902,7 +9902,9 @@ def _render_dashboard_page_v2(
             const measureCellContentWidth = (cell) => {{
                 if (!cell) return 0;
                 const probe = ensureMeasureProbe();
-                const style = window.getComputedStyle(cell);
+                const labelNode = cell.querySelector?.('.dashboard-header-label, .dashboard-tree-label');
+                const measurementTarget = labelNode || cell;
+                const style = window.getComputedStyle(measurementTarget);
                 probe.style.font = style.font;
                 probe.style.fontSize = style.fontSize;
                 probe.style.fontWeight = style.fontWeight;
@@ -9910,8 +9912,7 @@ def _render_dashboard_page_v2(
                 probe.style.letterSpacing = style.letterSpacing;
                 probe.style.textTransform = style.textTransform;
                 probe.style.lineHeight = style.lineHeight;
-                const labelNode = cell.querySelector?.('.dashboard-header-label, .dashboard-tree-label');
-                const label = (labelNode?.innerText || labelNode?.textContent || cell.innerText || cell.textContent || '').replace(/\\s+/g, ' ').trim();
+                const label = (measurementTarget.innerText || measurementTarget.textContent || '').replace(/\\s+/g, ' ').trim();
                 if (!label) return 0;
                 probe.textContent = label;
                 let width = Math.ceil(probe.getBoundingClientRect().width || probe.offsetWidth || 0);
@@ -9925,6 +9926,11 @@ def _render_dashboard_page_v2(
                             : 0;
                         width += Math.ceil(toggle.getBoundingClientRect().width || toggle.offsetWidth || 0) + Math.ceil(gap);
                     }}
+                }}
+                const treeToggle = cell.querySelector('.dashboard-tree-toggle');
+                if (treeToggle && labelNode) {{
+                    const toggleWidth = Math.ceil(treeToggle.scrollWidth || treeToggle.getBoundingClientRect().width || 0);
+                    width = Math.max(width, toggleWidth);
                 }}
                 return width;
             }};
@@ -9952,44 +9958,6 @@ def _render_dashboard_page_v2(
                     return sum + getTargetColumnWidth(cell);
                 }}, 0);
             }};
-            const readWidthCache = () => {{
-                try {{
-                    const parsed = JSON.parse(table.dataset.autoWidthCache || '{{}}');
-                    return parsed && typeof parsed === 'object' ? parsed : {{}};
-                }} catch (_error) {{
-                    return {{}};
-                }}
-            }};
-            const writeWidthCache = (payload) => {{
-                try {{
-                    table.dataset.autoWidthCache = JSON.stringify(payload || {{}});
-                }} catch (_error) {{}}
-            }};
-            const applyCachedWidths = (cache) => {{
-                if (!cache || typeof cache !== 'object') return false;
-                let applied = false;
-                autoCols.forEach((col) => {{
-                    const measuredWidth = parseFloat(cache[col] || 0) || 0;
-                    if (!measuredWidth) return;
-                    applied = true;
-                    Array.from(table.querySelectorAll(`[data-col="${{col}}"]`)).forEach((cell) => {{
-                        cell.style.width = `${{measuredWidth}}px`;
-                        cell.style.minWidth = `${{measuredWidth}}px`;
-                        cell.style.maxWidth = `${{measuredWidth}}px`;
-                    }});
-                }});
-                const visibleWidth = computeVisibleTableWidth();
-                if (visibleWidth > 0) {{
-                    table.style.width = `${{visibleWidth}}px`;
-                    table.style.minWidth = `${{visibleWidth}}px`;
-                    table.style.maxWidth = `${{visibleWidth}}px`;
-                    applied = true;
-                }}
-                if (applied) {{
-                    table.style.tableLayout = 'fixed';
-                }}
-                return applied;
-            }};
             autoCols.forEach((col) => {{
                 const allCells = Array.from(table.querySelectorAll(`[data-col="${{col}}"]`));
                 allCells.forEach((cell) => {{
@@ -10015,12 +9983,10 @@ def _render_dashboard_page_v2(
                         const style = window.getComputedStyle(cell);
                         const paddingLeft = parseFloat(style.paddingLeft || '0') || 0;
                         const paddingRight = parseFloat(style.paddingRight || '0') || 0;
-                        const contentWidth = Math.max(
-                            measureCellContentWidth(cell),
-                            cell.scrollWidth || 0,
-                            cell.firstElementChild?.scrollWidth || 0
-                        );
-                        width = Math.max(width, Math.ceil(contentWidth + paddingLeft + paddingRight + 10));
+                        const borderLeft = parseFloat(style.borderLeftWidth || '0') || 0;
+                        const borderRight = parseFloat(style.borderRightWidth || '0') || 0;
+                        const contentWidth = measureCellContentWidth(cell);
+                        width = Math.max(width, Math.ceil(contentWidth + paddingLeft + paddingRight + borderLeft + borderRight + 10));
                     }});
                     return Math.max(minWidths[col] || 44, width);
                 }};
@@ -10041,7 +10007,6 @@ def _render_dashboard_page_v2(
                     table.style.minWidth = `${{totalWidth}}px`;
                     table.style.maxWidth = `${{totalWidth}}px`;
                 }}
-                writeWidthCache({{ ...widths, totalWidth }});
                 table.style.tableLayout = 'fixed';
             }});
         }};
