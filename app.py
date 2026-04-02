@@ -7775,6 +7775,20 @@ def get_dashboard_scope_lookup_keys(cabinet_name="", brand="", geo=""):
     return keys
 
 
+def build_dashboard_candidate_scope_keys(cabinets=None, offer="", geo=""):
+    cabinets = cabinets or []
+    result = []
+    seen = set()
+    for cabinet_item in cabinets:
+        cabinet_name = safe_text(getattr(cabinet_item, "name", ""))
+        for key in get_dashboard_scope_lookup_keys(cabinet_name, offer, geo):
+            if not key[0] or not key[2] or key in seen:
+                continue
+            seen.add(key)
+            result.append(key)
+    return result
+
+
 def dashboard_offer_matches_cabinet(cabinet_row, offer_value):
     clean_offer = safe_text(offer_value).strip().lower()
     if not clean_offer:
@@ -7904,6 +7918,42 @@ def build_dashboard_players_scope_map(period_label=""):
     return result
 
 
+def build_dashboard_players_flow_map(period_label=""):
+    rows = get_partner_rows_by_period(period_label=period_label)
+    cabinet_meta_map = {
+        safe_text(getattr(item, "name", "")): item
+        for item in get_cabinet_rows()
+        if safe_text(getattr(item, "name", ""))
+    }
+    result = {}
+    for row in rows:
+        cabinet_item = cabinet_meta_map.get(safe_text(getattr(row, "cabinet_name", "")))
+        if not cabinet_item:
+            continue
+        platform_key = normalize_dashboard_platform(getattr(cabinet_item, "platform", ""))
+        manager_key = safe_text(getattr(cabinet_item, "manager_name", ""))
+        geo_key = normalize_geo_value(getattr(row, "country", ""))
+        if not platform_key or not manager_key or not geo_key:
+            continue
+        flow_key = build_flow_key(platform_key, manager_key, geo_key)
+        bucket = result.setdefault(flow_key, {
+            "players_ftd": 0.0,
+            "qual_ftd": 0.0,
+            "payout": 0.0,
+        })
+        deposit_amount = safe_number(getattr(row, "deposit_amount", 0))
+        cpa_amount = safe_number(getattr(row, "cpa_amount", 0))
+        is_qualified = bool(getattr(row, "is_qualified_ftd", False)) or cpa_amount > 0
+        if deposit_amount > 0:
+            bucket["players_ftd"] += 1
+        if is_qualified:
+            bucket["qual_ftd"] += 1
+            bucket["payout"] += cpa_amount
+    for bucket in result.values():
+        bucket["rate"] = (bucket["payout"] / bucket["qual_ftd"]) if bucket["qual_ftd"] > 0 else 0.0
+    return result
+
+
 def build_dashboard_caps_scope_map(period_label=""):
     ensure_caps_table()
     cabinet_meta_map = {
@@ -8005,8 +8055,11 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
     fb_rows = aggregate_grouped_rows(get_filtered_data(buyer=buyer_scope, period_label=period_label))
     fb_rows = enrich_statistic_rows(fb_rows, period_label=period_label)
     cabinet_map = build_dashboard_cabinet_flow_map()
+    players_flow_map = build_dashboard_players_flow_map(period_label=period_label)
     players_scope_map = build_dashboard_players_scope_map(period_label=period_label)
+    caps_flow_map = build_dashboard_caps_flow_map(period_label=period_label)
     caps_scope_map = build_dashboard_caps_scope_map(period_label=period_label)
+    hold_flow_map = build_dashboard_hold_flow_map(period_label=period_label)
     hold_scope_map = build_dashboard_hold_scope_map(period_label=period_label)
 
     rows = []
@@ -8025,6 +8078,11 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
         cabinet_names = [primary_cabinet_name] if primary_cabinet_name else []
         advertiser_names = [primary_advertiser] if primary_advertiser else []
         active_cabinets = [cab for cab in related_cabinets if safe_text(getattr(cab, "status", "")).lower() == "active"]
+        candidate_scope_keys = build_dashboard_candidate_scope_keys(
+            [primary_cabinet] + [cab for cab in related_cabinets if cab is not primary_cabinet],
+            offer=item.get("offer"),
+            geo=item.get("geo"),
+        )
         scope_brand = safe_text(item.get("offer"))
         scope_key = build_dashboard_scope_key(primary_cabinet_name, scope_brand, item.get("geo"))
         row_weight = safe_number(item.get("ftd")) or safe_number(item.get("leads")) or safe_number(item.get("spend")) or 1.0
@@ -8089,6 +8147,7 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
             "flow_key": flow_key,
             "dashboard_scope_key": "|".join(scope_key),
             "dashboard_scope_weight": row_weight,
+            "dashboard_candidate_scope_keys": ["|".join(key) for key in candidate_scope_keys],
             "flow_label": " / ".join(filter(None, [safe_text(item.get("platform")), safe_text(item.get("manager")), safe_text(item.get("geo"))])),
             "source_name": safe_text(item.get("source_name")),
             "row_kind": "fb",
@@ -8097,30 +8156,58 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
 
     scope_bucket_weights = {}
     scope_bucket_counts = {}
+    flow_bucket_weights = {}
+    flow_bucket_counts = {}
+
+    def resolve_dashboard_flow_key(raw_value):
+        if isinstance(raw_value, tuple) and len(raw_value) == 3:
+            return raw_value
+        if isinstance(raw_value, list) and len(raw_value) == 3:
+            return tuple(raw_value)
+        text_value = safe_text(raw_value)
+        if "|" in text_value:
+            parts = [safe_text(part) for part in text_value.split("|")]
+            if len(parts) == 3:
+                return tuple(parts)
+        return tuple()
+
     for row in rows:
         scope_key = safe_text(row.get("dashboard_scope_key"))
+        flow_key = resolve_dashboard_flow_key(row.get("flow_key"))
         if not scope_key:
+            if flow_key:
+                flow_bucket_weights[flow_key] = flow_bucket_weights.get(flow_key, 0.0) + safe_number(row.get("dashboard_scope_weight", 0))
+                flow_bucket_counts[flow_key] = flow_bucket_counts.get(flow_key, 0) + 1
             continue
-        scope_bucket_weights[scope_key] = scope_bucket_weights.get(scope_key, 0.0) + safe_number(row.get("dashboard_scope_weight", 0))
+        weight = safe_number(row.get("dashboard_scope_weight", 0))
+        scope_bucket_weights[scope_key] = scope_bucket_weights.get(scope_key, 0.0) + weight
         scope_bucket_counts[scope_key] = scope_bucket_counts.get(scope_key, 0) + 1
+        if flow_key:
+            flow_bucket_weights[flow_key] = flow_bucket_weights.get(flow_key, 0.0) + weight
+            flow_bucket_counts[flow_key] = flow_bucket_counts.get(flow_key, 0) + 1
 
     for row in rows:
         scope_key_text = safe_text(row.get("dashboard_scope_key"))
-        if not scope_key_text:
-            row["costs"] = safe_number(row.get("spend", 0)) + safe_number(row.get("costs_ai", 0))
-            row["profit"] = safe_number(row.get("payout", 0)) - safe_number(row.get("costs", 0))
-            row["roi"] = (row["profit"] / row["costs"]) * 100 if safe_number(row.get("costs", 0)) > 0 else 0.0
-            continue
-        scope_key_parts = tuple(scope_key_text.split("|"))
+        scope_key_parts = tuple(scope_key_text.split("|")) if scope_key_text else tuple()
+        flow_key_value = resolve_dashboard_flow_key(row.get("flow_key"))
         weight = safe_number(row.get("dashboard_scope_weight", 0))
         bucket_weight = scope_bucket_weights.get(scope_key_text, 0.0)
         bucket_count = scope_bucket_counts.get(scope_key_text, 1)
         scope_share = (weight / bucket_weight) if bucket_weight > 0 else (1.0 / bucket_count)
+        flow_bucket_weight = flow_bucket_weights.get(flow_key_value, 0.0)
+        flow_bucket_count = flow_bucket_counts.get(flow_key_value, 1)
+        flow_share = (weight / flow_bucket_weight) if flow_bucket_weight > 0 else (1.0 / flow_bucket_count)
 
         players_info = {}
         caps_info = {}
         hold_info = {}
-        scope_lookup_keys = get_dashboard_scope_lookup_keys(scope_key_parts[0], scope_key_parts[1], scope_key_parts[2])
+        scope_lookup_keys = []
+        for raw_key in row.get("dashboard_candidate_scope_keys", []) or []:
+            parsed_key = tuple(safe_text(raw_key).split("|"))
+            if len(parsed_key) == 3:
+                scope_lookup_keys.append(parsed_key)
+        if not scope_lookup_keys and len(scope_key_parts) == 3:
+            scope_lookup_keys = get_dashboard_scope_lookup_keys(scope_key_parts[0], scope_key_parts[1], scope_key_parts[2])
         for lookup_key in scope_lookup_keys:
             players_info = players_scope_map.get(lookup_key, {})
             if players_info:
@@ -8134,17 +8221,45 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
             if hold_info:
                 break
 
-        row["players_ftd"] = safe_number(players_info.get("players_ftd", 0)) * scope_share
-        row["qual_ftd"] = safe_number(players_info.get("qual_ftd", 0)) * scope_share
-        row["payout"] = safe_number(players_info.get("income", 0)) * scope_share
+        players_share = scope_share if players_info and scope_lookup_keys else flow_share
+        caps_share = scope_share if caps_info and scope_lookup_keys else flow_share
+        hold_share = scope_share if hold_info and scope_lookup_keys else flow_share
+
+        if not players_info and flow_key_value:
+            players_info = players_flow_map.get(flow_key_value, {})
+        if not caps_info and flow_key_value:
+            caps_info = caps_flow_map.get(flow_key_value, {})
+        if not hold_info and flow_key_value:
+            hold_info = hold_flow_map.get(flow_key_value, {})
+
+        if not players_info:
+            players_info = {
+                "players_ftd": safe_number(row.get("stat_total_ftd", 0)),
+                "qual_ftd": safe_number(row.get("stat_qual_ftd", 0)),
+                "payout": safe_number(row.get("stat_income", 0)),
+                "rate": safe_number(row.get("stat_rate", 0)),
+            }
+            players_share = 1.0
+        if not caps_info:
+            caps_info = {
+                "cap_total": safe_number(row.get("stat_cap_limit", 0)),
+                "cap_current_ftd": safe_number(row.get("stat_total_ftd", 0)),
+                "cap_fill": safe_number(row.get("stat_cap_fill", 0)),
+                "caps_count": 1.0 if safe_number(row.get("stat_has_cap", 0)) > 0 else 0.0,
+            }
+            caps_share = 1.0
+
+        row["players_ftd"] = safe_number(players_info.get("players_ftd", players_info.get("stat_total_ftd", 0))) * players_share
+        row["qual_ftd"] = safe_number(players_info.get("qual_ftd", players_info.get("stat_qual_ftd", 0))) * players_share
+        row["payout"] = safe_number(players_info.get("payout", players_info.get("income", players_info.get("stat_income", 0)))) * players_share
         row["rate"] = safe_number(players_info.get("rate", 0))
-        row["caps_count"] = safe_number(caps_info.get("caps_count", 0)) * scope_share
-        row["cap_total"] = safe_number(caps_info.get("cap_total", 0)) * scope_share
-        row["cap_current_ftd"] = safe_number(caps_info.get("cap_current_ftd", 0)) * scope_share
-        row["cap_fill"] = cap_fill_percent(row["cap_current_ftd"], row["cap_total"])
-        row["hold_count"] = safe_number(hold_info.get("hold_count", 0)) * scope_share
-        row["hold_baseline_count"] = safe_number(hold_info.get("baseline_fail_count", 0)) * scope_share
-        row["hold_wager_count"] = safe_number(hold_info.get("wager_fail_count", 0)) * scope_share
+        row["caps_count"] = safe_number(caps_info.get("caps_count", 0)) * caps_share
+        row["cap_total"] = safe_number(caps_info.get("cap_total", caps_info.get("stat_cap_limit", 0))) * caps_share
+        row["cap_current_ftd"] = safe_number(caps_info.get("cap_current_ftd", caps_info.get("stat_total_ftd", 0))) * caps_share
+        row["cap_fill"] = safe_number(caps_info.get("cap_fill", 0)) if safe_number(caps_info.get("cap_fill", 0)) > 0 and caps_share == 1.0 else cap_fill_percent(row["cap_current_ftd"], row["cap_total"])
+        row["hold_count"] = safe_number(hold_info.get("hold_count", 0)) * hold_share
+        row["hold_baseline_count"] = safe_number(hold_info.get("baseline_fail_count", 0)) * hold_share
+        row["hold_wager_count"] = safe_number(hold_info.get("wager_fail_count", 0)) * hold_share
         row["hold_split"] = f'{format_int_or_float(row["hold_baseline_count"])}B / {format_int_or_float(row["hold_wager_count"])}W' if hold_info else "0B / 0W"
         row["costs"] = safe_number(row.get("spend", 0)) + safe_number(row.get("costs_ai", 0))
         row["profit"] = safe_number(row.get("payout", 0)) - safe_number(row.get("costs", 0))
@@ -9401,9 +9516,9 @@ def _render_dashboard_page_v2(
         font-weight:800;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] {{
-        table-layout:auto;
+        table-layout:fixed;
         width:max-content;
-        min-width:100%;
+        min-width:max-content;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] tbody td {{
         overflow:visible;
@@ -9676,6 +9791,9 @@ def _render_dashboard_page_v2(
                     cell.style.maxWidth = '';
                 }});
             }});
+            table.style.width = '';
+            table.style.minWidth = '';
+            table.style.maxWidth = '';
             table.style.tableLayout = 'auto';
             requestAnimationFrame(() => {{
                 const measureColumnWidth = (col) => {{
@@ -9715,6 +9833,23 @@ def _render_dashboard_page_v2(
                         cell.style.maxWidth = `${{measuredWidth}}px`;
                     }});
                 }});
+                const headerCells = Array.from(table.querySelectorAll('thead th[data-col]')).filter((cell) => {{
+                    if (!cell) return false;
+                    const style = window.getComputedStyle(cell);
+                    return style.display !== 'none';
+                }});
+                const totalWidth = headerCells.reduce((sum, cell) => {{
+                    const rectWidth = Math.ceil(cell.getBoundingClientRect().width || 0);
+                    if (rectWidth > 0) return sum + rectWidth;
+                    const computedWidth = parseFloat(window.getComputedStyle(cell).width || '0') || 0;
+                    return sum + Math.ceil(computedWidth);
+                }}, 0);
+                if (totalWidth > 0) {{
+                    table.style.width = `${{totalWidth}}px`;
+                    table.style.minWidth = `${{totalWidth}}px`;
+                    table.style.maxWidth = `${{totalWidth}}px`;
+                }}
+                table.style.tableLayout = 'fixed';
             }});
         }};
 
