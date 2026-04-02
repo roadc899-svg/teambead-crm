@@ -7661,7 +7661,6 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         "Add Expense",
         5,
         [
-            {"name": "expense_date", "type": "date"},
             {"name": "category", "type": "select", "options": expense_category_options},
             {"name": "from_wallet", "type": "select", "options": payer_names},
             {"name": "amount", "type": "number", "placeholder": "Сумма", "class_name": "finance-inline-field-amount"},
@@ -7674,7 +7673,6 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         "Add Income",
         5,
         [
-            {"name": "income_date", "type": "date"},
             {"name": "category", "type": "select", "options": income_brand_options},
             {"name": "wallet_name", "type": "select", "options": income_cabinet_options},
             {"name": "amount", "type": "number", "placeholder": "Сумма", "class_name": "finance-inline-field-amount"},
@@ -7689,7 +7687,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         [
             {"name": "category", "type": "select", "options": expense_category_options},
             {"name": "description", "placeholder": "Бренд/Сервис"},
-            {"name": "owner_name", "type": "select", "options": income_cabinet_options},
+            {"name": "owner_name", "type": "datalist", "options": income_cabinet_options, "list_id": "finance-wallet-cabinets", "placeholder": "Кабинет"},
             {"name": "wallet", "placeholder": "Кошелек"},
             {"name": "amount", "type": "number", "placeholder": "Сумма", "class_name": "finance-inline-field-amount"},
         ],
@@ -7712,7 +7710,6 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         "Add Transfer",
         5,
         [
-            {"name": "transfer_date", "type": "date"},
             {"name": "from_wallet", "placeholder": "От куда"},
             {"name": "to_wallet", "placeholder": "Куда"},
             {"name": "amount", "type": "number", "placeholder": "Сумма", "class_name": "finance-inline-field-amount"},
@@ -8446,6 +8443,10 @@ def _preserve_finance_redirect_filters(response, period_view="", period_label=""
     query = urlencode(params)
     response.headers["location"] = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, parsed.fragment))
     return response
+
+
+def _finance_today_iso():
+    return get_crm_local_date().strftime("%Y-%m-%d")
 
 
 def _patched_caps_page(
@@ -13090,6 +13091,7 @@ def save_finance_expense(
     period_view: str = Form(default="current"),
     period_label: str = Form(default=""),
 ):
+    expense_date = safe_text(expense_date) or _finance_today_iso()
     response = _domain_actions["save_finance_expense"](request, edit_id, expense_date, category, wallet_name, amount, from_wallet, paid_by, comment, date_from, date_to, year)
     return _preserve_finance_redirect_filters(response, period_view, period_label)
 
@@ -13110,6 +13112,7 @@ def save_finance_income(
     period_view: str = Form(default="current"),
     period_label: str = Form(default=""),
 ):
+    income_date = safe_text(income_date) or _finance_today_iso()
     response = _domain_actions["save_finance_income"](request, edit_id, income_date, category, wallet_name, amount, from_wallet, comment, date_from, date_to, year)
     return _preserve_finance_redirect_filters(response, period_view, period_label)
 
@@ -13130,6 +13133,7 @@ def save_finance_transfer(
     period_view: str = Form(default="current"),
     period_label: str = Form(default=""),
 ):
+    transfer_date = safe_text(transfer_date) or _finance_today_iso()
     response = _domain_actions["save_finance_transfer"](request, edit_id, transfer_date, category, amount, from_wallet, to_wallet, comment, date_from, date_to, year)
     return _preserve_finance_redirect_filters(response, period_view, period_label)
 
