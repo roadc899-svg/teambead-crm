@@ -1128,6 +1128,58 @@ def build_fb_source_name(buyer, period):
     return buyer_name
 
 
+def build_fb_upload_row_identity(row):
+    def pick(name):
+        if isinstance(row, dict):
+            return row.get(name)
+        return getattr(row, name, "")
+
+    return (
+        safe_text(pick("uploader")).strip().lower(),
+        safe_text(pick("period_label")).strip(),
+        safe_text(pick("date_start")).strip(),
+        safe_text(pick("date_end")).strip(),
+        normalize_id_value(pick("account_id")),
+        safe_text(pick("campaign_name")).strip().lower(),
+        safe_text(pick("adset_name")).strip().lower(),
+        safe_text(pick("ad_name")).strip().lower(),
+    )
+
+
+def replace_fb_upload_rows(rows_to_insert):
+    if not rows_to_insert:
+        return
+
+    deduplicated = {}
+    for item in rows_to_insert:
+        deduplicated[build_fb_upload_row_identity(item)] = item
+    rows_to_store = list(deduplicated.values())
+
+    buyer_name = safe_text(getattr(rows_to_store[0], "uploader", ""))
+    period_label = safe_text(getattr(rows_to_store[0], "period_label", ""))
+    identities_to_replace = set(deduplicated.keys())
+
+    db = SessionLocal()
+    try:
+        scope_query = db.query(FBRow).filter(FBRow.uploader == buyer_name)
+        if period_label:
+            scope_query = scope_query.filter(FBRow.period_label == period_label)
+        existing_rows = scope_query.all()
+        ids_to_delete = [
+            item.id
+            for item in existing_rows
+            if build_fb_upload_row_identity(item) in identities_to_replace
+        ]
+        if ids_to_delete:
+            db.query(FBRow).filter(FBRow.id.in_(ids_to_delete)).delete(synchronize_session=False)
+            db.commit()
+        for item in rows_to_store:
+            db.add(item)
+        db.commit()
+    finally:
+        db.close()
+
+
 def parse_uploaded_dataframe(df, buyer, source_name="", period_label="", period_date_start="", period_date_end=""):
     colmap = {str(c).strip().lower(): c for c in df.columns}
 
@@ -9582,15 +9634,7 @@ async def _patched_upload_file(
             )
             return RedirectResponse(url=redirect_url, status_code=303)
 
-        db = SessionLocal()
-        try:
-            db.query(FBRow).filter(FBRow.source_name == source_name).delete()
-            db.commit()
-            for item in rows_to_insert:
-                db.add(item)
-            db.commit()
-        finally:
-            db.close()
+        replace_fb_upload_rows(rows_to_insert)
 
         redirect_url = (
             f"/grouped?buyer={quote_plus(clean_buyer)}"
