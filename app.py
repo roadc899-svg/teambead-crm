@@ -8113,9 +8113,10 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         z-index:1;
         background:var(--table-head);
         color:var(--table-head-text);
-        padding:7px 10px;
+        padding:3px 8px;
         text-align:left;
-        font-size:11px;
+        font-size:10px;
+        line-height:1;
         text-transform:uppercase;
         letter-spacing:.05em;
     }}
@@ -8124,7 +8125,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         background:transparent;
     }}
     .finance-inline-add-trigger-row td {{
-        padding:10px !important;
+        padding:4px 6px !important;
         background:rgba(255,255,255,.02);
     }}
     .finance-inline-add {{
@@ -8133,8 +8134,8 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
     }}
     .finance-inline-add-summary {{
         list-style:none;
-        width:30px;
-        height:30px;
+        width:20px;
+        height:20px;
         display:inline-flex;
         align-items:center;
         justify-content:center;
@@ -8142,7 +8143,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         border:1px solid var(--border);
         background:rgba(255,255,255,.84);
         color:var(--text);
-        font-size:20px;
+        font-size:16px;
         font-weight:900;
         cursor:pointer;
     }}
@@ -8155,7 +8156,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
     .finance-inline-add-form {{
         display:grid;
         grid-template-columns:minmax(0, 1.08fr) minmax(0, 1.18fr) minmax(0, 1.18fr) minmax(88px, 0.72fr) minmax(0, 1.08fr) auto;
-        gap:8px;
+        gap:6px;
         align-items:end;
         width:100%;
     }}
@@ -8169,51 +8170,55 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
     .finance-inline-add-form input,
     .finance-inline-add-form select {{
         width:100%;
-        min-height:36px;
+        min-height:22px;
         min-width:0;
-        border-radius:10px;
+        border-radius:8px;
         border:1px solid var(--border);
         background:var(--panel-3);
         color:var(--text);
-        padding:8px 10px;
+        padding:3px 8px;
         font:inherit;
+        font-size:12px;
     }}
     .finance-inline-field-amount input {{
         padding-left:8px;
         padding-right:8px;
     }}
     .finance-inline-add-form .btn {{
-        min-height:36px;
-        min-width:72px;
-        padding:8px 14px;
+        min-height:22px;
+        min-width:52px;
+        padding:3px 10px;
         justify-self:start;
+        font-size:12px;
     }}
     .finance-row-edit-form {{
         display:flex;
         align-items:center;
-        gap:8px;
-        padding:4px 8px;
+        gap:6px;
+        padding:2px 6px;
     }}
     .finance-row-edit-form input[type="number"] {{
         width:100%;
-        min-width:88px;
-        min-height:32px;
-        border-radius:10px;
+        min-width:72px;
+        min-height:22px;
+        border-radius:8px;
         border:1px solid var(--border);
         background:var(--panel-3);
         color:var(--text);
-        padding:6px 10px;
+        padding:3px 8px;
         font:inherit;
+        font-size:12px;
     }}
     .finance-sheet-cell {{
-        padding:5px 10px;
-        min-height:26px;
-        line-height:1.15;
+        padding:2px 8px;
+        min-height:12px;
+        line-height:1;
+        font-size:12px;
         white-space:pre-wrap;
         word-break:break-word;
     }}
     .finance-sheet-empty {{
-        padding:18px 10px !important;
+        padding:8px 8px !important;
         text-align:center;
         color:var(--muted);
         background:rgba(255,255,255,.02);
