@@ -9074,7 +9074,8 @@ def _render_dashboard_page_v2(
         max-width:100%;
     }}
     .dashboard-v2 #dashboardUnifiedTable {{
-        min-width:2740px;
+        width:max-content;
+        min-width:max-content;
         table-layout:fixed;
         border-collapse:separate;
         border-spacing:0;
@@ -9568,12 +9569,6 @@ def _render_dashboard_page_v2(
     .dashboard-v2 table[data-dashboard-tree-table] tbody td {{
         overflow:visible;
         text-overflow:clip;
-    }}
-    .dashboard-v2 table[data-dashboard-tree-table] th[data-col="buyer"],
-    .dashboard-v2 table[data-dashboard-tree-table] td[data-col="buyer"] {{
-        width:auto !important;
-        min-width:0 !important;
-        max-width:none !important;
     }}
     @media (max-width: 1500px) {{
         .dashboard-v2 .dashboard-filter-grid {{
