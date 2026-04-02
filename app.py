@@ -9303,7 +9303,7 @@ def _render_dashboard_page_v2(
             <td data-col="ad_name"{ad_title_attr}>{escape(display_ad_name)}</td>
             <td data-col="buyer">{escape(row.get("buyer") or "—")}</td>
             <td class="dashboard-metric-cell" data-col="budget">{format_money(row.get("budget", 0))}</td>
-            <td class="dashboard-metric-cell" data-col="chatterfy">{format_int_or_float(row.get("chatterfy", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="chatterfy"></td>
             <td class="dashboard-metric-cell" data-col="chat_sub"></td>
             <td class="dashboard-metric-cell" data-col="chat_sub2con_rate"></td>
             <td class="dashboard-metric-cell" data-col="chat_con"></td>
@@ -9341,17 +9341,17 @@ def _render_dashboard_page_v2(
             <td class="dashboard-metric-cell" data-col="fb_cost_per_completed_registration">{format_money(row.get("fb_cost_per_completed_registration", 0))}</td>
             <td class="dashboard-metric-cell" data-col="fb_purchases">{format_int_or_float(row.get("fb_purchases", 0))}</td>
             <td class="dashboard-metric-cell" data-col="fb_cost_per_purchase">{format_money(row.get("fb_cost_per_purchase", 0))}</td>
-            <td class="dashboard-metric-cell" data-col="players_ftd">{format_int_or_float(row.get("players_ftd", 0))}</td>
-            <td class="dashboard-metric-cell" data-col="qual_ftd">{format_int_or_float(row.get("qual_ftd", 0))}</td>
-            <td class="dashboard-metric-cell" data-col="hold_count">{format_int_or_float(row.get("hold_count", 0))}</td>
-            <td class="dashboard-metric-cell" data-col="hold_split">{escape(row.get("hold_split") or "0B / 0W")}</td>
-            <td class="dashboard-metric-cell" data-col="cap_total">{format_int_or_float(row.get("cap_total", 0))}</td>
-            <td class="dashboard-metric-cell" data-col="cap_fill">{format_percent(row.get("cap_fill", 0))}</td>
-            <td class="dashboard-metric-cell" data-col="payout">{format_money(row.get("payout", 0))}</td>
-            <td class="dashboard-metric-cell" data-col="costs">{format_money(row.get("costs", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="players_ftd"></td>
+            <td class="dashboard-metric-cell" data-col="qual_ftd"></td>
+            <td class="dashboard-metric-cell" data-col="hold_count"></td>
+            <td class="dashboard-metric-cell" data-col="hold_split"></td>
+            <td class="dashboard-metric-cell" data-col="cap_total"></td>
+            <td class="dashboard-metric-cell" data-col="cap_fill"></td>
+            <td class="dashboard-metric-cell" data-col="payout"></td>
+            <td class="dashboard-metric-cell" data-col="costs"></td>
             <td class="dashboard-metric-cell" data-col="costs_ai"></td>
-            <td class="dashboard-metric-cell" data-col="profit">{format_money(row.get("profit", 0))}</td>
-            <td class="dashboard-metric-cell" data-col="roi">{format_percent(row.get("roi", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="profit"></td>
+            <td class="dashboard-metric-cell" data-col="roi"></td>
         </tr>
         """
 
