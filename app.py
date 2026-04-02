@@ -8130,7 +8130,6 @@ def chatterfy_game_tag_matches(tags, token):
 def make_dashboard_chatterfy_bucket():
     return {
         "users": set(),
-        "sub_users": set(),
         "con_users": set(),
         "ra_users": set(),
         "ftd_users": set(),
@@ -8162,8 +8161,6 @@ def merge_dashboard_chatterfy_row(bucket, row):
         return
     tags = split_chatterfy_tag_values(getattr(row, "tags", ""))
     bucket["users"].add(user_key)
-    if chatterfy_tag_matches(tags, "SUB"):
-        bucket["sub_users"].add(user_key)
     if chatterfy_tag_matches(tags, "CON"):
         bucket["con_users"].add(user_key)
     if chatterfy_tag_matches(tags, "RA"):
@@ -8195,7 +8192,7 @@ def merge_dashboard_chatterfy_row(bucket, row):
 
 
 def finalize_dashboard_chatterfy_bucket(bucket):
-    sub_count = float(len(bucket.get("sub_users", set())))
+    sub_count = float(len(bucket.get("users", set())))
     con_count = float(len(bucket.get("con_users", set())))
     ra_count = float(len(bucket.get("ra_users", set())))
     ftd_count = float(len(bucket.get("ftd_users", set())))
