@@ -7430,27 +7430,10 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
     if error_text:
         message_html += f'<div class="notice notice-danger">{escape(error_text)}</div>'
 
-    upload_panel = f"""
-    <details class="upload-menu upload-menu-right">
-        <summary class="ghost-btn small-btn">Upload Snapshot</summary>
-        <div class="upload-menu-list" style="width:min(360px, calc(100vw - 48px));">
-            <form method="post" action="/finance/upload" enctype="multipart/form-data" class="caps-form">
-                <input type="hidden" name="period_view" value="{escape(period_context["period_view"])}">
-                <input type="hidden" name="period_label" value="{escape(effective_period_label)}">
-                <label>Finance CSV
-                    <input type="file" name="file" accept=".csv" required>
-                </label>
-                <button type="submit" class="btn">Upload</button>
-            </form>
-        </div>
-    </details>
-    """
-
     create_panel = f"""
     <details class="upload-menu upload-menu-right" {'open' if form_data else ''}>
         <summary class="btn small-btn" style="min-width:124px;">
             <span>Manage</span>
-            <span class="toggle-indicator" style="width:18px; height:18px; min-width:18px;"></span>
         </summary>
         <div class="upload-menu-list" style="width:min(1120px, calc(100vw - 48px));">
             <div class="finance-grid" style="margin-top:14px;">
@@ -7623,11 +7606,29 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         gap:18px;
     }}
     .finance-excel-header {{
-        display:flex;
-        justify-content:space-between;
+        display:grid;
         gap:16px;
+        align-items:start;
+    }}
+    .finance-excel-header-main {{
+        display:grid;
+        gap:14px;
+    }}
+    .finance-period-toolbar {{
+        display:flex;
+        gap:12px;
         align-items:flex-end;
+        justify-content:space-between;
         flex-wrap:wrap;
+    }}
+    .finance-period-toolbar .panel.compact-panel.filters {{
+        margin:0;
+    }}
+    .finance-period-toolbar form {{
+        justify-content:flex-start !important;
+    }}
+    .finance-period-toolbar .toolbar-actions {{
+        margin-left:auto;
     }}
     .finance-sheet-board {{
         display:grid;
@@ -7723,8 +7724,11 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         .finance-sheet-board {{
             grid-template-columns:1fr;
         }}
-        .finance-excel-header {{
+        .finance-period-toolbar {{
             align-items:stretch;
+        }}
+        .finance-period-toolbar .toolbar-actions {{
+            margin-left:0;
         }}
     }}
     </style>
@@ -7733,37 +7737,27 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         {render_active_period_banner(effective_period_label if period_context["period_view"] != "all" else "")}
         <div class="panel compact-panel">
             <div class="finance-excel-header">
-                <div>
-                    <div class="panel-title">Finance</div>
-                    <div class="panel-subtitle">Верхний блок повторяет структуру листа «ФИНАНСЫ» из Excel: остаток, расход, приход, ожидаем и перемещение.</div>
-                </div>
-                <div class="toolbar-actions">
-                    <div class="panel compact-panel filters">
-                        <form method="get" action="/finance" style="justify-content:flex-end;" data-persist-filters="finance">
-                            <label>View<select name="period_view">{period_view_options}</select></label>
-                            <label>Period<select name="period_label">{period_options}</select></label>
-                            <button type="submit" class="btn small-btn">Filter</button>
-                            <a href="/finance" class="ghost-btn small-btn" data-reset-filters="finance">Reset</a>
-                        </form>
+                <div class="finance-excel-header-main">
+                    <div>
+                        <div class="panel-title">Finance</div>
                     </div>
-                    {upload_panel}
-                    {create_panel}
+                    <div class="finance-period-toolbar">
+                        <div class="panel compact-panel filters">
+                            <form method="get" action="/finance" style="justify-content:flex-start;" data-persist-filters="finance">
+                                <input type="hidden" name="period_view" value="period">
+                                <label>Period<select name="period_label">{period_options}</select></label>
+                                <button type="submit" class="btn small-btn">Filter</button>
+                                <a href="/finance" class="ghost-btn small-btn" data-reset-filters="finance">Reset</a>
+                            </form>
+                        </div>
+                        <div class="toolbar-actions">
+                            {create_panel}
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
         <div class="finance-sheet-board">{sheet_board}</div>
-        <div class="panel compact-panel finance-manual-stats">
-            <div class="stats-grid">
-                <div class="stat-card"><div class="name">Manual Wallets</div><div class="value">{len(manual_all['wallets'])}</div></div>
-                <div class="stat-card"><div class="name">Manual Expenses</div><div class="value">{format_money(sum(safe_number(x.amount) for x in manual['expenses']))}</div></div>
-                <div class="stat-card"><div class="name">Manual Income</div><div class="value">{format_money(sum(safe_number(x.amount) for x in manual['income']))}</div></div>
-                <div class="stat-card"><div class="name">Manual Transfers</div><div class="value">{format_money(sum(safe_number(x.amount) for x in manual['transfers']))}</div></div>
-                <div class="stat-card"><div class="name">Tracked Balances</div><div class="value">{len(balances['rows'])}</div></div>
-            </div>
-        </div>
-        {render_finance_table("Manual Service Wallets", "", '<th>Type</th><th>Wallet Name</th><th>Owner</th><th>Wallet</th><th>Opening Balance</th><th>Action</th>', service_wallet_rows, "1240px")}
-        {render_finance_table("Calculated Wallet Balances", "", '<th>Wallet</th><th>Current Balance</th>', balance_rows, "980px")}
-        {render_finance_table("Manual Operations", "", '<th>ID</th><th>Type</th><th>Date</th><th>Category</th><th>Wallet Name / To</th><th>From Wallet</th><th>Amount</th><th>Comment</th><th>Action</th>', operation_rows, "1560px")}
     </div>
     """
     return page_shell("Finance", content, active_page="finance", current_user=current_user)
