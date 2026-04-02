@@ -8081,9 +8081,22 @@ def normalize_chatterfy_tag_value(value):
     return re.sub(r"\s+", " ", safe_text(value)).strip().upper()
 
 
+def get_chatterfy_tag_aliases(token):
+    normalized = normalize_chatterfy_tag_value(token)
+    aliases = {
+        "SUB": {"SUB"},
+        "CON": {"CON"},
+        "RA": {"RA"},
+        "FTD": {"FTD"},
+        "WA": {"WA"},
+        "RD": {"RD"},
+    }
+    return aliases.get(normalized, {normalized})
+
+
 def chatterfy_tag_matches(tags, token):
-    target = normalize_chatterfy_tag_value(token)
-    return any(normalize_chatterfy_tag_value(item) == target for item in tags)
+    targets = get_chatterfy_tag_aliases(token)
+    return any(normalize_chatterfy_tag_value(item) in targets for item in tags)
 
 
 def chatterfy_game_tag_matches(tags, token):
@@ -8144,7 +8157,7 @@ def merge_dashboard_chatterfy_row(bucket, row):
         bucket["wa_users"].add(user_key)
     if chatterfy_tag_matches(tags, "RD"):
         bucket["rd_users"].add(user_key)
-    if safe_text(getattr(row, "status", "")).strip().lower() == "stopped":
+    if "stopped" in safe_text(getattr(row, "status", "")).strip().lower():
         bucket["stopped_users"].add(user_key)
 
     game_flags = {
