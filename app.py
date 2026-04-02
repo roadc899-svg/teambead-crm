@@ -6279,20 +6279,17 @@ def get_statistic_support_maps(period_label=""):
         return cached
     import_chatterfy_from_csv_if_needed()
     ensure_partner_table()
-    ensure_chatterfy_table()
     ensure_caps_table()
     db = SessionLocal()
     try:
         caps_query = db.query(CapRow)
         partner_query = db.query(PartnerRow)
-        chatterfy_query = db.query(ChatterfyRow)
         if period_label:
             caps_query = caps_query.filter(CapRow.period_label == period_label)
             partner_query = partner_query.filter(PartnerRow.period_label == period_label)
-            chatterfy_query = chatterfy_query.filter(ChatterfyRow.period_label == period_label)
         caps = caps_query.all()
         partner_rows = partner_query.all()
-        chatterfy_rows = chatterfy_query.all()
+        chatterfy_rows = load_dashboard_chatterfy_rows(db, period_label=period_label)
     finally:
         db.close()
 
@@ -6816,21 +6813,34 @@ def chatterfy_matches_filters(row, manager="", geo="", offer="", search=""):
     return True
 
 
+def load_dashboard_chatterfy_rows(db, period_label=""):
+    ensure_chatterfy_parser_table()
+    parser_query = db.query(ChatterfyParserRow)
+    if period_label:
+        parser_query = parser_query.filter(ChatterfyParserRow.period_label == period_label)
+    parser_rows = parser_query.all()
+    if parser_rows:
+        return parser_rows
+
+    ensure_chatterfy_table()
+    legacy_query = db.query(ChatterfyRow)
+    if period_label:
+        legacy_query = legacy_query.filter(ChatterfyRow.period_label == period_label)
+    return legacy_query.all()
+
+
 def build_dashboard_overview(user, rows, buyer="", manager="", geo="", offer="", search="", period_label=""):
     ensure_partner_table()
     ensure_cabinet_table()
-    ensure_chatterfy_table()
     ensure_caps_table()
     db = SessionLocal()
     try:
         partner_query = db.query(PartnerRow)
-        chatterfy_query = db.query(ChatterfyRow)
         caps_query = db.query(CapRow)
         cabinets_query = db.query(CabinetRow)
 
         if period_label:
             partner_query = partner_query.filter(PartnerRow.period_label == period_label)
-            chatterfy_query = chatterfy_query.filter(ChatterfyRow.period_label == period_label)
         if period_label:
             caps_query = caps_query.filter(CapRow.period_label == period_label)
         if buyer:
@@ -6841,7 +6851,10 @@ def build_dashboard_overview(user, rows, buyer="", manager="", geo="", offer="",
             caps_query = caps_query.filter(CapRow.geo == normalize_geo_value(geo))
 
         partner_rows = [row for row in partner_query.all() if partner_matches_filters(row, geo=geo, search=search)]
-        chatterfy_rows = [row for row in chatterfy_query.all() if chatterfy_matches_filters(row, manager=manager, geo=geo, offer=offer, search=search)]
+        chatterfy_rows = [
+            row for row in load_dashboard_chatterfy_rows(db, period_label=period_label)
+            if chatterfy_matches_filters(row, manager=manager, geo=geo, offer=offer, search=search)
+        ]
         caps_rows = caps_query.order_by(CapRow.id.desc()).all()
         cabinets_rows = [row for row in cabinets_query.all() if cabinet_matches_filters(row, manager=manager, geo=geo, search=search)]
     finally:
@@ -8216,13 +8229,9 @@ def finalize_dashboard_chatterfy_bucket(bucket):
 
 
 def build_dashboard_chatterfy_scope_maps(period_label=""):
-    ensure_chatterfy_parser_table()
     db = SessionLocal()
     try:
-        query = db.query(ChatterfyParserRow)
-        if period_label:
-            query = query.filter(ChatterfyParserRow.period_label == period_label)
-        rows = query.all()
+        rows = load_dashboard_chatterfy_rows(db, period_label=period_label)
     finally:
         db.close()
 
@@ -8965,7 +8974,7 @@ def _render_dashboard_page_v2(
     def render_dashboard_metric_cells(values):
         return "".join([
             f'<td class="dashboard-metric-cell" data-col="budget">{format_money(values.get("budget", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="chatterfy"></td>',
+            f'<td class="dashboard-metric-cell" data-col="chatterfy">{format_int_or_float(values.get("chatterfy", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="chat_sub">{format_int_or_float(values.get("chat_sub", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="chat_sub2con_rate">{format_percent(values.get("chat_sub2con_rate", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="chat_con">{format_int_or_float(values.get("chat_con", 0))}</td>',
@@ -9247,7 +9256,7 @@ def _render_dashboard_page_v2(
             <td data-col="ad_name"{ad_title_attr}>{escape(display_ad_name)}</td>
             <td data-col="buyer">{escape(row.get("buyer") or "—")}</td>
             <td class="dashboard-metric-cell" data-col="budget">{format_money(row.get("budget", 0))}</td>
-            <td class="dashboard-metric-cell" data-col="chatterfy"></td>
+            <td class="dashboard-metric-cell" data-col="chatterfy">{format_int_or_float(row.get("chatterfy", 0))}</td>
             <td class="dashboard-metric-cell" data-col="chat_sub"></td>
             <td class="dashboard-metric-cell" data-col="chat_sub2con_rate"></td>
             <td class="dashboard-metric-cell" data-col="chat_con"></td>
