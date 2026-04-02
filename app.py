@@ -7386,7 +7386,24 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         for item in snapshot.get("transfers", [])
     ]
 
-    sheet_board = "".join([
+    sheet_board_top = "".join([
+        _render_finance_sheet_section(
+            "ОЖИДАЕМ",
+            snapshot.get("totals", {}).get("pending", 0),
+            ["Дата", "Категория", "Описание", "Сумма", "Кошель", "Сверка", "Комментарий"],
+            pending_rows,
+            tone="yellow",
+        ),
+        _render_finance_sheet_section(
+            "ТЕКУЩИЙ ОСТАТОК",
+            balances["total"],
+            ["Категория", "Описание", "Владелец", "Кошелек", "Сумма"],
+            wallet_rows,
+            tone="orange",
+        ),
+    ])
+
+    sheet_board_bottom = "".join([
         _render_finance_sheet_section(
             "РАСХОД",
             snapshot.get("totals", {}).get("expenses", 0),
@@ -7402,25 +7419,11 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
             tone="green",
         ),
         _render_finance_sheet_section(
-            "ОЖИДАЕМ",
-            snapshot.get("totals", {}).get("pending", 0),
-            ["Дата", "Категория", "Описание", "Сумма", "Кошель", "Сверка", "Комментарий"],
-            pending_rows,
-            tone="yellow",
-        ),
-        _render_finance_sheet_section(
             "ПЕРЕМЕЩЕНИЕ",
             snapshot.get("totals", {}).get("transfers", 0),
             ["Дата", "Сумма", "От куда", "Куда", "Комментарий"],
             transfer_rows,
             tone="blue",
-        ),
-        _render_finance_sheet_section(
-            "ТЕКУЩИЙ ОСТАТОК",
-            balances["total"],
-            ["Категория", "Описание", "Владелец", "Кошелек", "Сумма"],
-            wallet_rows,
-            tone="orange",
         ),
     ])
 
@@ -7637,6 +7640,12 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         gap:12px;
         align-items:start;
     }}
+    .finance-sheet-board-top {{
+        grid-template-columns:repeat(2, minmax(320px, 1fr));
+    }}
+    .finance-sheet-board-bottom {{
+        grid-template-columns:repeat(3, minmax(280px, 1fr));
+    }}
     .finance-sheet-section {{
         border:1px solid var(--border);
         border-radius:18px;
@@ -7720,9 +7729,16 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         .finance-sheet-board {{
             grid-template-columns:repeat(2, minmax(280px, 1fr));
         }}
+        .finance-sheet-board-bottom {{
+            grid-template-columns:repeat(2, minmax(280px, 1fr));
+        }}
     }}
     @media (max-width: 900px) {{
         .finance-sheet-board {{
+            grid-template-columns:1fr;
+        }}
+        .finance-sheet-board-top,
+        .finance-sheet-board-bottom {{
             grid-template-columns:1fr;
         }}
         .finance-period-toolbar {{
@@ -7752,7 +7768,8 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
                 </div>
             </div>
         </div>
-        <div class="finance-sheet-board">{sheet_board}</div>
+        <div class="finance-sheet-board finance-sheet-board-top">{sheet_board_top}</div>
+        <div class="finance-sheet-board finance-sheet-board-bottom">{sheet_board_bottom}</div>
     </div>
     """
     return page_shell("Finance", content, active_page="finance", current_user=current_user)
