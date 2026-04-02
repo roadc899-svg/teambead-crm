@@ -9883,6 +9883,15 @@ def _render_dashboard_page_v2(
                 profit: 44,
                 roi: 44,
             }};
+            const maxWidths = {{
+                platform: 96,
+                geo: 68,
+                manager: 170,
+                campaign_name: 190,
+                adset_name: 170,
+                ad_name: 190,
+                buyer: 110,
+            }};
             const ensureMeasureProbe = () => {{
                 let probe = document.getElementById('dashboardWidthMeasureProbe');
                 if (probe) return probe;
@@ -9994,7 +10003,10 @@ def _render_dashboard_page_v2(
                         const contentWidth = measureCellContentWidth(cell);
                         width = Math.max(width, Math.ceil(contentWidth + paddingLeft + paddingRight + borderLeft + borderRight + 10));
                     }});
-                    return Math.max(minWidths[col] || 44, width);
+                    const minWidth = minWidths[col] || 44;
+                    const maxWidth = maxWidths[col] || 0;
+                    const measuredWidth = Math.max(minWidth, width);
+                    return maxWidth > 0 ? Math.min(maxWidth, measuredWidth) : measuredWidth;
                 }};
                 const widths = {{}};
                 autoCols.forEach((col) => {{
