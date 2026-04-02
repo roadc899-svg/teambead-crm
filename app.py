@@ -8069,6 +8069,195 @@ def build_dashboard_hold_scope_map(period_label=""):
     return result
 
 
+def split_chatterfy_tag_values(value):
+    return [
+        safe_text(item).strip()
+        for item in re.split(r"[,;\n]+", safe_text(value))
+        if safe_text(item).strip()
+    ]
+
+
+def normalize_chatterfy_tag_value(value):
+    return re.sub(r"\s+", " ", safe_text(value)).strip().upper()
+
+
+def chatterfy_tag_matches(tags, token):
+    target = normalize_chatterfy_tag_value(token)
+    return any(normalize_chatterfy_tag_value(item) == target for item in tags)
+
+
+def chatterfy_game_tag_matches(tags, token):
+    target = normalize_chatterfy_tag_value(token)
+    for item in tags:
+        normalized = normalize_chatterfy_tag_value(item)
+        if normalized == target:
+            return True
+        if normalized.endswith("/" + target) or normalized.startswith(target + "/"):
+            return True
+    return False
+
+
+def make_dashboard_chatterfy_bucket():
+    return {
+        "users": set(),
+        "sub_users": set(),
+        "con_users": set(),
+        "ra_users": set(),
+        "ftd_users": set(),
+        "wa_users": set(),
+        "rd_users": set(),
+        "stopped_users": set(),
+        "aviator_users": set(),
+        "chicken_users": set(),
+        "rabbit_users": set(),
+        "balloonix_users": set(),
+        "penalty_users": set(),
+        "open_games_users": set(),
+        "open_games_total": 0.0,
+    }
+
+
+def merge_dashboard_chatterfy_row(bucket, row):
+    if bucket is None or row is None:
+        return
+    user_key = (
+        safe_text(getattr(row, "external_id", ""))
+        or safe_text(getattr(row, "telegram_id", ""))
+        or safe_text(getattr(row, "chat_link", ""))
+        or safe_text(getattr(row, "username", ""))
+        or safe_text(getattr(row, "name", ""))
+        or safe_text(getattr(row, "id", ""))
+    )
+    if not user_key:
+        return
+    tags = split_chatterfy_tag_values(getattr(row, "tags", ""))
+    bucket["users"].add(user_key)
+    if chatterfy_tag_matches(tags, "SUB"):
+        bucket["sub_users"].add(user_key)
+    if chatterfy_tag_matches(tags, "CON"):
+        bucket["con_users"].add(user_key)
+    if chatterfy_tag_matches(tags, "RA"):
+        bucket["ra_users"].add(user_key)
+    if chatterfy_tag_matches(tags, "FTD"):
+        bucket["ftd_users"].add(user_key)
+    if chatterfy_tag_matches(tags, "WA"):
+        bucket["wa_users"].add(user_key)
+    if chatterfy_tag_matches(tags, "RD"):
+        bucket["rd_users"].add(user_key)
+    if safe_text(getattr(row, "status", "")).strip().lower() == "stopped":
+        bucket["stopped_users"].add(user_key)
+
+    game_flags = {
+        "aviator_users": chatterfy_game_tag_matches(tags, "Aviator"),
+        "chicken_users": chatterfy_game_tag_matches(tags, "Chicken"),
+        "rabbit_users": chatterfy_game_tag_matches(tags, "Rabbit"),
+        "balloonix_users": chatterfy_game_tag_matches(tags, "BallooniX"),
+        "penalty_users": chatterfy_game_tag_matches(tags, "Penalty"),
+    }
+    opened_games = 0
+    for field_name, enabled in game_flags.items():
+        if enabled:
+            bucket[field_name].add(user_key)
+            opened_games += 1
+    if opened_games > 0:
+        bucket["open_games_users"].add(user_key)
+        bucket["open_games_total"] += opened_games
+
+
+def finalize_dashboard_chatterfy_bucket(bucket):
+    sub_count = float(len(bucket.get("sub_users", set())))
+    con_count = float(len(bucket.get("con_users", set())))
+    ra_count = float(len(bucket.get("ra_users", set())))
+    ftd_count = float(len(bucket.get("ftd_users", set())))
+    wa_count = float(len(bucket.get("wa_users", set())))
+    rd_count = float(len(bucket.get("rd_users", set())))
+    users_count = float(len(bucket.get("users", set())))
+    open_games_users = float(len(bucket.get("open_games_users", set())))
+    uniq_rd_rate = (rd_count / ftd_count) * 100 if ftd_count > 0 else 0.0
+    return {
+        "chat_sub": sub_count,
+        "chat_sub2con_rate": (con_count / sub_count) * 100 if sub_count > 0 else 0.0,
+        "chat_con": con_count,
+        "chat_con2ra_rate": (ra_count / con_count) * 100 if con_count > 0 else 0.0,
+        "chat_ra": ra_count,
+        "chat_ra2ftd_rate": (ftd_count / ra_count) * 100 if ra_count > 0 else 0.0,
+        "chat_ftd": ftd_count,
+        "chat_sub2ftd_rate": (ftd_count / sub_count) * 100 if sub_count > 0 else 0.0,
+        "chat_wa": wa_count,
+        "chat_rd": rd_count,
+        "chat_unique_rd_rate": uniq_rd_rate,
+        "chat_stopped": float(len(bucket.get("stopped_users", set()))),
+        "chat_redep_rate": uniq_rd_rate,
+        "chat_aviator": float(len(bucket.get("aviator_users", set()))),
+        "chat_chicken": float(len(bucket.get("chicken_users", set()))),
+        "chat_rabbit": float(len(bucket.get("rabbit_users", set()))),
+        "chat_balloonix": float(len(bucket.get("balloonix_users", set()))),
+        "chat_penalty": float(len(bucket.get("penalty_users", set()))),
+        "chat_open_games": safe_number(bucket.get("open_games_total", 0)),
+        "chat_open_games_rate": (open_games_users / users_count) * 100 if users_count > 0 else 0.0,
+    }
+
+
+def build_dashboard_chatterfy_scope_maps(period_label=""):
+    ensure_chatterfy_parser_table()
+    db = SessionLocal()
+    try:
+        query = db.query(ChatterfyParserRow)
+        if period_label:
+            query = query.filter(ChatterfyParserRow.period_label == period_label)
+        rows = query.all()
+    finally:
+        db.close()
+
+    maps = {
+        "platform": {},
+        "geo": {},
+        "manager": {},
+        "campaign_name": {},
+        "adset_name": {},
+    }
+    for row in rows:
+        platform_key = normalize_dashboard_platform(getattr(row, "platform", ""))
+        manager_key = safe_text(getattr(row, "manager", ""))
+        geo_key = normalize_geo_value(getattr(row, "geo", ""))
+        launch_date = safe_text(getattr(row, "launch_date", ""))
+        offer_key = safe_text(getattr(row, "offer", ""))
+
+        if platform_key:
+            merge_dashboard_chatterfy_row(
+                maps["platform"].setdefault(platform_key, make_dashboard_chatterfy_bucket()),
+                row,
+            )
+        if platform_key and geo_key:
+            merge_dashboard_chatterfy_row(
+                maps["geo"].setdefault((platform_key, geo_key), make_dashboard_chatterfy_bucket()),
+                row,
+            )
+        if platform_key and geo_key and manager_key:
+            merge_dashboard_chatterfy_row(
+                maps["manager"].setdefault((platform_key, geo_key, manager_key), make_dashboard_chatterfy_bucket()),
+                row,
+            )
+        if platform_key and geo_key and manager_key and launch_date:
+            merge_dashboard_chatterfy_row(
+                maps["campaign_name"].setdefault((platform_key, geo_key, manager_key, launch_date), make_dashboard_chatterfy_bucket()),
+                row,
+            )
+        if platform_key and geo_key and manager_key and launch_date and offer_key:
+            merge_dashboard_chatterfy_row(
+                maps["adset_name"].setdefault((platform_key, geo_key, manager_key, launch_date, offer_key), make_dashboard_chatterfy_bucket()),
+                row,
+            )
+
+    finalized = {}
+    for field_name, field_map in maps.items():
+        finalized[field_name] = {
+            key: finalize_dashboard_chatterfy_bucket(bucket)
+            for key, bucket in field_map.items()
+        }
+    return finalized
+
+
 def build_dashboard_rows_v2(user, buyer="", period_label=""):
     buyer_scope = resolve_effective_buyer(user, buyer)
     fb_rows = aggregate_grouped_rows(get_filtered_data(buyer=buyer_scope, period_label=period_label))
@@ -8080,7 +8269,6 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
     caps_scope_map = build_dashboard_caps_scope_map(period_label=period_label)
     hold_flow_map = build_dashboard_hold_flow_map(period_label=period_label)
     hold_scope_map = build_dashboard_hold_scope_map(period_label=period_label)
-
     rows = []
 
     for item in fb_rows:
@@ -8502,6 +8690,7 @@ def _render_dashboard_page_v2(
         sort_by = "payout"
 
     base_rows = build_dashboard_rows_v2(user, buyer=buyer, period_label=effective_period_label)
+    dashboard_chatterfy_scope_maps = build_dashboard_chatterfy_scope_maps(period_label=effective_period_label)
     buyer_values = [value for value, _label in get_fb_buyer_name_options()] or sorted({safe_text(row.get("buyer")) for row in base_rows if safe_text(row.get("buyer"))})
     platform_values = sorted({safe_text(row.get("platform")) for row in base_rows if safe_text(row.get("platform"))})
     manager_values = sorted({safe_text(row.get("manager")) for row in base_rows if safe_text(row.get("manager"))})
@@ -8603,7 +8792,58 @@ def _render_dashboard_page_v2(
         ("adset_name", "adset_name"),
     ]
 
-    def aggregate_dashboard_metrics(items):
+    dashboard_chatterfy_fields = [
+        "chat_sub",
+        "chat_sub2con_rate",
+        "chat_con",
+        "chat_con2ra_rate",
+        "chat_ra",
+        "chat_ra2ftd_rate",
+        "chat_ftd",
+        "chat_sub2ftd_rate",
+        "chat_wa",
+        "chat_rd",
+        "chat_unique_rd_rate",
+        "chat_stopped",
+        "chat_redep_rate",
+        "chat_aviator",
+        "chat_chicken",
+        "chat_rabbit",
+        "chat_balloonix",
+        "chat_penalty",
+        "chat_open_games",
+        "chat_open_games_rate",
+    ]
+
+    def get_dashboard_chatterfy_metrics(field, items):
+        base = {name: 0.0 for name in dashboard_chatterfy_fields}
+        if field not in {"platform", "geo", "manager", "campaign_name", "adset_name"}:
+            return base
+        sample = (items or [None])[0] or {}
+        platform_key = normalize_dashboard_platform(sample.get("platform"))
+        geo_key = normalize_geo_value(sample.get("geo"))
+        manager_key = safe_text(sample.get("manager"))
+        launch_date = safe_text(sample.get("launch_date"))
+        offer_key = safe_text(sample.get("offer"))
+        lookup_key = None
+        if field == "platform" and platform_key:
+            lookup_key = platform_key
+        elif field == "geo" and platform_key and geo_key:
+            lookup_key = (platform_key, geo_key)
+        elif field == "manager" and platform_key and geo_key and manager_key:
+            lookup_key = (platform_key, geo_key, manager_key)
+        elif field == "campaign_name" and platform_key and geo_key and manager_key and launch_date:
+            lookup_key = (platform_key, geo_key, manager_key, launch_date)
+        elif field == "adset_name" and platform_key and geo_key and manager_key and launch_date and offer_key:
+            lookup_key = (platform_key, geo_key, manager_key, launch_date, offer_key)
+        if not lookup_key:
+            return base
+        return {
+            **base,
+            **dashboard_chatterfy_scope_maps.get(field, {}).get(lookup_key, {}),
+        }
+
+    def aggregate_dashboard_metrics(items, field=""):
         totals = {field: 0.0 for field in dashboard_numeric_fields}
         fb_average_fields = {"fb_frequency", "fb_ctr"}
         fb_derived_cost_fields = {
@@ -8654,6 +8894,7 @@ def _render_dashboard_page_v2(
             totals["spend"] / totals["fb_purchases"] if totals["fb_purchases"] > 0 else 0.0
         )
         totals["cap_fill"] = cap_fill_percent(totals["cap_current_ftd"], totals["cap_total"])
+        totals.update(get_dashboard_chatterfy_metrics(field, items))
         return totals
 
     def hierarchy_bucket_sort_key(bucket_name, bucket_rows):
@@ -8691,7 +8932,7 @@ def _render_dashboard_page_v2(
                 "column": field,
                 "label": bucket_name,
                 "rows": bucket_rows,
-                "metrics": aggregate_dashboard_metrics(bucket_rows),
+                "metrics": aggregate_dashboard_metrics(bucket_rows, field=field),
                 "children": build_dashboard_tree(bucket_rows, levels[1:], node_path),
             })
         return result
@@ -8699,6 +8940,27 @@ def _render_dashboard_page_v2(
     def render_dashboard_metric_cells(values):
         return "".join([
             f'<td class="dashboard-metric-cell" data-col="budget">{format_money(values.get("budget", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chatterfy"></td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_sub">{format_int_or_float(values.get("chat_sub", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_sub2con_rate">{format_percent(values.get("chat_sub2con_rate", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_con">{format_int_or_float(values.get("chat_con", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_con2ra_rate">{format_percent(values.get("chat_con2ra_rate", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_ra">{format_int_or_float(values.get("chat_ra", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_ra2ftd_rate">{format_percent(values.get("chat_ra2ftd_rate", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_ftd">{format_int_or_float(values.get("chat_ftd", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_sub2ftd_rate">{format_percent(values.get("chat_sub2ftd_rate", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_wa">{format_int_or_float(values.get("chat_wa", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_rd">{format_int_or_float(values.get("chat_rd", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_unique_rd_rate">{format_percent(values.get("chat_unique_rd_rate", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_stopped">{format_int_or_float(values.get("chat_stopped", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_redep_rate">{format_percent(values.get("chat_redep_rate", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_aviator">{format_int_or_float(values.get("chat_aviator", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_chicken">{format_int_or_float(values.get("chat_chicken", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_rabbit">{format_int_or_float(values.get("chat_rabbit", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_balloonix">{format_int_or_float(values.get("chat_balloonix", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_penalty">{format_int_or_float(values.get("chat_penalty", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_open_games">{format_int_or_float(values.get("chat_open_games", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_open_games_rate">{format_percent(values.get("chat_open_games_rate", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="spend">{format_money(values.get("spend", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="fb_material_views">{format_int_or_float(values.get("fb_material_views", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="fb_cost_per_content_view">{format_money(values.get("fb_cost_per_content_view", 0))}</td>',
@@ -8758,6 +9020,27 @@ def _render_dashboard_page_v2(
         ("ad_name", "Ad"),
         ("buyer", "Buyer"),
         ("budget", "Budget"),
+        ("chatterfy", "Chatterfy"),
+        ("chat_sub", "SUB"),
+        ("chat_sub2con_rate", "SUB2C, %"),
+        ("chat_con", "CON"),
+        ("chat_con2ra_rate", "C2RA, %"),
+        ("chat_ra", "RA"),
+        ("chat_ra2ftd_rate", "RA2FTD, %"),
+        ("chat_ftd", "FTD"),
+        ("chat_sub2ftd_rate", "SUB2FTD, %"),
+        ("chat_wa", "WA"),
+        ("chat_rd", "RD"),
+        ("chat_unique_rd_rate", "Uniq RD, %"),
+        ("chat_stopped", "Stopped"),
+        ("chat_redep_rate", "%, Redep"),
+        ("chat_aviator", "Aviator"),
+        ("chat_chicken", "Chicken"),
+        ("chat_rabbit", "Rabbit"),
+        ("chat_balloonix", "BallooniX"),
+        ("chat_penalty", "Penalty"),
+        ("chat_open_games", "Open games"),
+        ("chat_open_games_rate", "%, Open games"),
         ("spend", "Spend"),
         ("fb_material_views", "Views"),
         ("fb_cost_per_content_view", "$, VIEW"),
@@ -8806,6 +9089,28 @@ def _render_dashboard_page_v2(
         "fb_purchases",
         "fb_cost_per_purchase",
     ]
+    chatterfy_detail_columns = [
+        "chat_sub",
+        "chat_sub2con_rate",
+        "chat_con",
+        "chat_con2ra_rate",
+        "chat_ra",
+        "chat_ra2ftd_rate",
+        "chat_ftd",
+        "chat_sub2ftd_rate",
+        "chat_wa",
+        "chat_rd",
+        "chat_unique_rd_rate",
+        "chat_stopped",
+        "chat_redep_rate",
+        "chat_aviator",
+        "chat_chicken",
+        "chat_rabbit",
+        "chat_balloonix",
+        "chat_penalty",
+        "chat_open_games",
+        "chat_open_games_rate",
+    ]
     fb_collapsed_selectors = ",\n    ".join(
         [
             selector
@@ -8813,6 +9118,16 @@ def _render_dashboard_page_v2(
             for selector in [
                 f'.dashboard-v2 #dashboardUnifiedTable.dashboard-fb-metrics-collapsed th[data-col="{field}"]',
                 f'.dashboard-v2 #dashboardUnifiedTable.dashboard-fb-metrics-collapsed td[data-col="{field}"]',
+            ]
+        ]
+    )
+    chatterfy_collapsed_selectors = ",\n    ".join(
+        [
+            selector
+            for field in chatterfy_detail_columns
+            for selector in [
+                f'.dashboard-v2 #dashboardUnifiedTable.dashboard-chatterfy-metrics-collapsed th[data-col="{field}"]',
+                f'.dashboard-v2 #dashboardUnifiedTable.dashboard-chatterfy-metrics-collapsed td[data-col="{field}"]',
             ]
         ]
     )
@@ -8837,6 +9152,28 @@ def _render_dashboard_page_v2(
                 'var stateKey=window.teambeadStorageKey?window.teambeadStorageKey(\'dashboard-ui-state\'):\'dashboard-ui-state\';'
                 'var state=JSON.parse(localStorage.getItem(stateKey)||\'{}\');'
                 'state.fbMetricsCollapsed=collapsed;'
+                'localStorage.setItem(stateKey, JSON.stringify(state));'
+                '}catch(_error){}'
+                'return false;'
+                '})(this); return false;">−</button>'
+            )
+        if field == "chatterfy":
+            extra_html = (
+                '<button type="button" class="dashboard-fb-toggle" id="dashboardChatterfyMetricsToggle" '
+                'aria-expanded="true" title="Toggle Chatterfy metrics" '
+                'onclick="if (window.dashboardToggleChatterfyMetrics) return window.dashboardToggleChatterfyMetrics(this); '
+                '(function(btn){'
+                'var table=document.getElementById(\'dashboardUnifiedTable\');'
+                'if(!table) return false;'
+                'var collapsed=!table.classList.contains(\'dashboard-chatterfy-metrics-collapsed\');'
+                'table.classList.toggle(\'dashboard-chatterfy-metrics-collapsed\', collapsed);'
+                'btn.textContent=collapsed?\'+\':\'−\';'
+                'btn.setAttribute(\'aria-expanded\', collapsed?\'false\':\'true\');'
+                'btn.setAttribute(\'title\', collapsed?\'Expand Chatterfy metrics\':\'Collapse Chatterfy metrics\');'
+                'try{'
+                'var stateKey=window.teambeadStorageKey?window.teambeadStorageKey(\'dashboard-ui-state\'):\'dashboard-ui-state\';'
+                'var state=JSON.parse(localStorage.getItem(stateKey)||\'{}\');'
+                'state.chatterfyMetricsCollapsed=collapsed;'
                 'localStorage.setItem(stateKey, JSON.stringify(state));'
                 '}catch(_error){}'
                 'return false;'
@@ -8885,6 +9222,27 @@ def _render_dashboard_page_v2(
             <td data-col="ad_name"{ad_title_attr}>{escape(display_ad_name)}</td>
             <td data-col="buyer">{escape(row.get("buyer") or "—")}</td>
             <td class="dashboard-metric-cell" data-col="budget">{format_money(row.get("budget", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="chatterfy"></td>
+            <td class="dashboard-metric-cell" data-col="chat_sub"></td>
+            <td class="dashboard-metric-cell" data-col="chat_sub2con_rate"></td>
+            <td class="dashboard-metric-cell" data-col="chat_con"></td>
+            <td class="dashboard-metric-cell" data-col="chat_con2ra_rate"></td>
+            <td class="dashboard-metric-cell" data-col="chat_ra"></td>
+            <td class="dashboard-metric-cell" data-col="chat_ra2ftd_rate"></td>
+            <td class="dashboard-metric-cell" data-col="chat_ftd"></td>
+            <td class="dashboard-metric-cell" data-col="chat_sub2ftd_rate"></td>
+            <td class="dashboard-metric-cell" data-col="chat_wa"></td>
+            <td class="dashboard-metric-cell" data-col="chat_rd"></td>
+            <td class="dashboard-metric-cell" data-col="chat_unique_rd_rate"></td>
+            <td class="dashboard-metric-cell" data-col="chat_stopped"></td>
+            <td class="dashboard-metric-cell" data-col="chat_redep_rate"></td>
+            <td class="dashboard-metric-cell" data-col="chat_aviator"></td>
+            <td class="dashboard-metric-cell" data-col="chat_chicken"></td>
+            <td class="dashboard-metric-cell" data-col="chat_rabbit"></td>
+            <td class="dashboard-metric-cell" data-col="chat_balloonix"></td>
+            <td class="dashboard-metric-cell" data-col="chat_penalty"></td>
+            <td class="dashboard-metric-cell" data-col="chat_open_games"></td>
+            <td class="dashboard-metric-cell" data-col="chat_open_games_rate"></td>
             <td class="dashboard-metric-cell" data-col="spend">{format_money(row.get("spend", 0))}</td>
             <td class="dashboard-metric-cell" data-col="fb_material_views">{format_int_or_float(row.get("fb_material_views", 0))}</td>
             <td class="dashboard-metric-cell" data-col="fb_cost_per_content_view">{format_money(row.get("fb_cost_per_content_view", 0))}</td>
@@ -9260,7 +9618,8 @@ def _render_dashboard_page_v2(
         background:#f2f7ff;
         border-color:rgba(59, 86, 138, 0.45);
     }}
-    {fb_collapsed_selectors} {{
+    {fb_collapsed_selectors},
+    {chatterfy_collapsed_selectors} {{
         display:none !important;
         visibility:collapse !important;
         width:0 !important;
@@ -9464,6 +9823,50 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable td[data-col="budget"] {{
         background:#eef9ef;
     }}
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="chatterfy"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="chatterfy"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="chat_sub"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="chat_sub"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="chat_sub2con_rate"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="chat_sub2con_rate"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="chat_con"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="chat_con"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="chat_con2ra_rate"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="chat_con2ra_rate"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="chat_ra"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="chat_ra"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="chat_ra2ftd_rate"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="chat_ra2ftd_rate"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="chat_ftd"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="chat_ftd"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="chat_sub2ftd_rate"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="chat_sub2ftd_rate"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="chat_wa"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="chat_wa"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="chat_rd"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="chat_rd"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="chat_unique_rd_rate"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="chat_unique_rd_rate"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="chat_stopped"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="chat_stopped"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="chat_redep_rate"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="chat_redep_rate"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="chat_aviator"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="chat_aviator"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="chat_chicken"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="chat_chicken"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="chat_rabbit"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="chat_rabbit"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="chat_balloonix"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="chat_balloonix"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="chat_penalty"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="chat_penalty"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="chat_open_games"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="chat_open_games"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="chat_open_games_rate"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="chat_open_games_rate"] {{
+        background:#ffd6a4;
+    }}
     .dashboard-v2 #dashboardUnifiedTable th[data-col="spend"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="spend"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_material_views"],
@@ -9516,8 +9919,6 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable td[data-col="cost_reg"] {{
         background:#fff4e8;
     }}
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="chatterfy"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="chatterfy"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="players_ftd"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="players_ftd"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="qual_ftd"],
@@ -9837,7 +10238,11 @@ def _render_dashboard_page_v2(
             if (!table) return;
             const autoCols = [
                 'platform', 'geo', 'manager', 'campaign_name', 'adset_name', 'ad_name',
-                'buyer', 'budget', 'spend', 'fb_material_views', 'fb_cost_per_content_view',
+                'buyer', 'budget', 'chatterfy', 'chat_sub', 'chat_sub2con_rate', 'chat_con',
+                'chat_con2ra_rate', 'chat_ra', 'chat_ra2ftd_rate', 'chat_ftd', 'chat_sub2ftd_rate',
+                'chat_wa', 'chat_rd', 'chat_unique_rd_rate', 'chat_stopped', 'chat_redep_rate',
+                'chat_aviator', 'chat_chicken', 'chat_rabbit', 'chat_balloonix', 'chat_penalty',
+                'chat_open_games', 'chat_open_games_rate', 'spend', 'fb_material_views', 'fb_cost_per_content_view',
                 'fb_link_clicks', 'fb_cpc', 'fb_frequency', 'fb_ctr', 'fb_leads',
                 'fb_cost_per_lead', 'fb_paid_subscriptions', 'fb_cost_per_paid_subscription',
                 'fb_contacts', 'fb_cost_per_contact', 'fb_completed_registrations',
@@ -9854,6 +10259,27 @@ def _render_dashboard_page_v2(
                 ad_name: 54,
                 buyer: 44,
                 budget: 44,
+                chatterfy: 44,
+                chat_sub: 44,
+                chat_sub2con_rate: 44,
+                chat_con: 44,
+                chat_con2ra_rate: 44,
+                chat_ra: 44,
+                chat_ra2ftd_rate: 44,
+                chat_ftd: 44,
+                chat_sub2ftd_rate: 44,
+                chat_wa: 44,
+                chat_rd: 44,
+                chat_unique_rd_rate: 44,
+                chat_stopped: 44,
+                chat_redep_rate: 44,
+                chat_aviator: 44,
+                chat_chicken: 44,
+                chat_rabbit: 44,
+                chat_balloonix: 44,
+                chat_penalty: 44,
+                chat_open_games: 44,
+                chat_open_games_rate: 44,
                 spend: 44,
                 fb_material_views: 44,
                 fb_cost_per_content_view: 44,
@@ -9891,6 +10317,7 @@ def _render_dashboard_page_v2(
                 adset_name: 170,
                 ad_name: 190,
                 buyer: 110,
+                chatterfy: 120,
             }};
             const ensureMeasureProbe = () => {{
                 let probe = document.getElementById('dashboardWidthMeasureProbe');
@@ -10360,7 +10787,9 @@ def _render_dashboard_page_v2(
 
         const hiddenKey = dashboardStorageKey('dashboard-columns-hidden');
         const fbMetricColumns = {json.dumps(fb_detail_columns)};
+        const chatterfyMetricColumns = {json.dumps(chatterfy_detail_columns)};
         const fbToggleButton = document.getElementById('dashboardFbMetricsToggle');
+        const chatterfyToggleButton = document.getElementById('dashboardChatterfyMetricsToggle');
         const toggles = Array.from(document.querySelectorAll('.dashboard-column-toggle'));
         const dashboardSetColumnVisibility = (col, shouldHide) => {{
             document.querySelectorAll(`[data-dashboard-tree-table] [data-col="${{col}}"]`).forEach((cell) => {{
@@ -10381,6 +10810,19 @@ def _render_dashboard_page_v2(
                 fbToggleButton.setAttribute('title', collapsed ? 'Expand FB metrics' : 'Collapse FB metrics');
             }}
         }};
+        window.dashboardSetChatterfyMetricsCollapsed = (collapsed) => {{
+            document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
+                table.classList.toggle('dashboard-chatterfy-metrics-collapsed', !!collapsed);
+            }});
+            chatterfyMetricColumns.forEach((col) => {{
+                dashboardSetColumnVisibility(col, !!collapsed);
+            }});
+            if (chatterfyToggleButton) {{
+                chatterfyToggleButton.textContent = collapsed ? '+' : '−';
+                chatterfyToggleButton.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+                chatterfyToggleButton.setAttribute('title', collapsed ? 'Expand Chatterfy metrics' : 'Collapse Chatterfy metrics');
+            }}
+        }};
         window.dashboardToggleFbMetrics = (button) => {{
             if (button) {{
                 button.blur();
@@ -10392,25 +10834,43 @@ def _render_dashboard_page_v2(
             applyColumns();
             return false;
         }};
+        window.dashboardToggleChatterfyMetrics = (button) => {{
+            if (button) {{
+                button.blur();
+            }}
+            const state = window.dashboardReadState();
+            state.chatterfyMetricsCollapsed = !state.chatterfyMetricsCollapsed;
+            window.dashboardWriteState(state);
+            window.dashboardSetChatterfyMetricsCollapsed(state.chatterfyMetricsCollapsed);
+            applyColumns();
+            return false;
+        }};
         const applyColumns = () => {{
             let manualHidden = [];
             let fbMetricsCollapsed = false;
+            let chatterfyMetricsCollapsed = false;
             try {{
                 const state = window.dashboardReadState();
                 manualHidden = Array.isArray(state.hiddenColumns) ? state.hiddenColumns : JSON.parse(localStorage.getItem(hiddenKey) || '[]');
                 fbMetricsCollapsed = !!state.fbMetricsCollapsed;
+                chatterfyMetricsCollapsed = !!state.chatterfyMetricsCollapsed;
             }} catch (_error) {{
                 manualHidden = [];
                 fbMetricsCollapsed = false;
+                chatterfyMetricsCollapsed = false;
             }}
             const hidden = new Set(manualHidden);
             if (fbMetricsCollapsed) {{
                 fbMetricColumns.forEach((col) => hidden.add(col));
             }}
+            if (chatterfyMetricsCollapsed) {{
+                chatterfyMetricColumns.forEach((col) => hidden.add(col));
+            }}
             toggles.forEach((toggle) => {{
                 toggle.checked = !manualHidden.includes(toggle.value);
             }});
             window.dashboardSetFbMetricsCollapsed(fbMetricsCollapsed);
+            window.dashboardSetChatterfyMetricsCollapsed(chatterfyMetricsCollapsed);
             document.querySelectorAll('[data-dashboard-tree-table] [data-col]').forEach((cell) => {{
                 const shouldHide = hidden.has(cell.dataset.col);
                 cell.hidden = !!shouldHide;
