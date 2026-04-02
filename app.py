@@ -9121,27 +9121,7 @@ def _render_dashboard_page_v2(
         background:#f6faff;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] tbody tr {{
-        cursor:pointer;
-    }}
-    .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-row-selected td {{
-        background:#d9edff !important;
-    }}
-    .dashboard-v2 table[data-dashboard-tree-table] tbody tr.dashboard-row-selected:hover td {{
-        background:#d9edff !important;
-    }}
-    .dashboard-v2 table[data-dashboard-tree-table] td.dashboard-cell-selected {{
-        background:#cfe8ff !important;
-    }}
-    .dashboard-v2 table[data-dashboard-tree-table] th.dashboard-column-selected,
-    .dashboard-v2 table[data-dashboard-tree-table] td.dashboard-column-selected {{
-        background:#dff0ff !important;
-    }}
-    .dashboard-v2 table[data-dashboard-tree-table] td.dashboard-cell-selected.dashboard-column-selected {{
-        background:#c7e3ff !important;
-    }}
-    .dashboard-v2 table[data-dashboard-tree-table] td.dashboard-cell-selected .dashboard-tree-toggle,
-    .dashboard-v2 table[data-dashboard-tree-table] td.dashboard-column-selected .dashboard-tree-toggle {{
-        color:#16325c;
+        cursor:default;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row td {{
         font-weight:400;
@@ -9866,42 +9846,42 @@ def _render_dashboard_page_v2(
                 'cap_fill', 'payout', 'costs', 'costs_ai', 'profit', 'roi',
             ];
             const minWidths = {{
-                platform: 42,
-                geo: 36,
-                manager: 42,
-                campaign_name: 42,
-                adset_name: 42,
-                ad_name: 42,
-                buyer: 36,
-                budget: 36,
-                spend: 36,
-                fb_material_views: 36,
-                fb_cost_per_content_view: 36,
-                fb_link_clicks: 36,
-                fb_cpc: 36,
-                fb_frequency: 36,
-                fb_ctr: 36,
-                fb_leads: 36,
-                fb_cost_per_lead: 36,
-                fb_paid_subscriptions: 36,
-                fb_cost_per_paid_subscription: 36,
-                fb_contacts: 36,
-                fb_cost_per_contact: 36,
-                fb_completed_registrations: 36,
-                fb_cost_per_completed_registration: 36,
-                fb_purchases: 36,
-                fb_cost_per_purchase: 36,
-                players_ftd: 36,
-                qual_ftd: 36,
-                hold_count: 36,
-                hold_split: 36,
-                cap_total: 36,
-                cap_fill: 36,
-                payout: 36,
-                costs: 36,
-                costs_ai: 36,
-                profit: 36,
-                roi: 36,
+                platform: 54,
+                geo: 44,
+                manager: 72,
+                campaign_name: 54,
+                adset_name: 54,
+                ad_name: 54,
+                buyer: 44,
+                budget: 44,
+                spend: 44,
+                fb_material_views: 44,
+                fb_cost_per_content_view: 44,
+                fb_link_clicks: 44,
+                fb_cpc: 44,
+                fb_frequency: 44,
+                fb_ctr: 44,
+                fb_leads: 44,
+                fb_cost_per_lead: 44,
+                fb_paid_subscriptions: 44,
+                fb_cost_per_paid_subscription: 44,
+                fb_contacts: 44,
+                fb_cost_per_contact: 44,
+                fb_completed_registrations: 44,
+                fb_cost_per_completed_registration: 44,
+                fb_purchases: 44,
+                fb_cost_per_purchase: 44,
+                players_ftd: 44,
+                qual_ftd: 44,
+                hold_count: 44,
+                hold_split: 44,
+                cap_total: 44,
+                cap_fill: 44,
+                payout: 44,
+                costs: 44,
+                costs_ai: 44,
+                profit: 44,
+                roi: 44,
             }};
             const ensureMeasureProbe = () => {{
                 let probe = document.getElementById('dashboardWidthMeasureProbe');
@@ -9919,9 +9899,10 @@ def _render_dashboard_page_v2(
                 document.body.appendChild(probe);
                 return probe;
             }};
-            const measureTextWidth = (text, style) => {{
-                if (!text) return 0;
+            const measureCellContentWidth = (cell) => {{
+                if (!cell) return 0;
                 const probe = ensureMeasureProbe();
+                const style = window.getComputedStyle(cell);
                 probe.style.font = style.font;
                 probe.style.fontSize = style.fontSize;
                 probe.style.fontWeight = style.fontWeight;
@@ -9929,30 +9910,78 @@ def _render_dashboard_page_v2(
                 probe.style.letterSpacing = style.letterSpacing;
                 probe.style.textTransform = style.textTransform;
                 probe.style.lineHeight = style.lineHeight;
-                probe.textContent = text;
+                const label = (cell.innerText || cell.textContent || '').replace(/\\s+/g, ' ').trim();
+                if (!label) return 0;
+                probe.textContent = label;
                 return Math.ceil(probe.getBoundingClientRect().width || probe.offsetWidth || 0);
             }};
-            const measureCellContentWidth = (cell) => {{
+            const getTargetColumnWidth = (cell) => {{
                 if (!cell) return 0;
+                const colName = cell.dataset?.col || '';
+                const inlineWidth = parseFloat(cell.style.width || '0') || 0;
+                if (inlineWidth > 0) return Math.ceil(inlineWidth);
                 const style = window.getComputedStyle(cell);
-                const labelNode = cell.querySelector?.('.dashboard-header-label, .dashboard-tree-label');
-                const label = (labelNode?.innerText || labelNode?.textContent || cell.innerText || cell.textContent || '').replace(/\\s+/g, ' ').trim();
-                const textWidth = measureTextWidth(label, style);
-                if (cell.tagName === 'TH') {{
-                    const stack = cell.querySelector('.dashboard-header-stack');
-                    const toggle = cell.querySelector('.dashboard-fb-toggle');
-                    const gap = stack ? (parseFloat(window.getComputedStyle(stack).rowGap || '0') || parseFloat(window.getComputedStyle(stack).gap || '0') || 0) : 0;
-                    const toggleWidth = toggle ? Math.ceil(toggle.getBoundingClientRect().width || toggle.offsetWidth || 0) : 0;
-                    return textWidth + toggleWidth + (toggleWidth ? gap : 0);
-                }}
-                const contentBoxWidth = Math.max(
-                    textWidth,
-                    cell.scrollWidth || 0,
-                    cell.firstElementChild?.scrollWidth || 0,
-                    cell.querySelector?.('.dashboard-tree-cell')?.scrollWidth || 0
-                );
-                return contentBoxWidth;
+                const cssMaxWidth = parseFloat(style.maxWidth || '0') || 0;
+                if (cssMaxWidth > 0 && style.maxWidth !== 'none') return Math.ceil(cssMaxWidth);
+                const cssMinWidth = parseFloat(style.minWidth || '0') || 0;
+                if (cssMinWidth > 0) return Math.max(Math.ceil(cssMinWidth), minWidths[colName] || 0);
+                const cssWidth = parseFloat(style.width || '0') || 0;
+                if (cssWidth > 0) return Math.max(Math.ceil(cssWidth), minWidths[colName] || 0);
+                return minWidths[colName] || 0;
             }};
+            const computeVisibleTableWidth = () => {{
+                const headerCells = Array.from(table.querySelectorAll('thead th[data-col]')).filter((cell) => {{
+                    if (!cell) return false;
+                    const style = window.getComputedStyle(cell);
+                    return style.display !== 'none';
+                }});
+                return headerCells.reduce((sum, cell) => {{
+                    return sum + getTargetColumnWidth(cell);
+                }}, 0);
+            }};
+            const readWidthCache = () => {{
+                try {{
+                    const parsed = JSON.parse(table.dataset.autoWidthCache || '{{}}');
+                    return parsed && typeof parsed === 'object' ? parsed : {{}};
+                }} catch (_error) {{
+                    return {{}};
+                }}
+            }};
+            const writeWidthCache = (payload) => {{
+                try {{
+                    table.dataset.autoWidthCache = JSON.stringify(payload || {{}});
+                }} catch (_error) {{}}
+            }};
+            const applyCachedWidths = (cache) => {{
+                if (!cache || typeof cache !== 'object') return false;
+                let applied = false;
+                autoCols.forEach((col) => {{
+                    const measuredWidth = parseFloat(cache[col] || 0) || 0;
+                    if (!measuredWidth) return;
+                    applied = true;
+                    Array.from(table.querySelectorAll(`[data-col="${{col}}"]`)).forEach((cell) => {{
+                        cell.style.width = `${{measuredWidth}}px`;
+                        cell.style.minWidth = `${{measuredWidth}}px`;
+                        cell.style.maxWidth = `${{measuredWidth}}px`;
+                    }});
+                }});
+                const visibleWidth = computeVisibleTableWidth();
+                if (visibleWidth > 0) {{
+                    table.style.width = `${{visibleWidth}}px`;
+                    table.style.minWidth = `${{visibleWidth}}px`;
+                    table.style.maxWidth = `${{visibleWidth}}px`;
+                    applied = true;
+                }}
+                if (applied) {{
+                    table.style.tableLayout = 'fixed';
+                }}
+                return applied;
+            }};
+            if (table.classList.contains('dashboard-fb-metrics-collapsed')) {{
+                if (applyCachedWidths(readWidthCache())) {{
+                    return;
+                }}
+            }}
             autoCols.forEach((col) => {{
                 const allCells = Array.from(table.querySelectorAll(`[data-col="${{col}}"]`));
                 allCells.forEach((cell) => {{
@@ -9978,31 +10007,33 @@ def _render_dashboard_page_v2(
                         const style = window.getComputedStyle(cell);
                         const paddingLeft = parseFloat(style.paddingLeft || '0') || 0;
                         const paddingRight = parseFloat(style.paddingRight || '0') || 0;
-                        const borderLeft = parseFloat(style.borderLeftWidth || '0') || 0;
-                        const borderRight = parseFloat(style.borderRightWidth || '0') || 0;
-                        const contentWidth = measureCellContentWidth(cell);
-                        width = Math.max(width, Math.ceil(contentWidth + paddingLeft + paddingRight + borderLeft + borderRight + 10));
+                        const contentWidth = Math.max(
+                            measureCellContentWidth(cell),
+                            cell.scrollWidth || 0,
+                            cell.firstElementChild?.scrollWidth || 0
+                        );
+                        width = Math.max(width, Math.ceil(contentWidth + paddingLeft + paddingRight + 10));
                     }});
                     return Math.max(minWidths[col] || 44, width);
                 }};
                 const widths = {{}};
-                let totalWidth = 0;
                 autoCols.forEach((col) => {{
                     const measuredWidth = measureColumnWidth(col);
                     if (!measuredWidth) return;
                     widths[col] = measuredWidth;
-                    totalWidth += measuredWidth;
                     Array.from(table.querySelectorAll(`[data-col="${{col}}"]`)).forEach((cell) => {{
                         cell.style.width = `${{measuredWidth}}px`;
                         cell.style.minWidth = `${{measuredWidth}}px`;
                         cell.style.maxWidth = `${{measuredWidth}}px`;
                     }});
                 }});
+                const totalWidth = computeVisibleTableWidth();
                 if (totalWidth > 0) {{
                     table.style.width = `${{totalWidth}}px`;
                     table.style.minWidth = `${{totalWidth}}px`;
                     table.style.maxWidth = `${{totalWidth}}px`;
                 }}
+                writeWidthCache({{ ...widths, totalWidth }});
                 table.style.tableLayout = 'fixed';
             }});
         }};
@@ -10135,105 +10166,28 @@ def _render_dashboard_page_v2(
         }};
         window.dashboardApplySelectedRows = (table) => {{
             if (!table) return;
-            const state = window.dashboardReadState();
-            const selectedRows = state.selectedRows || {{}};
-            const selectedKeys = new Set(
-                Array.isArray(selectedRows[table.id || 'dashboard-tree-table'])
-                    ? selectedRows[table.id || 'dashboard-tree-table']
-                    : []
-            );
-            Array.from(table.querySelectorAll('tbody tr[data-row-key]')).forEach((row) => {{
-                row.classList.toggle('dashboard-row-selected', selectedKeys.has(row.dataset.rowKey || ''));
+            Array.from(table.querySelectorAll('tbody tr.dashboard-row-selected')).forEach((row) => {{
+                row.classList.remove('dashboard-row-selected');
             }});
         }};
-        window.dashboardPersistSelectedRows = (table) => {{
-            if (!table) return;
-            const state = window.dashboardReadState();
-            state.selectedRows = state.selectedRows || {{}};
-            state.selectedRows[table.id || 'dashboard-tree-table'] = Array.from(
-                table.querySelectorAll('tbody tr.dashboard-row-selected[data-row-key]')
-            )
-                .map((row) => row.dataset.rowKey || '')
-                .filter(Boolean);
-            window.dashboardWriteState(state);
-        }};
-        window.dashboardToggleRowSelection = (row) => {{
-            if (!row) return;
-            const table = row.closest('[data-dashboard-tree-table]');
-            if (!table) return;
-            row.classList.toggle('dashboard-row-selected');
-            window.dashboardPersistSelectedRows(table);
-        }};
+        window.dashboardPersistSelectedRows = () => {{}};
+        window.dashboardToggleRowSelection = () => {{}};
         window.dashboardApplySelectedColumns = (table) => {{
             if (!table) return;
-            const state = window.dashboardReadState();
-            const selectedColumns = state.selectedColumns || {{}};
-            const selectedCols = new Set(
-                Array.isArray(selectedColumns[table.id || 'dashboard-tree-table'])
-                    ? selectedColumns[table.id || 'dashboard-tree-table']
-                    : []
-            );
-            Array.from(table.querySelectorAll('[data-col]')).forEach((cell) => {{
-                cell.classList.toggle('dashboard-column-selected', selectedCols.has(cell.dataset.col || ''));
+            Array.from(table.querySelectorAll('.dashboard-column-selected')).forEach((cell) => {{
+                cell.classList.remove('dashboard-column-selected');
             }});
         }};
-        window.dashboardPersistSelectedColumns = (table) => {{
-            if (!table) return;
-            const state = window.dashboardReadState();
-            state.selectedColumns = state.selectedColumns || {{}};
-            const uniqueCols = Array.from(new Set(
-                Array.from(table.querySelectorAll('.dashboard-column-selected[data-col]'))
-                    .map((cell) => cell.dataset.col || '')
-                    .filter(Boolean)
-            ));
-            state.selectedColumns[table.id || 'dashboard-tree-table'] = uniqueCols;
-            window.dashboardWriteState(state);
-        }};
-        window.dashboardToggleColumnSelection = (table, columnName) => {{
-            if (!table || !columnName) return;
-            const columnCells = Array.from(table.querySelectorAll(`[data-col="${{columnName}}"]`));
-            const shouldSelect = !columnCells.every((cell) => cell.classList.contains('dashboard-column-selected'));
-            columnCells.forEach((cell) => {{
-                cell.classList.toggle('dashboard-column-selected', shouldSelect);
-            }});
-            window.dashboardPersistSelectedColumns(table);
-        }};
+        window.dashboardPersistSelectedColumns = () => {{}};
+        window.dashboardToggleColumnSelection = () => {{}};
         window.dashboardApplySelectedCells = (table) => {{
             if (!table) return;
-            const state = window.dashboardReadState();
-            const selectedCells = state.selectedCells || {{}};
-            const selectedKeys = new Set(
-                Array.isArray(selectedCells[table.id || 'dashboard-tree-table'])
-                    ? selectedCells[table.id || 'dashboard-tree-table']
-                    : []
-            );
-            Array.from(table.querySelectorAll('tbody td[data-col]')).forEach((cell) => {{
-                const row = cell.closest('tr[data-row-key]');
-                const rowKey = row?.dataset.rowKey || '';
-                const cellKey = rowKey && cell.dataset.col ? `${{rowKey}}::${{cell.dataset.col}}` : '';
-                cell.classList.toggle('dashboard-cell-selected', selectedKeys.has(cellKey));
+            Array.from(table.querySelectorAll('tbody td.dashboard-cell-selected[data-col]')).forEach((cell) => {{
+                cell.classList.remove('dashboard-cell-selected');
             }});
         }};
-        window.dashboardPersistSelectedCells = (table) => {{
-            if (!table) return;
-            const state = window.dashboardReadState();
-            state.selectedCells = state.selectedCells || {{}};
-            state.selectedCells[table.id || 'dashboard-tree-table'] = Array.from(
-                table.querySelectorAll('tbody td.dashboard-cell-selected[data-col]')
-            ).map((cell) => {{
-                const row = cell.closest('tr[data-row-key]');
-                const rowKey = row?.dataset.rowKey || '';
-                return rowKey && cell.dataset.col ? `${{rowKey}}::${{cell.dataset.col}}` : '';
-            }}).filter(Boolean);
-            window.dashboardWriteState(state);
-        }};
-        window.dashboardToggleCellSelection = (cell) => {{
-            if (!cell) return;
-            const table = cell.closest('[data-dashboard-tree-table]');
-            if (!table) return;
-            cell.classList.toggle('dashboard-cell-selected');
-            window.dashboardPersistSelectedCells(table);
-        }};
+        window.dashboardPersistSelectedCells = () => {{}};
+        window.dashboardToggleCellSelection = () => {{}};
         window.dashboardApplyAdsetFocus = (table) => {{
             if (!table) return;
             const rows = Array.from(table.querySelectorAll('tbody tr'));
@@ -10505,33 +10459,11 @@ def _render_dashboard_page_v2(
                 applyColumns();
             }});
         }}
-        if (fbToggleButton) {{
-            fbToggleButton.addEventListener('click', (event) => {{
-                event.preventDefault();
-                event.stopPropagation();
-                window.dashboardToggleFbMetrics(fbToggleButton);
-            }});
-        }}
         if (window.dashboardRestoreFilterState && window.dashboardRestoreFilterState()) {{
             return;
         }}
         applyColumns();
         document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
-            table.addEventListener('click', (event) => {{
-                const cell = event.target.closest('tbody td[data-col]');
-                if (!cell || !table.contains(cell)) return;
-                if (event.target.closest('a, input, select, label, summary')) return;
-                if (cell && table.contains(cell)) {{
-                    if (window.dashboardToggleCellSelection) window.dashboardToggleCellSelection(cell);
-                }}
-            }});
-            table.addEventListener('dblclick', (event) => {{
-                if (event.target.closest('a, input, select, label, summary')) return;
-                const cell = event.target.closest('[data-col]');
-                const columnName = cell?.dataset.col || '';
-                if (!columnName || !table.contains(cell)) return;
-                if (window.dashboardToggleColumnSelection) window.dashboardToggleColumnSelection(table, columnName);
-            }});
             if (window.dashboardApplySelectedRows) window.dashboardApplySelectedRows(table);
             if (window.dashboardApplySelectedColumns) window.dashboardApplySelectedColumns(table);
             if (window.dashboardApplySelectedCells) window.dashboardApplySelectedCells(table);
