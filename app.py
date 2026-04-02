@@ -8123,6 +8123,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
     .finance-sheet-table td {{
         padding:0;
         background:transparent;
+        line-height:1;
     }}
     .finance-inline-add-trigger-row td {{
         padding:4px 6px !important;
@@ -8195,7 +8196,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         display:flex;
         align-items:center;
         gap:6px;
-        padding:2px 6px;
+        padding:0 4px;
     }}
     .finance-row-edit-form input[type="number"] {{
         width:100%;
@@ -8210,8 +8211,8 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         font-size:12px;
     }}
     .finance-sheet-cell {{
-        padding:2px 8px;
-        min-height:12px;
+        padding:1px 8px;
+        min-height:6px;
         line-height:1;
         font-size:12px;
         white-space:pre-wrap;
