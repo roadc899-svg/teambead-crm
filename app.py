@@ -8266,21 +8266,54 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         }}
     }}
     </style>
+    <div
+        id="financePageRoot"
+        data-pending-amounts='{escape(json.dumps(pending_cpa_map))}'
+        data-pending-brands='{escape(json.dumps(cabinet_primary_brand_map))}'
+        data-pending-cabinets='{escape(json.dumps(income_cabinet_options))}'
+        data-pending-existing-cabinets='{escape(json.dumps(pending_existing_cabinets))}'
+    >
     {message_html}
+    <div class="finance-excel-layout">
+        {render_active_period_banner(effective_period_label if period_context["period_view"] != "all" else "")}
+        <div class="panel compact-panel">
+            <div class="finance-excel-header">
+                <div class="finance-excel-header-main">
+                    <div class="finance-period-toolbar">
+                        <div class="panel compact-panel filters">
+                            <form method="get" action="/finance" style="justify-content:flex-start;" data-persist-filters="finance">
+                                <input type="hidden" name="period_view" value="period">
+                                <label>Period<select name="period_label">{period_options}</select></label>
+                                <button type="submit" class="btn small-btn">Filter</button>
+                                <a href="/finance" class="ghost-btn small-btn" data-reset-filters="finance">Reset</a>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="finance-sheet-board finance-sheet-board-top">{sheet_board_top}</div>
+        <div class="finance-sheet-board finance-sheet-board-bottom">{sheet_board_bottom}</div>
+    </div>
+    </div>
     <script>
-    window.financePendingCabinetAmounts = {json.dumps(pending_cpa_map)};
-    window.financePendingCabinetBrands = {json.dumps(cabinet_primary_brand_map)};
-    window.financePendingCabinets = {json.dumps(income_cabinet_options)};
-    window.financePendingExistingCabinets = {json.dumps(pending_existing_cabinets)};
-    </script>
-    <script>
-    (() => {{
-        const amountMap = window.financePendingCabinetAmounts || {{}};
-        const brandMap = window.financePendingCabinetBrands || {{}};
-        const cabinetList = Array.isArray(window.financePendingCabinets) ? window.financePendingCabinets : [];
-        const existingCabinets = new Set(Array.isArray(window.financePendingExistingCabinets) ? window.financePendingExistingCabinets : []);
+    window.initFinancePage = function initFinancePage() {{
+        const root = document.getElementById('financePageRoot');
+        if (!root) return;
+        const readJson = (name, fallback) => {{
+            try {{
+                return JSON.parse(root.dataset[name] || '');
+            }} catch (_error) {{
+                return fallback;
+            }}
+        }};
+        const amountMap = readJson('pendingAmounts', {{}});
+        const brandMap = readJson('pendingBrands', {{}});
+        const cabinetList = readJson('pendingCabinets', []);
+        const existingCabinets = new Set(readJson('pendingExistingCabinets', []));
+
         const bindPendingInlineForms = () => {{
-            document.querySelectorAll('.finance-inline-add-form').forEach((form) => {{
+            root.querySelectorAll('.finance-inline-add-form').forEach((form) => {{
                 if (form.dataset.pendingBound === '1') return;
                 const dateField = form.querySelector('input[name="pending_date"]');
                 const cabinetField = form.querySelector('.finance-pending-cabinet select');
@@ -8303,9 +8336,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
                     const brand = brandMap[cabinet] || '';
                     const amount = amountMap[cabinet];
                     if (brand) brandField.value = brand;
-                    if (amount !== undefined && amount !== null) {{
-                        amountField.value = Number(amount || 0).toFixed(2);
-                    }}
+                    if (amount !== undefined && amount !== null) amountField.value = Number(amount || 0).toFixed(2);
                 }};
                 const primePendingValues = () => {{
                     if (dateField && !dateField.value) dateField.value = currentDate();
@@ -8323,35 +8354,47 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
                 form.dataset.pendingBound = '1';
             }});
         }};
+
+        const bindAjaxForms = () => {{
+            root.querySelectorAll('.finance-inline-add-form, .finance-row-edit-form').forEach((form) => {{
+                if (form.dataset.ajaxBound === '1') return;
+                form.addEventListener('submit', async (event) => {{
+                    event.preventDefault();
+                    const submitButton = form.querySelector('button[type=\"submit\"]');
+                    if (submitButton) submitButton.disabled = true;
+                    try {{
+                        const response = await fetch(form.action, {{
+                            method: 'POST',
+                            body: new FormData(form),
+                            credentials: 'same-origin',
+                            headers: {{ 'X-Requested-With': 'fetch' }},
+                        }});
+                        const html = await response.text();
+                        const parser = new DOMParser();
+                        const doc = parser.parseFromString(html, 'text/html');
+                        const nextRoot = doc.getElementById('financePageRoot');
+                        const currentRoot = document.getElementById('financePageRoot');
+                        if (nextRoot && currentRoot) {{
+                            currentRoot.replaceWith(nextRoot);
+                            if (window.initFinancePage) window.initFinancePage();
+                        }} else {{
+                            window.location.reload();
+                        }}
+                    }} catch (_error) {{
+                        window.location.reload();
+                    }} finally {{
+                        if (submitButton) submitButton.disabled = false;
+                    }}
+                }});
+                form.dataset.ajaxBound = '1';
+            }});
+        }};
+
         bindPendingInlineForms();
-        document.addEventListener('toggle', (event) => {{
-            if (event.target && event.target.matches('.finance-inline-add')) {{
-                bindPendingInlineForms();
-            }}
-        }});
-    }})();
+        bindAjaxForms();
+    }};
+    window.initFinancePage();
     </script>
-    <div class="finance-excel-layout">
-        {render_active_period_banner(effective_period_label if period_context["period_view"] != "all" else "")}
-        <div class="panel compact-panel">
-            <div class="finance-excel-header">
-                <div class="finance-excel-header-main">
-                    <div class="finance-period-toolbar">
-                        <div class="panel compact-panel filters">
-                            <form method="get" action="/finance" style="justify-content:flex-start;" data-persist-filters="finance">
-                                <input type="hidden" name="period_view" value="period">
-                                <label>Period<select name="period_label">{period_options}</select></label>
-                                <button type="submit" class="btn small-btn">Filter</button>
-                                <a href="/finance" class="ghost-btn small-btn" data-reset-filters="finance">Reset</a>
-                            </form>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <div class="finance-sheet-board finance-sheet-board-top">{sheet_board_top}</div>
-        <div class="finance-sheet-board finance-sheet-board-bottom">{sheet_board_bottom}</div>
-    </div>
     """
     return page_shell("Finance", content, active_page="finance", current_user=current_user)
 
