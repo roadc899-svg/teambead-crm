@@ -9910,10 +9910,23 @@ def _render_dashboard_page_v2(
                 probe.style.letterSpacing = style.letterSpacing;
                 probe.style.textTransform = style.textTransform;
                 probe.style.lineHeight = style.lineHeight;
-                const label = (cell.innerText || cell.textContent || '').replace(/\\s+/g, ' ').trim();
+                const labelNode = cell.querySelector?.('.dashboard-header-label, .dashboard-tree-label');
+                const label = (labelNode?.innerText || labelNode?.textContent || cell.innerText || cell.textContent || '').replace(/\\s+/g, ' ').trim();
                 if (!label) return 0;
                 probe.textContent = label;
-                return Math.ceil(probe.getBoundingClientRect().width || probe.offsetWidth || 0);
+                let width = Math.ceil(probe.getBoundingClientRect().width || probe.offsetWidth || 0);
+                if (cell.tagName === 'TH') {{
+                    const toggle = cell.querySelector('.dashboard-fb-toggle');
+                    if (toggle) {{
+                        const stack = cell.querySelector('.dashboard-header-stack');
+                        const stackStyle = stack ? window.getComputedStyle(stack) : null;
+                        const gap = stackStyle
+                            ? (parseFloat(stackStyle.rowGap || '0') || parseFloat(stackStyle.gap || '0') || 0)
+                            : 0;
+                        width += Math.ceil(toggle.getBoundingClientRect().width || toggle.offsetWidth || 0) + Math.ceil(gap);
+                    }}
+                }}
+                return width;
             }};
             const getTargetColumnWidth = (cell) => {{
                 if (!cell) return 0;
@@ -9977,11 +9990,6 @@ def _render_dashboard_page_v2(
                 }}
                 return applied;
             }};
-            if (table.classList.contains('dashboard-fb-metrics-collapsed')) {{
-                if (applyCachedWidths(readWidthCache())) {{
-                    return;
-                }}
-            }}
             autoCols.forEach((col) => {{
                 const allCells = Array.from(table.querySelectorAll(`[data-col="${{col}}"]`));
                 allCells.forEach((cell) => {{
