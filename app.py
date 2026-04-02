@@ -1007,8 +1007,12 @@ def get_dashboard_compact_label(field, label="", row=None):
     row = row or {}
 
     if field == "campaign_name":
-        launch_date = safe_text(row.get("launch_date")) or safe_text(parse_ad_name(raw_label).get("launch_date"))
-        return launch_date or raw_label or "—"
+        parsed = parse_ad_name(raw_label)
+        launch_date = safe_text(row.get("launch_date")) or safe_text(parsed.get("launch_date"))
+        platform = safe_text(row.get("platform")) or safe_text(parsed.get("platform"))
+        geo = safe_text(row.get("geo")) or safe_text(parsed.get("geo"))
+        compact_campaign = "/".join([part for part in [launch_date, platform, geo] if part])
+        return compact_campaign or raw_label or "—"
 
     if field == "adset_name":
         offer = safe_text(row.get("offer")) or safe_text(parse_ad_name(raw_label).get("offer"))
@@ -4451,8 +4455,6 @@ def parse_1xbet_partner_dataframe(df, source_name="", cabinet_name="", upload_pe
         company_income = safe_number(row.get(income_col)) if income_col else 0.0
         cpa_amount = safe_number(row.get(cpa_col)) if cpa_col else 0.0
         registration_value = row.get(registration_col) if registration_col else ""
-        if not registration_date_in_period(registration_value, raw_period):
-            continue
         period_info = upload_period if safe_text(upload_period.get("period_label")) else {"report_date": "", "period_start": "", "period_end": "", "period_label": ""}
         records.append(PartnerRow(
             source_name=source_name,
@@ -8084,8 +8086,41 @@ def _render_dashboard_page_v2(
         ("roi", "ROI"),
     ]
 
+    fb_detail_columns = [
+        "fb_material_views",
+        "fb_cost_per_content_view",
+        "fb_link_clicks",
+        "fb_cpc",
+        "fb_frequency",
+        "fb_ctr",
+        "fb_leads",
+        "fb_cost_per_lead",
+        "fb_paid_subscriptions",
+        "fb_cost_per_paid_subscription",
+        "fb_contacts",
+        "fb_cost_per_contact",
+        "fb_completed_registrations",
+        "fb_cost_per_completed_registration",
+        "fb_purchases",
+        "fb_cost_per_purchase",
+    ]
+
+    def render_dashboard_header_cell(field, label):
+        header_link = _dashboard_sort_link(label, field, **filter_params)
+        extra_html = ""
+        if field == "budget":
+            extra_html = (
+                '<button type="button" class="dashboard-fb-toggle" id="dashboardFbMetricsToggle" '
+                'aria-expanded="true" title="Toggle FB metrics">−</button>'
+            )
+        return (
+            f'<th data-col="{escape(field)}">'
+            f'<div class="dashboard-header-stack">{extra_html}<span class="dashboard-header-label">{header_link}</span></div>'
+            f'</th>'
+        )
+
     head_html = "".join(
-        f'<th data-col="{escape(field)}">{_dashboard_sort_link(label, field, **filter_params)}</th>'
+        render_dashboard_header_cell(field, label)
         for field, label in table_headers
     )
 
@@ -8491,6 +8526,35 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-label {{
         overflow:hidden;
         text-overflow:ellipsis;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-header-stack {{
+        display:flex;
+        flex-direction:column;
+        align-items:flex-start;
+        gap:4px;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-header-label {{
+        display:block;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-fb-toggle {{
+        width:18px;
+        height:18px;
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        border:1px solid rgba(95, 120, 165, 0.35);
+        border-radius:5px;
+        background:#ffffff;
+        color:#3b568a;
+        font-size:13px;
+        font-weight:900;
+        line-height:1;
+        cursor:pointer;
+        padding:0;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-fb-toggle:hover {{
+        background:#f2f7ff;
+        border-color:rgba(59, 86, 138, 0.45);
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="buyer"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="buyer"] {{
@@ -9360,21 +9424,35 @@ def _render_dashboard_page_v2(
         }});
 
         const hiddenKey = window.teambeadStorageKey('dashboard-columns-hidden');
+        const fbMetricColumns = {json.dumps(fb_detail_columns)};
+        const fbToggleButton = document.getElementById('dashboardFbMetricsToggle');
         const toggles = Array.from(document.querySelectorAll('.dashboard-column-toggle'));
         const applyColumns = () => {{
-            let hidden = [];
+            let manualHidden = [];
+            let fbMetricsCollapsed = false;
             try {{
                 const state = window.dashboardReadState();
-                hidden = Array.isArray(state.hiddenColumns) ? state.hiddenColumns : JSON.parse(localStorage.getItem(hiddenKey) || '[]');
+                manualHidden = Array.isArray(state.hiddenColumns) ? state.hiddenColumns : JSON.parse(localStorage.getItem(hiddenKey) || '[]');
+                fbMetricsCollapsed = !!state.fbMetricsCollapsed;
             }} catch (_error) {{
-                hidden = [];
+                manualHidden = [];
+                fbMetricsCollapsed = false;
+            }}
+            const hidden = new Set(manualHidden);
+            if (fbMetricsCollapsed) {{
+                fbMetricColumns.forEach((col) => hidden.add(col));
             }}
             toggles.forEach((toggle) => {{
-                toggle.checked = !hidden.includes(toggle.value);
+                toggle.checked = !manualHidden.includes(toggle.value);
             }});
             document.querySelectorAll('[data-dashboard-tree-table] [data-col]').forEach((cell) => {{
-                cell.style.display = hidden.includes(cell.dataset.col) ? 'none' : '';
+                cell.style.display = hidden.has(cell.dataset.col) ? 'none' : '';
             }});
+            if (fbToggleButton) {{
+                fbToggleButton.textContent = fbMetricsCollapsed ? '+' : '−';
+                fbToggleButton.setAttribute('aria-expanded', fbMetricsCollapsed ? 'false' : 'true');
+                fbToggleButton.setAttribute('title', fbMetricsCollapsed ? 'Expand FB metrics' : 'Collapse FB metrics');
+            }}
             document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
                 window.dashboardTreeAutoSize(table);
             }});
@@ -9406,6 +9484,16 @@ def _render_dashboard_page_v2(
                 state.hiddenColumns = [];
                 window.dashboardWriteState(state);
                 localStorage.setItem(hiddenKey, JSON.stringify([]));
+                applyColumns();
+            }});
+        }}
+        if (fbToggleButton) {{
+            fbToggleButton.addEventListener('click', (event) => {{
+                event.preventDefault();
+                event.stopPropagation();
+                const state = window.dashboardReadState();
+                state.fbMetricsCollapsed = !state.fbMetricsCollapsed;
+                window.dashboardWriteState(state);
                 applyColumns();
             }});
         }}
