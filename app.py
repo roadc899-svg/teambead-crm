@@ -7278,11 +7278,14 @@ def _patched_sidebar_html(active_page, current_user=None):
     return html
 
 
-def _render_finance_sheet_section(title, total, headers, rows, tone="orange", action_html=""):
+def _render_finance_sheet_section(title, total, headers, rows, tone="orange", action_html="", footer_html=""):
     col_count = max(1, len(headers))
     header_html = "".join(f"<th>{escape(header)}</th>" for header in headers)
     row_html = ""
     for row in rows:
+        if isinstance(row, dict) and row.get("__html__"):
+            row_html += row["__html__"]
+            continue
         row_html += "<tr>" + "".join(
             f'<td><div class="finance-sheet-cell">{escape(safe_text(value))}</div></td>'
             for value in row
@@ -7302,7 +7305,7 @@ def _render_finance_sheet_section(title, total, headers, rows, tone="orange", ac
         <div class="finance-sheet-table-wrap">
             <table class="finance-sheet-table">
                 <thead><tr>{header_html}</tr></thead>
-                <tbody>{row_html}</tbody>
+                <tbody>{row_html}{footer_html}</tbody>
             </table>
         </div>
     </section>
@@ -7345,6 +7348,17 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         f'<input type="hidden" name="period_view" value="{escape(period_context["period_view"])}">'
         f'<input type="hidden" name="period_label" value="{escape(effective_period_label)}">'
     )
+    expense_category_options = ['Коммисии', 'Сервисы', 'Офис', 'Зарплата', 'Рекламодатель', 'Прочее']
+    expense_comment_options = ['Trust Wallet', 'Fun Agency', 'ElevenLabs', 'Chat GPT', 'SendPulse']
+
+    def option_tags(values, selected=""):
+        return "".join(
+            f'<option value="{escape(value)}" {"selected" if value == selected else ""}>{escape(value)}</option>'
+            for value in values if safe_text(value)
+        )
+
+    def datalist_tags(values):
+        return "".join(f'<option value="{escape(value)}"></option>' for value in values if safe_text(value))
 
     def plus_form(action, fields, title, button_tone="orange"):
         field_html = ""
@@ -7356,6 +7370,14 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
             value = escape(safe_text(field.get("value", "")))
             if field_type == "textarea":
                 control = f'<textarea name="{escape(name)}" placeholder="{escape(placeholder)}">{value}</textarea>'
+            elif field_type == "select":
+                control = f'<select name="{escape(name)}">{option_tags(field.get("options", []), safe_text(field.get("value", "")))}</select>'
+            elif field_type == "datalist":
+                list_id = escape(field.get("list_id", f"{name}-list"))
+                control = (
+                    f'<input type="text" name="{escape(name)}" value="{value}" placeholder="{escape(placeholder)}" list="{list_id}">'
+                    f'<datalist id="{list_id}">{datalist_tags(field.get("options", []))}</datalist>'
+                )
             else:
                 control = f'<input type="{escape(field_type)}" name="{escape(name)}" value="{value}" placeholder="{escape(placeholder)}">'
             field_html += f'<label><span>{escape(label)}</span>{control}</label>'
@@ -7373,6 +7395,41 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         </details>
         """
 
+    def inline_add_row(action, title, columns, fields, button_tone):
+        field_html = ""
+        for field in fields:
+            field_type = field.get("type", "text")
+            name = field["name"]
+            placeholder = field.get("placeholder", "")
+            value = escape(safe_text(field.get("value", "")))
+            if field_type == "select":
+                control = f'<select name="{escape(name)}">{option_tags(field.get("options", []), safe_text(field.get("value", "")))}</select>'
+            elif field_type == "datalist":
+                list_id = escape(field.get("list_id", f"{name}-list-inline"))
+                control = (
+                    f'<input type="text" name="{escape(name)}" value="{value}" placeholder="{escape(placeholder)}" list="{list_id}">'
+                    f'<datalist id="{list_id}">{datalist_tags(field.get("options", []))}</datalist>'
+                )
+            else:
+                control = f'<input type="{escape(field_type)}" name="{escape(name)}" value="{value}" placeholder="{escape(placeholder)}">'
+            field_html += f'<label>{control}</label>'
+        return f"""
+        <tr class="finance-inline-add-trigger-row">
+            <td colspan="{columns}">
+                <details class="finance-inline-add">
+                    <summary class="finance-inline-add-summary">+</summary>
+                    <div class="finance-inline-add-body">
+                        <form method="post" action="{escape(action)}" class="finance-inline-add-form">
+                            {hidden_filter_inputs}
+                            {field_html}
+                            <button type="submit" class="btn small-btn finance-add-submit finance-add-submit-{escape(button_tone)}">Save</button>
+                        </form>
+                    </div>
+                </details>
+            </td>
+        </tr>
+        """
+
     wallet_source_rows = list(snapshot.get("wallets", [])) + [
         {
             "category": item.category or "",
@@ -7383,6 +7440,15 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         }
         for item in manual_all.get("wallets", [])
     ]
+    payer_names = sorted({
+        *(safe_text(item.get("wallet")) for item in wallet_source_rows if safe_text(item.get("wallet"))),
+        *(safe_text(item.get("description")) for item in wallet_source_rows if safe_text(item.get("description"))),
+        'Chatterfy',
+        'Fun Agency',
+        'Brocard',
+        'Dima',
+        'Ivan',
+    })
     wallet_rows = [
         (
             item.get("category", ""),
@@ -7397,8 +7463,8 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         (
             item.get("date", ""),
             item.get("category", ""),
-            format_money(item.get("amount", 0)),
             item.get("paid_by", ""),
+            format_money(item.get("amount", 0)),
             item.get("comment", ""),
         )
         for item in snapshot.get("expenses", [])
@@ -7406,8 +7472,8 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         (
             item.expense_date or "",
             item.category or "",
-            format_money(item.amount),
             item.from_wallet or item.paid_by or "",
+            format_money(item.amount),
             item.comment or "",
         )
         for item in manual.get("expenses", [])
@@ -7416,20 +7482,18 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         (
             item.get("date", ""),
             item.get("category", ""),
-            item.get("description", ""),
-            format_money(item.get("amount", 0)),
             item.get("wallet", ""),
-            item.get("reconciliation", ""),
+            format_money(item.get("amount", 0)),
+            item.get("description", ""),
         )
         for item in snapshot.get("income", [])
     ] + [
         (
             item.income_date or "",
             item.category or "",
-            item.description or "",
-            format_money(item.amount),
             item.wallet_name or item.wallet or "",
-            item.from_wallet or item.reconciliation or "",
+            format_money(item.amount),
+            item.comment or item.description or "",
         )
         for item in manual.get("income", [])
     ]
@@ -7480,6 +7544,32 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
     expense_total = snapshot.get("totals", {}).get("expenses", 0) + sum(safe_number(item.amount) for item in manual.get("expenses", []))
     income_total = snapshot.get("totals", {}).get("income", 0) + sum(safe_number(item.amount) for item in manual.get("income", []))
     transfer_total = snapshot.get("totals", {}).get("transfers", 0) + sum(safe_number(item.amount) for item in manual.get("transfers", []))
+    expense_footer_html = inline_add_row(
+        "/finance/expenses/save",
+        "Add Expense",
+        5,
+        [
+            {"name": "expense_date", "type": "date"},
+            {"name": "category", "type": "select", "options": expense_category_options},
+            {"name": "from_wallet", "type": "select", "options": payer_names},
+            {"name": "amount", "type": "number", "placeholder": "Сумма"},
+            {"name": "comment", "type": "datalist", "options": expense_comment_options, "list_id": "finance-expense-comments", "placeholder": "Комментарий"},
+        ],
+        "red",
+    )
+    income_footer_html = inline_add_row(
+        "/finance/income/save",
+        "Add Income",
+        5,
+        [
+            {"name": "income_date", "type": "date"},
+            {"name": "category", "placeholder": "Бренд"},
+            {"name": "wallet_name", "placeholder": "Кабинет"},
+            {"name": "amount", "type": "number", "placeholder": "Сумма"},
+            {"name": "comment", "placeholder": "Комментарий"},
+        ],
+        "green",
+    )
 
     sheet_board_top = "".join([
         _render_finance_sheet_section(
@@ -7528,41 +7618,18 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         _render_finance_sheet_section(
             "РАСХОД",
             expense_total,
-            ["Дата", "Категория", "Сумма", "Кто оплатил", "Комментарий"],
+            ["Дата", "Категория", "Кто платит", "Сумма", "Комментарий"],
             expense_rows,
             tone="red",
-            action_html=plus_form(
-                "/finance/expenses/save",
-                [
-                    {"name": "expense_date", "label": "Date", "type": "date"},
-                    {"name": "category", "label": "Category"},
-                    {"name": "amount", "label": "Amount", "type": "number", "placeholder": "0.00"},
-                    {"name": "from_wallet", "label": "Who paid"},
-                    {"name": "comment", "label": "Comment", "type": "textarea"},
-                ],
-                "Add Expense",
-                "red",
-            ),
+            footer_html=expense_footer_html,
         ),
         _render_finance_sheet_section(
             "ПРИХОД",
             income_total,
-            ["Дата", "Категория", "Описание", "Сумма", "Кошель", "Сверка"],
+            ["Дата", "Бренд", "Кабинет", "Сумма", "Комментарии"],
             income_rows,
             tone="green",
-            action_html=plus_form(
-                "/finance/income/save",
-                [
-                    {"name": "income_date", "label": "Date", "type": "date"},
-                    {"name": "category", "label": "Category"},
-                    {"name": "comment", "label": "Description"},
-                    {"name": "amount", "label": "Amount", "type": "number", "placeholder": "0.00"},
-                    {"name": "wallet_name", "label": "Wallet"},
-                    {"name": "from_wallet", "label": "Reconciliation"},
-                ],
-                "Add Income",
-                "green",
-            ),
+            footer_html=income_footer_html,
         ),
         _render_finance_sheet_section(
             "ПЕРЕМЕЩЕНИЕ",
@@ -7889,6 +7956,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         font-weight:800;
     }}
     .finance-add-form-grid input,
+    .finance-add-form-grid select,
     .finance-add-form-grid textarea {{
         width:100%;
         border-radius:12px;
@@ -7940,6 +8008,58 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         padding:0;
         background:transparent;
     }}
+    .finance-inline-add-trigger-row td {{
+        padding:10px !important;
+        background:rgba(255,255,255,.02);
+    }}
+    .finance-inline-add {{
+        display:grid;
+        gap:10px;
+    }}
+    .finance-inline-add-summary {{
+        list-style:none;
+        width:30px;
+        height:30px;
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        border-radius:999px;
+        border:1px solid var(--border);
+        background:rgba(255,255,255,.84);
+        color:var(--text);
+        font-size:20px;
+        font-weight:900;
+        cursor:pointer;
+    }}
+    .finance-inline-add-summary::-webkit-details-marker {{
+        display:none;
+    }}
+    .finance-inline-add-body {{
+        padding-top:4px;
+    }}
+    .finance-inline-add-form {{
+        display:grid;
+        grid-template-columns:repeat(5, minmax(0, 1fr)) auto;
+        gap:8px;
+        align-items:end;
+    }}
+    .finance-inline-add-form label {{
+        display:block;
+    }}
+    .finance-inline-add-form input,
+    .finance-inline-add-form select {{
+        width:100%;
+        min-height:36px;
+        border-radius:10px;
+        border:1px solid var(--border);
+        background:var(--panel-3);
+        color:var(--text);
+        padding:8px 10px;
+        font:inherit;
+    }}
+    .finance-inline-add-form .btn {{
+        min-height:36px;
+    }}
     .finance-sheet-cell {{
         padding:9px 10px;
         min-height:38px;
@@ -7969,6 +8089,9 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         }}
         .finance-sheet-board-top,
         .finance-sheet-board-bottom {{
+            grid-template-columns:1fr;
+        }}
+        .finance-inline-add-form {{
             grid-template-columns:1fr;
         }}
         .finance-period-toolbar {{
