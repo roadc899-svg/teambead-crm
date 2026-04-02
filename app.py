@@ -9734,7 +9734,7 @@ def _render_dashboard_page_v2(
     }}
     .dashboard-v2 .dashboard-floating-metrics-toggle {{
         position:absolute;
-        top:-10px;
+        top:-22px;
         left:0;
         z-index:9;
         box-shadow:0 2px 7px rgba(29, 55, 95, 0.14);
