@@ -9,7 +9,7 @@ import shutil
 import uuid
 import os
 import json
-from urllib.parse import urlencode, quote_plus, urlparse
+from urllib.parse import urlencode, quote_plus, urlparse, urlsplit, urlunsplit, parse_qsl
 from html import escape
 import io
 import csv
@@ -6495,7 +6495,9 @@ def build_finance_form_data(wallet_item=None, expense_item=None, income_item=Non
             "expense_edit_id": str(expense_item.id),
             "expense_date": expense_item.expense_date or "",
             "expense_category": expense_item.category or "",
+            "expense_wallet_name": expense_item.wallet_name or "",
             "expense_amount": format_int_or_float(expense_item.amount),
+            "expense_from_wallet": expense_item.from_wallet or expense_item.paid_by or "",
             "expense_paid_by": expense_item.paid_by or "",
             "expense_comment": expense_item.comment or "",
         })
@@ -7183,6 +7185,7 @@ def toggle_chatterfy_parser(
 # Rebind extracted view/layout functions from dedicated modules while keeping route contracts intact.
 globals().update(bind_page_views(globals()))
 _original_sidebar_html = sidebar_html
+_original_finance_page_html = finance_page_html
 
 
 def _patched_sidebar_html(active_page, current_user=None):
@@ -7253,7 +7256,520 @@ def _patched_sidebar_html(active_page, current_user=None):
         html = re.sub(parser_links_pattern, lambda _m: parsers_group, html, count=1, flags=re.S)
     return html
 
+
+def _render_finance_sheet_section(title, total, headers, rows, tone="orange"):
+    col_count = max(1, len(headers))
+    header_html = "".join(f"<th>{escape(header)}</th>" for header in headers)
+    row_html = ""
+    for row in rows:
+        row_html += "<tr>" + "".join(
+            f'<td><div class="finance-sheet-cell">{escape(safe_text(value))}</div></td>'
+            for value in row
+        ) + "</tr>"
+    if not row_html:
+        row_html = f'<tr><td colspan="{col_count}" class="finance-sheet-empty">No data</td></tr>'
+    total_text = total if isinstance(total, str) else format_money(total)
+    return f"""
+    <section class="finance-sheet-section finance-sheet-tone-{escape(tone)}">
+        <div class="finance-sheet-titlebar">
+            <div class="finance-sheet-title">{escape(title)}</div>
+            <div class="finance-sheet-total">{escape(total_text)}</div>
+        </div>
+        <div class="finance-sheet-table-wrap">
+            <table class="finance-sheet-table">
+                <thead><tr>{header_html}</tr></thead>
+                <tbody>{row_html}</tbody>
+            </table>
+        </div>
+    </section>
+    """
+
+
+def _patched_finance_page_html(current_user, success_text="", error_text="", form_data=None, filter_values=None):
+    snapshot = load_finance_snapshot()
+    manual_all = load_manual_finance()
+    form_data = form_data or {}
+    filter_values = filter_values or {}
+    period_context = normalize_period_filter(
+        safe_text(filter_values.get("period_view") or "current"),
+        safe_text(filter_values.get("period_label")),
+    )
+    date_from = safe_text(filter_values.get("date_from"))
+    date_to = safe_text(filter_values.get("date_to"))
+    year = safe_text(filter_values.get("year"))
+    effective_period_label = resolve_period_label(
+        period_context["period_view"],
+        period_context["period_label"],
+    ) or get_current_period_label()
+    manual = filter_finance_manual_rows(
+        manual_all,
+        date_from=date_from,
+        date_to=date_to,
+        year=year,
+        period_label=effective_period_label if period_context["period_view"] != "all" else "",
+    )
+    balances = compute_finance_balances(snapshot, manual_all)
+    period_view_options = "".join([
+        f'<option value="{value}" {"selected" if period_context["period_view"] == value else ""}>{label}</option>'
+        for value, label in [("all", "All Time"), ("current", "Current Period"), ("period", "Choose Period")]
+    ])
+    period_options = make_options(build_period_options(), effective_period_label)
+    hidden_filter_inputs = (
+        f'<input type="hidden" name="date_from" value="{escape(date_from)}">'
+        f'<input type="hidden" name="date_to" value="{escape(date_to)}">'
+        f'<input type="hidden" name="year" value="{escape(year)}">'
+        f'<input type="hidden" name="period_view" value="{escape(period_context["period_view"])}">'
+        f'<input type="hidden" name="period_label" value="{escape(effective_period_label)}">'
+    )
+
+    wallet_source_rows = snapshot.get("wallets") or [
+        {
+            "category": item.category or "",
+            "description": item.description or "",
+            "owner": item.owner_name or "",
+            "wallet": item.wallet or "",
+            "amount": item.amount,
+        }
+        for item in manual_all.get("wallets", [])
+    ]
+    wallet_rows = [
+        (
+            item.get("category", ""),
+            item.get("description", ""),
+            item.get("owner", ""),
+            item.get("wallet", ""),
+            format_money(item.get("amount", 0)),
+        )
+        for item in wallet_source_rows
+    ]
+    expense_rows = [
+        (
+            item.get("date", ""),
+            item.get("category", ""),
+            format_money(item.get("amount", 0)),
+            item.get("paid_by", ""),
+            item.get("comment", ""),
+        )
+        for item in snapshot.get("expenses", [])
+    ]
+    income_rows = [
+        (
+            item.get("date", ""),
+            item.get("category", ""),
+            item.get("description", ""),
+            format_money(item.get("amount", 0)),
+            item.get("wallet", ""),
+            item.get("reconciliation", ""),
+        )
+        for item in snapshot.get("income", [])
+    ]
+    pending_rows = [
+        (
+            item.get("date", ""),
+            item.get("category", ""),
+            item.get("description", ""),
+            format_money(item.get("amount", 0)),
+            item.get("wallet", ""),
+            item.get("reconciliation", ""),
+            item.get("comment", ""),
+        )
+        for item in snapshot.get("pending", [])
+    ]
+    transfer_rows = [
+        (
+            item.get("date", ""),
+            format_money(item.get("amount", 0)),
+            item.get("from_wallet", ""),
+            item.get("to_wallet", ""),
+            item.get("comment", ""),
+        )
+        for item in snapshot.get("transfers", [])
+    ]
+
+    sheet_board = "".join([
+        _render_finance_sheet_section(
+            "ТЕКУЩИЙ ОСТАТОК",
+            balances["total"],
+            ["Категория", "Описание", "Владелец", "Кошелек", "Сумма"],
+            wallet_rows,
+            tone="orange",
+        ),
+        _render_finance_sheet_section(
+            "РАСХОД",
+            snapshot.get("totals", {}).get("expenses", 0),
+            ["Дата", "Категория", "Сумма", "Кто оплатил", "Комментарий"],
+            expense_rows,
+            tone="red",
+        ),
+        _render_finance_sheet_section(
+            "ПРИХОД",
+            snapshot.get("totals", {}).get("income", 0),
+            ["Дата", "Категория", "Описание", "Сумма", "Кошель", "Сверка"],
+            income_rows,
+            tone="green",
+        ),
+        _render_finance_sheet_section(
+            "ОЖИДАЕМ",
+            snapshot.get("totals", {}).get("pending", 0),
+            ["Дата", "Категория", "Описание", "Сумма", "Кошель", "Сверка", "Комментарий"],
+            pending_rows,
+            tone="yellow",
+        ),
+        _render_finance_sheet_section(
+            "ПЕРЕМЕЩЕНИЕ",
+            snapshot.get("totals", {}).get("transfers", 0),
+            ["Дата", "Сумма", "От куда", "Куда", "Комментарий"],
+            transfer_rows,
+            tone="blue",
+        ),
+    ])
+
+    message_html = ""
+    if success_text:
+        message_html += f'<div class="notice">{escape(success_text)}</div>'
+    if error_text:
+        message_html += f'<div class="notice notice-danger">{escape(error_text)}</div>'
+
+    upload_panel = f"""
+    <details class="upload-menu upload-menu-right">
+        <summary class="ghost-btn small-btn">Upload Snapshot</summary>
+        <div class="upload-menu-list" style="width:min(360px, calc(100vw - 48px));">
+            <form method="post" action="/finance/upload" enctype="multipart/form-data" class="caps-form">
+                <input type="hidden" name="period_view" value="{escape(period_context["period_view"])}">
+                <input type="hidden" name="period_label" value="{escape(effective_period_label)}">
+                <label>Finance CSV
+                    <input type="file" name="file" accept=".csv" required>
+                </label>
+                <button type="submit" class="btn">Upload</button>
+            </form>
+        </div>
+    </details>
+    """
+
+    create_panel = f"""
+    <details class="upload-menu upload-menu-right" {'open' if form_data else ''}>
+        <summary class="btn small-btn" style="min-width:124px;">
+            <span>Manage</span>
+            <span class="toggle-indicator" style="width:18px; height:18px; min-width:18px;"></span>
+        </summary>
+        <div class="upload-menu-list" style="width:min(1120px, calc(100vw - 48px));">
+            <div class="finance-grid" style="margin-top:14px;">
+                <div class="panel">
+                    <div class="panel-title">{'Edit Service Wallet' if form_data.get('wallet_edit_id') else 'Add Service Wallet'}</div>
+                    <form method="post" action="/finance/wallets/save" class="caps-form" style="margin-top:14px;">
+                        <input type="hidden" name="edit_id" value="{escape(form_data.get('wallet_edit_id', ''))}">
+                        {hidden_filter_inputs}
+                        <label>Type
+                            <select name="category">{make_options(['Сервисы', 'Рекламодатели', 'Партнеры'], form_data.get('wallet_category', 'Сервисы'))}</select>
+                        </label>
+                        <label>Wallet Name<input type="text" name="description" value="{escape(form_data.get('wallet_description', ''))}" placeholder="Example: Service Wallet 1"></label>
+                        <label>Owner<input type="text" name="owner_name" value="{escape(form_data.get('wallet_owner_name', ''))}" placeholder="Ivan"></label>
+                        <label>Wallet<input type="text" name="wallet" value="{escape(form_data.get('wallet_wallet', ''))}" placeholder="Wallet address"></label>
+                        <label>Opening Balance<input type="number" step="0.01" name="amount" value="{escape(form_data.get('wallet_amount', ''))}" placeholder="0.00"></label>
+                        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                            <button type="submit" class="btn">{'Save Changes' if form_data.get('wallet_edit_id') else 'Save Wallet'}</button>
+                            <a href="/finance?period_view={quote_plus(period_context['period_view'])}&period_label={quote_plus(effective_period_label)}" class="ghost-btn">Reset</a>
+                        </div>
+                    </form>
+                </div>
+                <div class="panel">
+                    <div class="panel-title">{'Edit Expense' if form_data.get('expense_edit_id') else 'Add Expense'}</div>
+                    <form method="post" action="/finance/expenses/save" class="caps-form" style="margin-top:14px;">
+                        <input type="hidden" name="edit_id" value="{escape(form_data.get('expense_edit_id', ''))}">
+                        {hidden_filter_inputs}
+                        <label>Date<input type="date" name="expense_date" value="{escape(form_data.get('expense_date', ''))}"></label>
+                        <label>Category
+                            <select name="category">{make_options(['Сервисы', 'Рекламодатели', 'Партнеры'], form_data.get('expense_category', 'Сервисы'))}</select>
+                        </label>
+                        <label>Amount<input type="number" step="0.01" name="amount" value="{escape(form_data.get('expense_amount', ''))}" placeholder="0.00"></label>
+                        <label>Wallet Name<input type="text" name="wallet_name" value="{escape(form_data.get('expense_wallet_name', ''))}" placeholder="Service wallet name"></label>
+                        <label>From Wallet<input type="text" name="from_wallet" value="{escape(form_data.get('expense_from_wallet', ''))}" placeholder="From which wallet sent"></label>
+                        <label>Comment<textarea name="comment">{escape(form_data.get('expense_comment', ''))}</textarea></label>
+                        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                            <button type="submit" class="btn">{'Save Changes' if form_data.get('expense_edit_id') else 'Save Expense'}</button>
+                            <a href="/finance?period_view={quote_plus(period_context['period_view'])}&period_label={quote_plus(effective_period_label)}" class="ghost-btn">Reset</a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            <div class="finance-grid" style="margin-top:16px;">
+                <div class="panel">
+                    <div class="panel-title">{'Edit Income' if form_data.get('income_edit_id') else 'Add Income'}</div>
+                    <form method="post" action="/finance/income/save" class="caps-form" style="margin-top:14px;">
+                        <input type="hidden" name="edit_id" value="{escape(form_data.get('income_edit_id', ''))}">
+                        {hidden_filter_inputs}
+                        <label>Date<input type="date" name="income_date" value="{escape(form_data.get('income_date', ''))}"></label>
+                        <label>Category
+                            <select name="category">{make_options(['Сервисы', 'Рекламодатели', 'Партнеры'], form_data.get('income_category', 'Сервисы'))}</select>
+                        </label>
+                        <label>Amount<input type="number" step="0.01" name="amount" value="{escape(form_data.get('income_amount', ''))}" placeholder="0.00"></label>
+                        <label>Wallet Name<input type="text" name="wallet_name" value="{escape(form_data.get('income_wallet_name', ''))}" placeholder="Service wallet name"></label>
+                        <label>From Wallet<input type="text" name="from_wallet" value="{escape(form_data.get('income_from_wallet', ''))}" placeholder="From which wallet sent"></label>
+                        <label>Comment<textarea name="comment">{escape(form_data.get('income_comment', ''))}</textarea></label>
+                        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                            <button type="submit" class="btn">{'Save Changes' if form_data.get('income_edit_id') else 'Save Income'}</button>
+                            <a href="/finance?period_view={quote_plus(period_context['period_view'])}&period_label={quote_plus(effective_period_label)}" class="ghost-btn">Reset</a>
+                        </div>
+                    </form>
+                </div>
+                <div class="panel">
+                    <div class="panel-title">{'Edit Transfer' if form_data.get('transfer_edit_id') else 'Add Transfer'}</div>
+                    <form method="post" action="/finance/transfers/save" class="caps-form" style="margin-top:14px;">
+                        <input type="hidden" name="edit_id" value="{escape(form_data.get('transfer_edit_id', ''))}">
+                        {hidden_filter_inputs}
+                        <label>Date<input type="date" name="transfer_date" value="{escape(form_data.get('transfer_date', ''))}"></label>
+                        <label>Category
+                            <select name="category">{make_options(['Сервисы', 'Рекламодатели', 'Партнеры'], form_data.get('transfer_category', 'Сервисы'))}</select>
+                        </label>
+                        <label>Amount<input type="number" step="0.01" name="amount" value="{escape(form_data.get('transfer_amount', ''))}" placeholder="0.00"></label>
+                        <label>From Wallet<input type="text" name="from_wallet" value="{escape(form_data.get('transfer_from_wallet', ''))}" placeholder="From wallet"></label>
+                        <label>To Wallet<input type="text" name="to_wallet" value="{escape(form_data.get('transfer_to_wallet', ''))}" placeholder="To wallet"></label>
+                        <label>Comment<textarea name="comment">{escape(form_data.get('transfer_comment', ''))}</textarea></label>
+                        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                            <button type="submit" class="btn">{'Save Changes' if form_data.get('transfer_edit_id') else 'Save Transfer'}</button>
+                            <a href="/finance?period_view={quote_plus(period_context['period_view'])}&period_label={quote_plus(effective_period_label)}" class="ghost-btn">Reset</a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </details>
+    """
+
+    service_wallet_rows = ""
+    for item in manual_all["wallets"]:
+        service_wallet_rows += f"""
+        <tr>
+            <td>{escape(item.category or "")}</td>
+            <td>{escape(item.description or "")}</td>
+            <td>{escape(item.owner_name or "")}</td>
+            <td class="wallet-code">{escape(item.wallet or "")}</td>
+            <td>{format_money(item.amount)}</td>
+            <td>
+                <div class="caps-actions">
+                    <form method="get" action="/finance">
+                        <input type="hidden" name="edit_wallet" value="{item.id}">
+                        <input type="hidden" name="period_view" value="{escape(period_context["period_view"])}">
+                        <input type="hidden" name="period_label" value="{escape(effective_period_label)}">
+                        <button type="submit" class="ghost-btn small-btn">Edit</button>
+                    </form>
+                    <form method="post" action="/finance/wallets/delete" onsubmit="return confirm('Delete this wallet?');">
+                        <input type="hidden" name="wallet_id" value="{item.id}">
+                        {hidden_filter_inputs}
+                        <button type="submit" class="ghost-btn small-btn">Delete</button>
+                    </form>
+                </div>
+            </td>
+        </tr>
+        """
+
+    balance_rows = ""
+    for item in balances["rows"]:
+        balance_rows += f"""
+        <tr>
+            <td>{escape(item['wallet_name'])}</td>
+            <td>{format_money(item['balance'])}</td>
+        </tr>
+        """
+
+    operation_rows = ""
+    for item, kind, edit_key, delete_path, value_date, wallet_value, from_value, comment_value in (
+        *[
+            (item, "Expense", "edit_expense", "/finance/expenses/delete", item.expense_date, item.wallet_name or "", item.from_wallet or item.paid_by or "", item.comment or "")
+            for item in manual["expenses"]
+        ],
+        *[
+            (item, "Income", "edit_income", "/finance/income/delete", item.income_date, item.wallet_name or item.wallet or "", item.from_wallet or item.reconciliation or "", item.comment or item.description or "")
+            for item in manual["income"]
+        ],
+        *[
+            (item, "Transfer", "edit_transfer", "/finance/transfers/delete", item.transfer_date, item.to_wallet or "", item.from_wallet or "", item.comment or "")
+            for item in manual["transfers"]
+        ],
+    ):
+        row_id_name = "expense_id" if kind == "Expense" else ("income_id" if kind == "Income" else "transfer_id")
+        operation_rows += f"""
+        <tr>
+            <td>{item.id}</td>
+            <td>{kind}</td>
+            <td>{escape(value_date or "")}</td>
+            <td>{escape(item.category or "")}</td>
+            <td>{escape(wallet_value)}</td>
+            <td>{escape(from_value)}</td>
+            <td>{format_money(item.amount)}</td>
+            <td>{escape(comment_value)}</td>
+            <td>
+                <div class="caps-actions">
+                    <form method="get" action="/finance">
+                        <input type="hidden" name="{edit_key}" value="{item.id}">
+                        <input type="hidden" name="period_view" value="{escape(period_context["period_view"])}">
+                        <input type="hidden" name="period_label" value="{escape(effective_period_label)}">
+                        <button type="submit" class="ghost-btn small-btn">Edit</button>
+                    </form>
+                    <form method="post" action="{delete_path}" onsubmit="return confirm('Delete {kind.lower()}?');">
+                        <input type="hidden" name="{row_id_name}" value="{item.id}">
+                        {hidden_filter_inputs}
+                        <button type="submit" class="ghost-btn small-btn">Delete</button>
+                    </form>
+                </div>
+            </td>
+        </tr>
+        """
+
+    content = f"""
+    <style>
+    .finance-excel-layout {{
+        display:grid;
+        gap:18px;
+    }}
+    .finance-excel-header {{
+        display:flex;
+        justify-content:space-between;
+        gap:16px;
+        align-items:flex-end;
+        flex-wrap:wrap;
+    }}
+    .finance-sheet-board {{
+        display:grid;
+        grid-template-columns:repeat(5, minmax(260px, 1fr));
+        gap:12px;
+        align-items:start;
+    }}
+    .finance-sheet-section {{
+        border:1px solid var(--border);
+        border-radius:18px;
+        background:var(--panel);
+        overflow:hidden;
+        box-shadow:var(--shadow);
+        min-width:0;
+    }}
+    .finance-sheet-titlebar {{
+        display:grid;
+        grid-template-columns:minmax(0, 1fr) auto;
+        gap:12px;
+        align-items:center;
+        padding:12px 14px;
+        font-weight:900;
+        text-transform:uppercase;
+        letter-spacing:.04em;
+    }}
+    .finance-sheet-title {{
+        font-size:12px;
+    }}
+    .finance-sheet-total {{
+        font-size:18px;
+        line-height:1;
+        white-space:nowrap;
+    }}
+    .finance-sheet-tone-orange .finance-sheet-titlebar {{ background:#f6b26b; color:#3a2407; }}
+    .finance-sheet-tone-red .finance-sheet-titlebar {{ background:#e06666; color:#fff7f7; }}
+    .finance-sheet-tone-green .finance-sheet-titlebar {{ background:#93c47d; color:#10210d; }}
+    .finance-sheet-tone-yellow .finance-sheet-titlebar {{ background:#ffe066; color:#473b00; }}
+    .finance-sheet-tone-blue .finance-sheet-titlebar {{ background:#6d9eeb; color:#071a38; }}
+    .finance-sheet-table-wrap {{
+        overflow:auto;
+        background:linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,0));
+    }}
+    .finance-sheet-table {{
+        width:100%;
+        min-width:100%;
+        border-collapse:separate;
+        border-spacing:0;
+        font-size:12px;
+    }}
+    .finance-sheet-table th,
+    .finance-sheet-table td {{
+        border-right:1px solid var(--border);
+        border-bottom:1px solid var(--border);
+        vertical-align:top;
+    }}
+    .finance-sheet-table th {{
+        position:sticky;
+        top:0;
+        z-index:1;
+        background:var(--table-head);
+        color:var(--table-head-text);
+        padding:9px 10px;
+        text-align:left;
+        font-size:11px;
+        text-transform:uppercase;
+        letter-spacing:.05em;
+    }}
+    .finance-sheet-table td {{
+        padding:0;
+        background:transparent;
+    }}
+    .finance-sheet-cell {{
+        padding:9px 10px;
+        min-height:38px;
+        white-space:pre-wrap;
+        word-break:break-word;
+    }}
+    .finance-sheet-empty {{
+        padding:18px 10px !important;
+        text-align:center;
+        color:var(--muted);
+        background:rgba(255,255,255,.02);
+    }}
+    .finance-manual-stats .stats-grid {{
+        grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));
+    }}
+    @media (max-width: 1700px) {{
+        .finance-sheet-board {{
+            grid-template-columns:repeat(2, minmax(280px, 1fr));
+        }}
+    }}
+    @media (max-width: 900px) {{
+        .finance-sheet-board {{
+            grid-template-columns:1fr;
+        }}
+        .finance-excel-header {{
+            align-items:stretch;
+        }}
+    }}
+    </style>
+    {message_html}
+    <div class="finance-excel-layout">
+        {render_active_period_banner(effective_period_label if period_context["period_view"] != "all" else "")}
+        <div class="panel compact-panel">
+            <div class="finance-excel-header">
+                <div>
+                    <div class="panel-title">Finance</div>
+                    <div class="panel-subtitle">Верхний блок повторяет структуру листа «ФИНАНСЫ» из Excel: остаток, расход, приход, ожидаем и перемещение.</div>
+                </div>
+                <div class="toolbar-actions">
+                    <div class="panel compact-panel filters">
+                        <form method="get" action="/finance" style="justify-content:flex-end;" data-persist-filters="finance">
+                            <label>View<select name="period_view">{period_view_options}</select></label>
+                            <label>Period<select name="period_label">{period_options}</select></label>
+                            <button type="submit" class="btn small-btn">Filter</button>
+                            <a href="/finance" class="ghost-btn small-btn" data-reset-filters="finance">Reset</a>
+                        </form>
+                    </div>
+                    {upload_panel}
+                    {create_panel}
+                </div>
+            </div>
+        </div>
+        <div class="finance-sheet-board">{sheet_board}</div>
+        <div class="panel compact-panel finance-manual-stats">
+            <div class="stats-grid">
+                <div class="stat-card"><div class="name">Manual Wallets</div><div class="value">{len(manual_all['wallets'])}</div></div>
+                <div class="stat-card"><div class="name">Manual Expenses</div><div class="value">{format_money(sum(safe_number(x.amount) for x in manual['expenses']))}</div></div>
+                <div class="stat-card"><div class="name">Manual Income</div><div class="value">{format_money(sum(safe_number(x.amount) for x in manual['income']))}</div></div>
+                <div class="stat-card"><div class="name">Manual Transfers</div><div class="value">{format_money(sum(safe_number(x.amount) for x in manual['transfers']))}</div></div>
+                <div class="stat-card"><div class="name">Tracked Balances</div><div class="value">{len(balances['rows'])}</div></div>
+            </div>
+        </div>
+        {render_finance_table("Manual Service Wallets", "", '<th>Type</th><th>Wallet Name</th><th>Owner</th><th>Wallet</th><th>Opening Balance</th><th>Action</th>', service_wallet_rows, "1240px")}
+        {render_finance_table("Calculated Wallet Balances", "", '<th>Wallet</th><th>Current Balance</th>', balance_rows, "980px")}
+        {render_finance_table("Manual Operations", "", '<th>ID</th><th>Type</th><th>Date</th><th>Category</th><th>Wallet Name / To</th><th>From Wallet</th><th>Amount</th><th>Comment</th><th>Action</th>', operation_rows, "1560px")}
+    </div>
+    """
+    return page_shell("Finance", content, active_page="finance", current_user=current_user)
+
 sidebar_html = _patched_sidebar_html
+finance_page_html = _patched_finance_page_html
 page_shell.__globals__["sidebar_html"] = _patched_sidebar_html
 _page_routes = bind_page_routes(globals())
 _domain_actions = {}
@@ -7326,6 +7842,20 @@ def _patched_finance_page(
         edit_income,
         edit_transfer,
     )
+
+
+def _preserve_finance_redirect_filters(response, period_view="", period_label=""):
+    location = getattr(response, "headers", {}).get("location")
+    if not location or not location.startswith("/finance"):
+        return response
+    period_context = normalize_period_filter(period_view or "current", period_label)
+    parsed = urlsplit(location)
+    params = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    params["period_view"] = period_context["period_view"]
+    params["period_label"] = period_context["period_label"]
+    query = urlencode(params)
+    response.headers["location"] = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, parsed.fragment))
+    return response
 
 
 def _patched_caps_page(
@@ -11935,13 +12465,22 @@ def save_finance_wallet(
     date_from: str = Form(default=""),
     date_to: str = Form(default=""),
     year: str = Form(default=""),
+    period_view: str = Form(default="current"),
+    period_label: str = Form(default=""),
 ):
-    return _domain_actions["save_finance_wallet"](request, edit_id, category, description, owner_name, wallet, amount, date_from, date_to, year)
+    response = _domain_actions["save_finance_wallet"](request, edit_id, category, description, owner_name, wallet, amount, date_from, date_to, year)
+    return _preserve_finance_redirect_filters(response, period_view, period_label)
 
 
 @app.post("/finance/upload")
-async def upload_finance_file(request: Request, file: UploadFile = File(...)):
-    return await _domain_actions["upload_finance_file"](request, file)
+async def upload_finance_file(
+    request: Request,
+    file: UploadFile = File(...),
+    period_view: str = Form(default="current"),
+    period_label: str = Form(default=""),
+):
+    response = await _domain_actions["upload_finance_file"](request, file)
+    return _preserve_finance_redirect_filters(response, period_view, period_label)
 
 
 @app.post("/finance/expenses/save")
@@ -11958,8 +12497,11 @@ def save_finance_expense(
     date_from: str = Form(default=""),
     date_to: str = Form(default=""),
     year: str = Form(default=""),
+    period_view: str = Form(default="current"),
+    period_label: str = Form(default=""),
 ):
-    return _domain_actions["save_finance_expense"](request, edit_id, expense_date, category, wallet_name, amount, from_wallet, paid_by, comment, date_from, date_to, year)
+    response = _domain_actions["save_finance_expense"](request, edit_id, expense_date, category, wallet_name, amount, from_wallet, paid_by, comment, date_from, date_to, year)
+    return _preserve_finance_redirect_filters(response, period_view, period_label)
 
 
 @app.post("/finance/income/save")
@@ -11975,8 +12517,11 @@ def save_finance_income(
     date_from: str = Form(default=""),
     date_to: str = Form(default=""),
     year: str = Form(default=""),
+    period_view: str = Form(default="current"),
+    period_label: str = Form(default=""),
 ):
-    return _domain_actions["save_finance_income"](request, edit_id, income_date, category, wallet_name, amount, from_wallet, comment, date_from, date_to, year)
+    response = _domain_actions["save_finance_income"](request, edit_id, income_date, category, wallet_name, amount, from_wallet, comment, date_from, date_to, year)
+    return _preserve_finance_redirect_filters(response, period_view, period_label)
 
 
 @app.post("/finance/transfers/save")
@@ -11992,28 +12537,67 @@ def save_finance_transfer(
     date_from: str = Form(default=""),
     date_to: str = Form(default=""),
     year: str = Form(default=""),
+    period_view: str = Form(default="current"),
+    period_label: str = Form(default=""),
 ):
-    return _domain_actions["save_finance_transfer"](request, edit_id, transfer_date, category, amount, from_wallet, to_wallet, comment, date_from, date_to, year)
+    response = _domain_actions["save_finance_transfer"](request, edit_id, transfer_date, category, amount, from_wallet, to_wallet, comment, date_from, date_to, year)
+    return _preserve_finance_redirect_filters(response, period_view, period_label)
 
 
 @app.post("/finance/wallets/delete")
-def delete_finance_wallet(request: Request, wallet_id: str = Form(...), date_from: str = Form(default=""), date_to: str = Form(default=""), year: str = Form(default="")):
-    return _domain_actions["delete_finance_wallet"](request, wallet_id, date_from, date_to, year)
+def delete_finance_wallet(
+    request: Request,
+    wallet_id: str = Form(...),
+    date_from: str = Form(default=""),
+    date_to: str = Form(default=""),
+    year: str = Form(default=""),
+    period_view: str = Form(default="current"),
+    period_label: str = Form(default=""),
+):
+    response = _domain_actions["delete_finance_wallet"](request, wallet_id, date_from, date_to, year)
+    return _preserve_finance_redirect_filters(response, period_view, period_label)
 
 
 @app.post("/finance/expenses/delete")
-def delete_finance_expense(request: Request, expense_id: str = Form(...), date_from: str = Form(default=""), date_to: str = Form(default=""), year: str = Form(default="")):
-    return _domain_actions["delete_finance_expense"](request, expense_id, date_from, date_to, year)
+def delete_finance_expense(
+    request: Request,
+    expense_id: str = Form(...),
+    date_from: str = Form(default=""),
+    date_to: str = Form(default=""),
+    year: str = Form(default=""),
+    period_view: str = Form(default="current"),
+    period_label: str = Form(default=""),
+):
+    response = _domain_actions["delete_finance_expense"](request, expense_id, date_from, date_to, year)
+    return _preserve_finance_redirect_filters(response, period_view, period_label)
 
 
 @app.post("/finance/income/delete")
-def delete_finance_income(request: Request, income_id: str = Form(...), date_from: str = Form(default=""), date_to: str = Form(default=""), year: str = Form(default="")):
-    return _domain_actions["delete_finance_income"](request, income_id, date_from, date_to, year)
+def delete_finance_income(
+    request: Request,
+    income_id: str = Form(...),
+    date_from: str = Form(default=""),
+    date_to: str = Form(default=""),
+    year: str = Form(default=""),
+    period_view: str = Form(default="current"),
+    period_label: str = Form(default=""),
+):
+    response = _domain_actions["delete_finance_income"](request, income_id, date_from, date_to, year)
+    return _preserve_finance_redirect_filters(response, period_view, period_label)
 
 
 @app.post("/finance/transfers/delete")
-def delete_finance_transfer(request: Request, transfer_id: str = Form(...), date_from: str = Form(default=""), date_to: str = Form(default=""), year: str = Form(default="")):
-    return _domain_actions["delete_finance_transfer"](request, transfer_id, date_from, date_to, year)
+def delete_finance_transfer(
+    request: Request,
+    transfer_id: str = Form(...),
+    date_from: str = Form(default=""),
+    date_to: str = Form(default=""),
+    year: str = Form(default=""),
+    period_view: str = Form(default="current"),
+    period_label: str = Form(default=""),
+):
+    response = _domain_actions["delete_finance_transfer"](request, transfer_id, date_from, date_to, year)
+    return _preserve_finance_redirect_filters(response, period_view, period_label)
 
 
 @app.get("/caps", response_class=HTMLResponse)
