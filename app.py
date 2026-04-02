@@ -7539,6 +7539,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         )
         for item in manual.get("income", [])
     ]
+    previous_period_label = get_previous_period_label(effective_period_label)
     pending_rows = [
         (
             format_finance_date_display(item.get("date", "")),
@@ -7567,6 +7568,23 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         for item in manual.get("pending", [])
         if safe_text(getattr(item, "description", "")).strip()
     ]
+    pending_existing_cabinet_set = {item for item in pending_existing_cabinets if item}
+    pending_auto_rows = []
+    today_finance_label = format_finance_date_display(get_crm_local_date().strftime("%Y-%m-%d"))
+    for cabinet_name in income_cabinet_options:
+        if cabinet_name in pending_existing_cabinet_set:
+            continue
+        amount_value = safe_number(pending_cpa_map.get(cabinet_name, 0))
+        if amount_value <= 0:
+            continue
+        pending_auto_rows.append((
+            today_finance_label,
+            safe_text(cabinet_primary_brand_map.get(cabinet_name, "")),
+            cabinet_name,
+            format_money(amount_value),
+            f"CPA from {previous_period_label}" if previous_period_label else "",
+        ))
+    pending_rows = [*pending_rows, *pending_auto_rows]
     transfer_rows = [
         (
             format_finance_date_display(item.get("date", "")),
@@ -7587,7 +7605,11 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         for item in manual.get("transfers", [])
     ]
 
-    pending_total = snapshot.get("totals", {}).get("pending", 0) + sum(safe_number(item.amount) for item in manual.get("pending", []))
+    pending_total = (
+        snapshot.get("totals", {}).get("pending", 0)
+        + sum(safe_number(item.amount) for item in manual.get("pending", []))
+        + sum(safe_number(pending_cpa_map.get(cabinet_name, 0)) for cabinet_name in income_cabinet_options if cabinet_name not in pending_existing_cabinet_set)
+    )
     expense_total = snapshot.get("totals", {}).get("expenses", 0) + sum(safe_number(item.amount) for item in manual.get("expenses", []))
     income_total = snapshot.get("totals", {}).get("income", 0) + sum(safe_number(item.amount) for item in manual.get("income", []))
     transfer_total = snapshot.get("totals", {}).get("transfers", 0) + sum(safe_number(item.amount) for item in manual.get("transfers", []))
