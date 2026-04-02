@@ -9763,8 +9763,15 @@ def _render_dashboard_page_v2(
             if (!table) return;
             const state = window.dashboardReadState();
             state.activeNode = state.activeNode || {{}};
-            state.activeNode[table.id || 'dashboard-tree-table'] = nodeId || '';
+            const tableKey = table.id || 'dashboard-tree-table';
+            state.activeNode[tableKey] = nodeId || '';
             window.dashboardWriteState(state);
+            const treeState = readDashboardTreeState();
+            treeState[tableKey] = {{
+                expanded: Array.isArray(treeState[tableKey]?.expanded) ? treeState[tableKey].expanded : [],
+                activeNode: nodeId || '',
+            }};
+            writeDashboardTreeState(treeState);
             if (window.dashboardApplyActiveNode) window.dashboardApplyActiveNode(table);
         }};
 
@@ -9808,8 +9815,15 @@ def _render_dashboard_page_v2(
             if (window.dashboardWriteState) {{
                 const state = window.dashboardReadState();
                 state.expanded = state.expanded || {{}};
-                state.expanded[table.id || 'dashboard-tree-table'] = openNodes;
+                const tableKey = table.id || 'dashboard-tree-table';
+                state.expanded[tableKey] = openNodes;
                 window.dashboardWriteState(state);
+                const treeState = readDashboardTreeState();
+                treeState[tableKey] = {{
+                    expanded: openNodes,
+                    activeNode: treeState[tableKey]?.activeNode || nodeId || '',
+                }};
+                writeDashboardTreeState(treeState);
             }}
             if (window.dashboardSetActiveNode) window.dashboardSetActiveNode(table, nodeId);
             if (window.dashboardSyncExpandedRows) window.dashboardSyncExpandedRows(table);
@@ -9867,6 +9881,38 @@ def _render_dashboard_page_v2(
                 costs_ai: 72,
                 profit: 72,
                 roi: 64,
+            }};
+            const ensureMeasureProbe = () => {{
+                let probe = document.getElementById('dashboardWidthMeasureProbe');
+                if (probe) return probe;
+                probe = document.createElement('span');
+                probe.id = 'dashboardWidthMeasureProbe';
+                probe.style.position = 'absolute';
+                probe.style.left = '-99999px';
+                probe.style.top = '-99999px';
+                probe.style.visibility = 'hidden';
+                probe.style.whiteSpace = 'nowrap';
+                probe.style.pointerEvents = 'none';
+                probe.style.padding = '0';
+                probe.style.margin = '0';
+                document.body.appendChild(probe);
+                return probe;
+            }};
+            const measureCellContentWidth = (cell) => {{
+                if (!cell) return 0;
+                const probe = ensureMeasureProbe();
+                const style = window.getComputedStyle(cell);
+                probe.style.font = style.font;
+                probe.style.fontSize = style.fontSize;
+                probe.style.fontWeight = style.fontWeight;
+                probe.style.fontFamily = style.fontFamily;
+                probe.style.letterSpacing = style.letterSpacing;
+                probe.style.textTransform = style.textTransform;
+                probe.style.lineHeight = style.lineHeight;
+                const label = (cell.innerText || cell.textContent || '').replace(/\\s+/g, ' ').trim();
+                if (!label) return 0;
+                probe.textContent = label;
+                return Math.ceil(probe.getBoundingClientRect().width || probe.offsetWidth || 0);
             }};
             const getTargetColumnWidth = (cell) => {{
                 if (!cell) return 0;
@@ -9961,9 +10007,9 @@ def _render_dashboard_page_v2(
                         const paddingLeft = parseFloat(style.paddingLeft || '0') || 0;
                         const paddingRight = parseFloat(style.paddingRight || '0') || 0;
                         const contentWidth = Math.max(
+                            measureCellContentWidth(cell),
                             cell.scrollWidth || 0,
-                            cell.firstElementChild?.scrollWidth || 0,
-                            cell.textContent?.trim() ? cell.scrollWidth || 0 : 0
+                            cell.firstElementChild?.scrollWidth || 0
                         );
                         width = Math.max(width, Math.ceil(contentWidth + paddingLeft + paddingRight + 10));
                     }});
@@ -10006,6 +10052,20 @@ def _render_dashboard_page_v2(
             }} catch (_error) {{}}
         }};
         const dashboardFilterKey = form?.dataset.persistFilters || 'dashboard-v2';
+        const dashboardTreeStateKey = window.teambeadStorageKey('dashboard-tree-state:' + dashboardFilterKey);
+        const readDashboardTreeState = () => {{
+            try {{
+                const parsed = JSON.parse(localStorage.getItem(dashboardTreeStateKey) || '{{}}');
+                return parsed && typeof parsed === 'object' ? parsed : {{}};
+            }} catch (_error) {{
+                return {{}};
+            }}
+        }};
+        const writeDashboardTreeState = (state) => {{
+            try {{
+                localStorage.setItem(dashboardTreeStateKey, JSON.stringify(state || {{}}));
+            }} catch (_error) {{}}
+        }};
         const dashboardCollectFilterValues = () => {{
             if (!form) return {{}};
             const values = {{}};
@@ -10056,6 +10116,7 @@ def _render_dashboard_page_v2(
                 delete state.activeNode['dashboardUnifiedTable'];
             }}
             window.dashboardWriteState(state);
+            writeDashboardTreeState({{}});
         }};
         window.dashboardRestoreFilterState = () => {{
             if (!form) return false;
@@ -10077,14 +10138,21 @@ def _render_dashboard_page_v2(
         window.dashboardPersistAllTreeState = () => {{
             const state = window.dashboardReadState();
             state.expanded = state.expanded || {{}};
+            const treeState = readDashboardTreeState();
             document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
                 const openNodes = Array.from(table.querySelectorAll('.dashboard-tree-toggle'))
                     .filter((button) => button.getAttribute('aria-expanded') === 'true')
                     .map((button) => button.dataset.target || '')
                     .filter(Boolean);
-                state.expanded[table.id || 'dashboard-tree-table'] = openNodes;
+                const tableKey = table.id || 'dashboard-tree-table';
+                state.expanded[tableKey] = openNodes;
+                treeState[tableKey] = {{
+                    expanded: openNodes,
+                    activeNode: treeState[tableKey]?.activeNode || '',
+                }};
             }});
             window.dashboardWriteState(state);
+            writeDashboardTreeState(treeState);
         }};
         window.dashboardApplySelectedRows = (table) => {{
             if (!table) return;
@@ -10233,6 +10301,11 @@ def _render_dashboard_page_v2(
             const getTreeRows = () => Array.from(table.querySelectorAll('tbody tr'));
             const getButtonMap = () => new Map(getTreeButtons().map((button) => [button.dataset.target || '', button]));
             const readExpandedNodes = () => {{
+                const treeState = readDashboardTreeState();
+                const payload = treeState[table.id || 'dashboard-tree-table'];
+                if (payload && Array.isArray(payload.expanded)) {{
+                    return payload.expanded;
+                }}
                 const state = window.dashboardReadState();
                 const expanded = state.expanded || {{}};
                 const value = expanded[table.id || 'dashboard-tree-table'];
@@ -10256,8 +10329,15 @@ def _render_dashboard_page_v2(
                     .filter(Boolean);
                 const state = window.dashboardReadState();
                 state.expanded = state.expanded || {{}};
-                state.expanded[table.id || 'dashboard-tree-table'] = openNodes;
+                const tableKey = table.id || 'dashboard-tree-table';
+                state.expanded[tableKey] = openNodes;
                 window.dashboardWriteState(state);
+                const treeState = readDashboardTreeState();
+                treeState[tableKey] = {{
+                    expanded: openNodes,
+                    activeNode: treeState[tableKey]?.activeNode || '',
+                }};
+                writeDashboardTreeState(treeState);
             }};
             const showDirectChildren = (nodeId) => {{
                 getTreeRows().forEach((row) => {{
