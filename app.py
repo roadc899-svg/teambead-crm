@@ -7775,6 +7775,23 @@ def get_dashboard_scope_lookup_keys(cabinet_name="", brand="", geo=""):
     return keys
 
 
+def build_dashboard_flow_lookup_keys(platform="", manager="", geo=""):
+    manager_key = safe_text(manager)
+    geo_key = normalize_geo_value(geo)
+    platform_key = normalize_dashboard_platform(platform)
+    result = []
+    seen = set()
+    for key in [
+        build_flow_key(platform_key, manager_key, geo_key),
+        build_flow_key("", manager_key, geo_key),
+    ]:
+        if not key[1] or not key[2] or key in seen:
+            continue
+        seen.add(key)
+        result.append(key)
+    return result
+
+
 def build_dashboard_candidate_scope_keys(cabinets=None, offer="", geo=""):
     cabinets = cabinets or []
     result = []
@@ -7808,8 +7825,10 @@ def build_dashboard_cabinet_flow_map():
         for geo_code in geos:
             if not platform_key or not manager_key or not geo_code:
                 continue
-            flow_key = build_flow_key(platform_key, manager_key, geo_code)
-            result.setdefault(flow_key, []).append(row)
+            for flow_key in build_dashboard_flow_lookup_keys(platform_key, manager_key, geo_code):
+                bucket = result.setdefault(flow_key, [])
+                if row not in bucket:
+                    bucket.append(row)
     return result
 
 
@@ -7869,21 +7888,21 @@ def build_dashboard_caps_flow_map(period_label=""):
         geo_key = normalize_geo_value(flow_parts[2] if len(flow_parts) > 2 else (cap.code or cap.geo))
         if not platform_key or not manager_key or not geo_key:
             continue
-        flow_key = build_flow_key(platform_key, manager_key, geo_key)
-        bucket = result.setdefault(flow_key, {
-            "caps_count": 0,
-            "cap_total": 0.0,
-            "cap_current_ftd": 0.0,
-            "cap_promos": set(),
-            "cabinet_names": set(),
-        })
-        bucket["caps_count"] += 1
-        bucket["cap_total"] += safe_number(cap.cap_value)
-        bucket["cap_current_ftd"] += safe_number(cap.current_ftd)
-        if safe_text(cap.promo_code):
-            bucket["cap_promos"].add(safe_text(cap.promo_code))
-        if safe_text(cap.cabinet_name):
-            bucket["cabinet_names"].add(safe_text(cap.cabinet_name))
+        for flow_key in build_dashboard_flow_lookup_keys(platform_key, manager_key, geo_key):
+            bucket = result.setdefault(flow_key, {
+                "caps_count": 0,
+                "cap_total": 0.0,
+                "cap_current_ftd": 0.0,
+                "cap_promos": set(),
+                "cabinet_names": set(),
+            })
+            bucket["caps_count"] += 1
+            bucket["cap_total"] += safe_number(cap.cap_value)
+            bucket["cap_current_ftd"] += safe_number(cap.current_ftd)
+            if safe_text(cap.promo_code):
+                bucket["cap_promos"].add(safe_text(cap.promo_code))
+            if safe_text(cap.cabinet_name):
+                bucket["cabinet_names"].add(safe_text(cap.cabinet_name))
     for bucket in result.values():
         bucket["cap_fill"] = cap_fill_percent(bucket["cap_current_ftd"], bucket["cap_total"])
     return result
@@ -7935,20 +7954,20 @@ def build_dashboard_players_flow_map(period_label=""):
         geo_key = normalize_geo_value(getattr(row, "country", ""))
         if not platform_key or not manager_key or not geo_key:
             continue
-        flow_key = build_flow_key(platform_key, manager_key, geo_key)
-        bucket = result.setdefault(flow_key, {
-            "players_ftd": 0.0,
-            "qual_ftd": 0.0,
-            "payout": 0.0,
-        })
         deposit_amount = safe_number(getattr(row, "deposit_amount", 0))
         cpa_amount = safe_number(getattr(row, "cpa_amount", 0))
         is_qualified = bool(getattr(row, "is_qualified_ftd", False)) or cpa_amount > 0
-        if deposit_amount > 0:
-            bucket["players_ftd"] += 1
-        if is_qualified:
-            bucket["qual_ftd"] += 1
-            bucket["payout"] += cpa_amount
+        for flow_key in build_dashboard_flow_lookup_keys(platform_key, manager_key, geo_key):
+            bucket = result.setdefault(flow_key, {
+                "players_ftd": 0.0,
+                "qual_ftd": 0.0,
+                "payout": 0.0,
+            })
+            if deposit_amount > 0:
+                bucket["players_ftd"] += 1
+            if is_qualified:
+                bucket["qual_ftd"] += 1
+                bucket["payout"] += cpa_amount
     for bucket in result.values():
         bucket["rate"] = (bucket["payout"] / bucket["qual_ftd"]) if bucket["qual_ftd"] > 0 else 0.0
     return result
@@ -8002,21 +8021,21 @@ def build_dashboard_hold_flow_map(period_label=""):
         geo_key = normalize_geo_value(flow_parts[2] if len(flow_parts) > 2 else item.get("country"))
         if not platform_key or not manager_key or not geo_key:
             continue
-        flow_key = build_flow_key(platform_key, manager_key, geo_key)
-        bucket = result.setdefault(flow_key, {
-            "hold_count": 0,
-            "baseline_fail_count": 0,
-            "wager_fail_count": 0,
-            "hold_cabinets": set(),
-        })
-        bucket["hold_count"] += 1
         reason = safe_text(item.get("reason")).lower()
-        if "baseline" in reason:
-            bucket["baseline_fail_count"] += 1
-        if "wager" in reason:
-            bucket["wager_fail_count"] += 1
-        if safe_text(item.get("cabinet_name")):
-            bucket["hold_cabinets"].add(safe_text(item.get("cabinet_name")))
+        for flow_key in build_dashboard_flow_lookup_keys(platform_key, manager_key, geo_key):
+            bucket = result.setdefault(flow_key, {
+                "hold_count": 0,
+                "baseline_fail_count": 0,
+                "wager_fail_count": 0,
+                "hold_cabinets": set(),
+            })
+            bucket["hold_count"] += 1
+            if "baseline" in reason:
+                bucket["baseline_fail_count"] += 1
+            if "wager" in reason:
+                bucket["wager_fail_count"] += 1
+            if safe_text(item.get("cabinet_name")):
+                bucket["hold_cabinets"].add(safe_text(item.get("cabinet_name")))
     return result
 
 
@@ -8066,8 +8085,17 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
 
     for item in fb_rows:
         platform_key = normalize_dashboard_platform(item.get("platform"))
-        flow_key = build_flow_key(platform_key, item.get("manager"), item.get("geo"))
-        related_cabinets = cabinet_map.get(flow_key, [])
+        flow_lookup_keys = build_dashboard_flow_lookup_keys(platform_key, item.get("manager"), item.get("geo"))
+        flow_key = flow_lookup_keys[0] if flow_lookup_keys else tuple()
+        related_cabinets = []
+        seen_cabinet_ids = set()
+        for lookup_key in flow_lookup_keys:
+            for cabinet_item in cabinet_map.get(lookup_key, []):
+                cabinet_identity = getattr(cabinet_item, "id", None) or safe_text(getattr(cabinet_item, "name", ""))
+                if cabinet_identity in seen_cabinet_ids:
+                    continue
+                seen_cabinet_ids.add(cabinet_identity)
+                related_cabinets.append(cabinet_item)
         matched_cabinets = [cab for cab in related_cabinets if dashboard_offer_matches_cabinet(cab, item.get("offer"))]
         if matched_cabinets:
             related_cabinets = matched_cabinets
@@ -8145,6 +8173,7 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
             "hold_split": "0B / 0W",
             "active_cabinets": len(active_cabinets),
             "flow_key": flow_key,
+            "dashboard_flow_lookup_keys": ["|".join(key) for key in flow_lookup_keys],
             "dashboard_scope_key": "|".join(scope_key),
             "dashboard_scope_weight": row_weight,
             "dashboard_candidate_scope_keys": ["|".join(key) for key in candidate_scope_keys],
@@ -8189,7 +8218,12 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
     for row in rows:
         scope_key_text = safe_text(row.get("dashboard_scope_key"))
         scope_key_parts = tuple(scope_key_text.split("|")) if scope_key_text else tuple()
-        flow_key_value = resolve_dashboard_flow_key(row.get("flow_key"))
+        flow_lookup_keys = []
+        for raw_key in row.get("dashboard_flow_lookup_keys", []) or []:
+            parsed_key = tuple(safe_text(raw_key).split("|"))
+            if len(parsed_key) == 3:
+                flow_lookup_keys.append(parsed_key)
+        flow_key_value = flow_lookup_keys[0] if flow_lookup_keys else resolve_dashboard_flow_key(row.get("flow_key"))
         weight = safe_number(row.get("dashboard_scope_weight", 0))
         bucket_weight = scope_bucket_weights.get(scope_key_text, 0.0)
         bucket_count = scope_bucket_counts.get(scope_key_text, 1)
@@ -8225,12 +8259,23 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
         caps_share = scope_share if caps_info and scope_lookup_keys else flow_share
         hold_share = scope_share if hold_info and scope_lookup_keys else flow_share
 
-        if not players_info and flow_key_value:
-            players_info = players_flow_map.get(flow_key_value, {})
-        if not caps_info and flow_key_value:
-            caps_info = caps_flow_map.get(flow_key_value, {})
-        if not hold_info and flow_key_value:
-            hold_info = hold_flow_map.get(flow_key_value, {})
+        if not flow_lookup_keys and flow_key_value:
+            flow_lookup_keys = [flow_key_value]
+        if not players_info:
+            for lookup_key in flow_lookup_keys:
+                players_info = players_flow_map.get(lookup_key, {})
+                if players_info:
+                    break
+        if not caps_info:
+            for lookup_key in flow_lookup_keys:
+                caps_info = caps_flow_map.get(lookup_key, {})
+                if caps_info:
+                    break
+        if not hold_info:
+            for lookup_key in flow_lookup_keys:
+                hold_info = hold_flow_map.get(lookup_key, {})
+                if hold_info:
+                    break
 
         if not players_info:
             players_info = {
@@ -9783,6 +9828,19 @@ def _render_dashboard_page_v2(
                 'platform', 'geo', 'manager', 'campaign_name', 'adset_name', 'ad_name',
                 'buyer',
             ];
+            const computeVisibleTableWidth = () => {{
+                const headerCells = Array.from(table.querySelectorAll('thead th[data-col]')).filter((cell) => {{
+                    if (!cell) return false;
+                    const style = window.getComputedStyle(cell);
+                    return style.display !== 'none';
+                }});
+                return headerCells.reduce((sum, cell) => {{
+                    const rectWidth = Math.ceil(cell.getBoundingClientRect().width || 0);
+                    if (rectWidth > 0) return sum + rectWidth;
+                    const computedWidth = parseFloat(window.getComputedStyle(cell).width || '0') || 0;
+                    return sum + Math.ceil(computedWidth);
+                }}, 0);
+            }};
             const readWidthCache = () => {{
                 try {{
                     const parsed = JSON.parse(table.dataset.autoWidthCache || '{{}}');
@@ -9809,11 +9867,11 @@ def _render_dashboard_page_v2(
                         cell.style.maxWidth = `${{measuredWidth}}px`;
                     }});
                 }});
-                const cachedTotalWidth = parseFloat(cache.totalWidth || 0) || 0;
-                if (cachedTotalWidth > 0) {{
-                    table.style.width = `${{cachedTotalWidth}}px`;
-                    table.style.minWidth = `${{cachedTotalWidth}}px`;
-                    table.style.maxWidth = `${{cachedTotalWidth}}px`;
+                const visibleWidth = computeVisibleTableWidth();
+                if (visibleWidth > 0) {{
+                    table.style.width = `${{visibleWidth}}px`;
+                    table.style.minWidth = `${{visibleWidth}}px`;
+                    table.style.maxWidth = `${{visibleWidth}}px`;
                     applied = true;
                 }}
                 if (applied) {{
@@ -9876,17 +9934,7 @@ def _render_dashboard_page_v2(
                         cell.style.maxWidth = `${{measuredWidth}}px`;
                     }});
                 }});
-                const headerCells = Array.from(table.querySelectorAll('thead th[data-col]')).filter((cell) => {{
-                    if (!cell) return false;
-                    const style = window.getComputedStyle(cell);
-                    return style.display !== 'none';
-                }});
-                const totalWidth = headerCells.reduce((sum, cell) => {{
-                    const rectWidth = Math.ceil(cell.getBoundingClientRect().width || 0);
-                    if (rectWidth > 0) return sum + rectWidth;
-                    const computedWidth = parseFloat(window.getComputedStyle(cell).width || '0') || 0;
-                    return sum + Math.ceil(computedWidth);
-                }}, 0);
+                const totalWidth = computeVisibleTableWidth();
                 if (totalWidth > 0) {{
                     table.style.width = `${{totalWidth}}px`;
                     table.style.minWidth = `${{totalWidth}}px`;
