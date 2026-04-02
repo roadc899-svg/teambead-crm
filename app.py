@@ -934,26 +934,44 @@ def format_percent(value):
 
 
 
-def parse_ad_name(ad_name):
-    if not ad_name:
-        return {
-            "launch_date": "",
-            "platform": "",
-            "manager": "",
-            "geo": "",
-            "offer": "",
-            "creative": "",
-        }
+def is_known_fb_platform_token(value):
+    normalized = safe_text(value).strip().lower()
+    if not normalized:
+        return False
+    return normalized in {"1x", "1xbet", "cellxpert", "cell xpert", "meta", "facebook", "fb"}
 
-    parts = str(ad_name).split("/")
-    return {
-        "launch_date": parts[0].strip() if len(parts) > 0 else "",
-        "platform": parts[1].strip() if len(parts) > 1 else "",
-        "manager": parts[2].strip() if len(parts) > 2 else "",
-        "geo": parts[3].strip() if len(parts) > 3 else "",
-        "offer": parts[4].strip() if len(parts) > 4 else "",
-        "creative": parts[5].strip() if len(parts) > 5 else "",
+
+def parse_ad_name(ad_name):
+    result = {
+        "launch_date": "",
+        "platform": "",
+        "manager": "",
+        "geo": "",
+        "offer": "",
+        "creative": "",
     }
+    raw_name = safe_text(ad_name)
+    if not raw_name:
+        return result
+
+    parts = [safe_text(part) for part in raw_name.split("/") if safe_text(part)]
+    if not parts:
+        return result
+
+    result["launch_date"] = parts[0]
+    tail = parts[1:]
+    if not tail:
+        return result
+
+    field_order = ["manager", "geo", "offer", "creative"]
+    if is_known_fb_platform_token(tail[0]):
+        result["platform"] = tail[0]
+        tail = tail[1:]
+
+    for index, field_name in enumerate(field_order):
+        if index < len(tail):
+            result[field_name] = tail[index]
+    return result
 
 
 def parse_fb_dimensions(ad_name="", adset_name="", campaign_name=""):
@@ -976,6 +994,12 @@ def parse_fb_dimensions(ad_name="", adset_name="", campaign_name=""):
         "offer": pick("offer", parsed_adset, parsed_ad, parsed_campaign),
         "creative": pick("creative", parsed_ad, parsed_adset, parsed_campaign),
     }
+
+
+def format_csv_number(value):
+    if value in [None, ""]:
+        return ""
+    return format_int_or_float(safe_number(value))
 
 
 
@@ -1462,6 +1486,19 @@ def resolve_period_label(period_view="", period_label=""):
     if clean_view == "period":
         return clean_label
     return ""
+
+
+def normalize_period_filter(period_view="", period_label="", default_view="current"):
+    clean_view = safe_text(period_view).lower() or safe_text(default_view).lower() or "current"
+    clean_label = safe_text(period_label)
+    effective_period_label = resolve_period_label(clean_view, clean_label) or clean_label or get_current_period_label()
+    return {
+        "requested_period_view": clean_view,
+        "requested_period_label": clean_label,
+        "period_view": "period",
+        "period_label": effective_period_label,
+        "effective_period_label": effective_period_label,
+    }
 
 
 def period_label_to_dates(period_label=""):
@@ -7102,6 +7139,11 @@ _original_grouped_page = _page_routes.get("show_grouped_table")
 _original_dashboard_page = _page_routes.get("render_dashboard_page")
 _original_show_dashboard = _page_routes.get("show_dashboard")
 _original_show_hierarchy = _page_routes.get("show_hierarchy")
+_original_finance_page = _page_routes.get("finance_page")
+_original_caps_page = _page_routes.get("caps_page")
+_original_partner_report_page = _page_routes.get("partner_report_page")
+_original_chatterfy_page = _page_routes.get("chatterfy_page")
+_original_hold_wager_page = _page_routes.get("hold_wager_page")
 _original_render_stats_cards = render_stats_cards
 
 
@@ -7124,6 +7166,141 @@ def _patched_render_stats_cards(totals):
 
 
 render_stats_cards = _patched_render_stats_cards
+
+
+def _patched_finance_page(
+    request: Request,
+    message: str = Query(default=""),
+    period_view: str = Query(default="current"),
+    period_label: str = Query(default=""),
+    date_from: str = Query(default=""),
+    date_to: str = Query(default=""),
+    year: str = Query(default=""),
+    edit_wallet: str = Query(default=""),
+    edit_expense: str = Query(default=""),
+    edit_income: str = Query(default=""),
+    edit_transfer: str = Query(default=""),
+):
+    period_context = normalize_period_filter(period_view, period_label)
+    return _original_finance_page(
+        request,
+        message,
+        period_context["period_view"],
+        period_context["period_label"],
+        date_from,
+        date_to,
+        year,
+        edit_wallet,
+        edit_expense,
+        edit_income,
+        edit_transfer,
+    )
+
+
+def _patched_caps_page(
+    request: Request,
+    search: str = Query(default=""),
+    period_view: str = Query(default="current"),
+    period_label: str = Query(default=""),
+    sort_by: str = Query(default="cabinet"),
+    order: str = Query(default="asc"),
+    buyer: str = Query(default=""),
+    code: str = Query(default=""),
+    edit: str = Query(default=""),
+    message: str = Query(default=""),
+):
+    period_context = normalize_period_filter(period_view, period_label)
+    return _original_caps_page(
+        request,
+        search,
+        period_context["period_view"],
+        period_context["period_label"],
+        sort_by,
+        order,
+        buyer,
+        code,
+        edit,
+        message,
+    )
+
+
+def _patched_partner_report_page(
+    request: Request,
+    source_name: str = Query(default=""),
+    period_view: str = Query(default="current"),
+    period_label: str = Query(default=""),
+    cabinet_name: str = Query(default=""),
+    brand: str = Query(default=""),
+    geo: str = Query(default=""),
+    search: str = Query(default=""),
+    sort_by: str = Query(default="id"),
+    order: str = Query(default="desc"),
+    message: str = Query(default=""),
+):
+    period_context = normalize_period_filter(period_view, period_label)
+    return _original_partner_report_page(
+        request,
+        source_name,
+        period_context["period_view"],
+        period_context["period_label"],
+        cabinet_name,
+        brand,
+        geo,
+        search,
+        sort_by,
+        order,
+        message,
+    )
+
+
+def _patched_chatterfy_page(
+    request: Request,
+    status: str = Query(default=""),
+    search: str = Query(default=""),
+    period_view: str = Query(default="current"),
+    period_label: str = Query(default=""),
+    date_filter: str = Query(default=""),
+    time_filter: str = Query(default=""),
+    telegram_id: str = Query(default=""),
+    pp_player_id: str = Query(default=""),
+    sort_by: str = Query(default="started_date"),
+    order: str = Query(default="desc"),
+    page: int = Query(default=1),
+    message: str = Query(default=""),
+):
+    period_context = normalize_period_filter(period_view, period_label)
+    return _original_chatterfy_page(
+        request,
+        status,
+        search,
+        period_context["period_view"],
+        period_context["period_label"],
+        date_filter,
+        time_filter,
+        telegram_id,
+        pp_player_id,
+        sort_by,
+        order,
+        page,
+        message,
+    )
+
+
+def _patched_hold_wager_page(
+    request: Request,
+    period_view: str = Query(default="current"),
+    period_label: str = Query(default=""),
+    cabinet_name: str = Query(default=""),
+    search: str = Query(default=""),
+):
+    period_context = normalize_period_filter(period_view, period_label)
+    return _original_hold_wager_page(
+        request,
+        period_context["period_view"],
+        period_context["period_label"],
+        cabinet_name,
+        search,
+    )
 
 
 def normalize_dashboard_platform(value):
@@ -7514,7 +7691,9 @@ def _render_dashboard_page_v2(
     enforce_page_access(user, "hierarchy")
 
     buyer = resolve_effective_buyer(user, safe_text(buyer))
-    effective_period_label = resolve_period_label("period", safe_text(period_label)) or get_current_period_label()
+    period_context = normalize_period_filter(period_view, period_label)
+    period_view = period_context["period_view"]
+    effective_period_label = period_context["effective_period_label"]
     platform = safe_text(request.query_params.get("platform"))
     cabinet_name = safe_text(request.query_params.get("cabinet_name"))
     advertiser = safe_text(request.query_params.get("advertiser"))
@@ -8122,9 +8301,14 @@ def _render_dashboard_page_v2(
         color:#16325c;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row td {{
-        font-weight:700;
+        font-weight:400;
         border-top:1px solid rgba(138, 159, 194, 0.22);
         border-bottom:1px solid rgba(138, 159, 194, 0.22);
+        transition:font-weight .15s ease, color .15s ease;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row.dashboard-tree-row-expanded td {{
+        font-weight:800;
+        color:#1b2d50;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody .dashboard-metric-cell {{
         transition:opacity .15s ease, font-weight .15s ease, color .15s ease;
@@ -8190,6 +8374,9 @@ def _render_dashboard_page_v2(
     }}
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-toggle[aria-expanded="true"] .dashboard-tree-caret {{
         transform:rotate(90deg);
+    }}
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-toggle[aria-expanded="true"] .dashboard-tree-label {{
+        font-weight:800;
     }}
     .dashboard-v2 .dashboard-tree-plus {{
         width:14px;
@@ -8572,14 +8759,14 @@ def _render_dashboard_page_v2(
                 <span>Search</span>
                 <input type="text" name="search" value="{escape(search)}" placeholder="Campaign, ad, cabinet, advertiser, geo, account...">
             </label>
-            <input type="hidden" name="sort_by" value="{escape(sort_by)}">
-            <input type="hidden" name="order" value="{escape(order)}">
-            <div class="dashboard-filter-actions" style="grid-column:span 2;">
-                <button type="submit" class="btn small-btn">Filter</button>
-                <a href="/dashboard?period_view=period&period_label={quote_plus(effective_period_label)}" class="ghost-btn small-btn" data-reset-filters="dashboard-v2">Reset</a>
-            </div>
-        </form>
-    </div>
+                <input type="hidden" name="sort_by" value="{escape(sort_by)}">
+                <input type="hidden" name="order" value="{escape(order)}">
+                <div class="dashboard-filter-actions" style="grid-column:span 2;">
+                    <button type="submit" class="btn small-btn">Filter</button>
+                    <a href="/dashboard" class="ghost-btn small-btn" data-reset-filters="dashboard-v2">Reset</a>
+                </div>
+            </form>
+        </div>
 
     <div class="panel compact-panel dashboard-table-panel">
         <div class="dashboard-table-header">
@@ -8633,6 +8820,17 @@ def _render_dashboard_page_v2(
             }});
         }});
 
+        window.dashboardSyncExpandedRows = (table) => {{
+            if (!table) return;
+            Array.from(table.querySelectorAll('tbody tr.dashboard-tree-row')).forEach((row) => {{
+                row.classList.remove('dashboard-tree-row-expanded');
+                const button = row.querySelector('.dashboard-tree-toggle');
+                if (button?.getAttribute('aria-expanded') === 'true') {{
+                    row.classList.add('dashboard-tree-row-expanded');
+                }}
+            }});
+        }};
+
         window.dashboardTreeToggle = (button) => {{
             if (!button) return false;
             const table = button.closest('[data-dashboard-tree-table]');
@@ -8676,6 +8874,7 @@ def _render_dashboard_page_v2(
                 state.expanded[table.id || 'dashboard-tree-table'] = openNodes;
                 window.dashboardWriteState(state);
             }}
+            if (window.dashboardSyncExpandedRows) window.dashboardSyncExpandedRows(table);
             if (window.dashboardApplyAdsetFocus) window.dashboardApplyAdsetFocus(table);
             if (window.dashboardTreeAutoSize) window.dashboardTreeAutoSize(table);
             return false;
@@ -8876,13 +9075,6 @@ def _render_dashboard_page_v2(
                 .filter(Boolean);
             if (!openAdsetNodeIds.length) return;
             rows.forEach((row) => {{
-                Array.from(row.querySelectorAll('.dashboard-metric-cell')).forEach((cell) => {{
-                    cell.style.opacity = '0.2';
-                    cell.style.fontWeight = '400';
-                    cell.style.color = '';
-                }});
-            }});
-            rows.forEach((row) => {{
                 const rowNodeId = row.dataset.nodeId || '';
                 const parentId = row.dataset.parentId || '';
                 const ancestors = (row.dataset.ancestors || '').split(',').filter(Boolean);
@@ -8896,16 +9088,8 @@ def _render_dashboard_page_v2(
                 if (isLeafFocus) row.classList.add('dashboard-adset-focus-leaf');
                 if (isParentFocus) {{
                     Array.from(row.querySelectorAll('.dashboard-metric-cell')).forEach((cell) => {{
-                        cell.style.opacity = '0.55';
-                        cell.style.fontWeight = '400';
-                        cell.style.color = '#31486f';
-                    }});
-                }}
-                if (isLeafFocus) {{
-                    Array.from(row.querySelectorAll('.dashboard-metric-cell')).forEach((cell) => {{
-                        cell.style.opacity = '1';
-                        cell.style.fontWeight = '700';
-                        cell.style.color = '#1c315c';
+                        cell.style.fontWeight = '800';
+                        cell.style.color = '#1b2d50';
                     }});
                 }}
             }});
@@ -8978,6 +9162,7 @@ def _render_dashboard_page_v2(
                     }});
                     expandNode(button);
                 }});
+                if (window.dashboardSyncExpandedRows) window.dashboardSyncExpandedRows(table);
                 window.dashboardTreeAutoSize(table);
                 if (window.dashboardApplyAdsetFocus) window.dashboardApplyAdsetFocus(table);
                 if (window.dashboardApplySelectedRows) window.dashboardApplySelectedRows(table);
@@ -9302,8 +9487,22 @@ def _patched_show_grouped_table(
     sort_by: str = Query(default="spend"),
     order: str = Query(default="desc"),
 ):
+    period_context = normalize_period_filter(period_view, period_label)
     html = _original_grouped_page(
-        request, buyer, brand, manager, geo, ad_name, adset_name, creative, search, period_view, period_label, source_name, sort_by, order
+        request,
+        buyer,
+        brand,
+        manager,
+        geo,
+        ad_name,
+        adset_name,
+        creative,
+        search,
+        period_context["period_view"],
+        period_context["period_label"],
+        source_name,
+        sort_by,
+        order,
     )
     return _inject_grouped_upload_period_context(html)
 
@@ -9348,9 +9547,12 @@ async def _patched_upload_file(
             df = pd.read_excel(filename)
         else:
             try:
-                df = pd.read_csv(filename)
+                df = pd.read_csv(filename, encoding="utf-8-sig")
             except Exception:
-                df = pd.read_csv(filename, sep=";")
+                try:
+                    df = pd.read_csv(filename, sep=";", encoding="utf-8-sig")
+                except Exception:
+                    df = pd.read_csv(filename)
 
         detected_period = detect_fb_upload_period(df) or {}
         source_name = build_fb_source_name(clean_buyer, detected_period or selected_period_data)
@@ -9411,6 +9613,113 @@ async def _patched_upload_file(
             os.remove(filename)
 
 
+def _patched_export_grouped_csv(
+    request: Request,
+    buyer: str = Query(default=""),
+    brand: str = Query(default=""),
+    manager: str = Query(default=""),
+    geo: str = Query(default=""),
+    ad_name: str = Query(default=""),
+    adset_name: str = Query(default=""),
+    creative: str = Query(default=""),
+    search: str = Query(default=""),
+    period_view: str = Query(default="current"),
+    period_label: str = Query(default=""),
+    source_name: str = Query(default=""),
+    sort_by: str = Query(default="spend"),
+    order: str = Query(default="desc"),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    require_any_role(user, "superadmin", "admin")
+
+    period_context = normalize_period_filter(period_view, period_label)
+    effective_period_label = period_context["effective_period_label"]
+    buyer = resolve_effective_buyer(user, buyer)
+    rows = aggregate_grouped_rows(
+        get_filtered_data(
+            buyer,
+            manager,
+            geo,
+            brand,
+            search,
+            effective_period_label,
+            source_name,
+            ad_name=ad_name,
+            adset_name=adset_name,
+            creative=creative,
+        )
+    )
+
+    reverse = order.lower() != "asc"
+    rows.sort(key=lambda item: item.get(sort_by, 0) if item.get(sort_by) is not None else 0, reverse=reverse)
+
+    output = io.StringIO()
+    output.write("\ufeff")
+    writer = csv.writer(output)
+    writer.writerow([
+        "Название объявления",
+        "Название группы объявлений",
+        "Название кампании",
+        "Просмотры материалов",
+        "Валюта",
+        "Цена за просмотр контента",
+        "Клики по ссылке",
+        "CPC (цена за клик по ссылке)",
+        "Частота",
+        "CTR (все)",
+        "Лиды",
+        "Цена за лид",
+        "Подписки",
+        "Цена за платную подписку",
+        "Контакты",
+        "Цена за контакт",
+        "Завершенные регистрации",
+        "Цена за завершенную регистрацию",
+        "Покупки",
+        "Цена за покупку",
+        "Потраченная сумма (USD)",
+        "Идентификатор аккаунта",
+        "Дата начала отчетности",
+        "Дата окончания отчетности",
+    ])
+    for row in rows:
+        writer.writerow([
+            safe_text(row.get("ad_name")),
+            safe_text(row.get("adset_name")),
+            safe_text(row.get("campaign_name")),
+            format_csv_number(row.get("material_views")),
+            "USD",
+            format_csv_number(row.get("cost_per_content_view")),
+            format_csv_number(row.get("clicks")),
+            format_csv_number(row.get("cpc_real")),
+            format_csv_number(row.get("frequency")),
+            format_csv_number(row.get("ctr")),
+            format_csv_number(row.get("leads")),
+            format_csv_number(row.get("cpl_real")),
+            format_csv_number(row.get("paid_subscriptions")),
+            format_csv_number(row.get("cost_per_paid_subscription")),
+            format_csv_number(row.get("contacts")),
+            format_csv_number(row.get("cost_per_contact")),
+            format_csv_number(row.get("reg")),
+            format_csv_number(row.get("cost_per_completed_registration")),
+            format_csv_number(row.get("ftd")),
+            format_csv_number(row.get("cpa_real")),
+            format_csv_number(row.get("spend")),
+            safe_text(row.get("account_id")),
+            safe_text(row.get("date_start")),
+            safe_text(row.get("date_end")),
+        ])
+    output.seek(0)
+    filename = f"fb_export_{effective_period_label.replace(' ', '_')}.csv"
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
+
+
 def _patched_chatterfy_parser_page(
     request: Request,
     status: str = Query(default=""),
@@ -9428,6 +9737,9 @@ def _patched_chatterfy_parser_page(
     if not user:
         return auth_redirect_response()
     enforce_page_access(user, "chatterfyparser")
+    period_context = normalize_period_filter(period_view, period_label, default_view="period")
+    period_view = period_context["period_view"]
+    effective_period_label = period_context["effective_period_label"]
 
     rows = get_chatterfy_parser_rows(
         status=status,
@@ -9435,7 +9747,7 @@ def _patched_chatterfy_parser_page(
         date_filter=date_filter,
         time_filter=time_filter,
         telegram_id=telegram_id,
-        period_label=period_label,
+        period_label=effective_period_label,
     )
     html = chatterfy_parser_page_html(
         user,
@@ -9443,7 +9755,7 @@ def _patched_chatterfy_parser_page(
         form_data={
             "bot_url": bot_url,
             "period_view": period_view,
-            "period_label": period_label,
+            "period_label": effective_period_label,
         },
         status=status,
         search=search,
@@ -9451,7 +9763,7 @@ def _patched_chatterfy_parser_page(
         time_filter=time_filter,
         telegram_id=telegram_id,
         period_view=period_view,
-        period_label=period_label,
+        period_label=effective_period_label,
         page=1,
         total_count=len(rows),
         per_page=max(1, len(rows)),
@@ -9558,8 +9870,14 @@ def _patched_toggle_chatterfy_parser(
 
 _page_routes["chatterfy_parser_page"] = _patched_chatterfy_parser_page
 _page_routes["show_grouped_table"] = _patched_show_grouped_table
+_page_routes["finance_page"] = _patched_finance_page
+_page_routes["caps_page"] = _patched_caps_page
+_page_routes["partner_report_page"] = _patched_partner_report_page
+_page_routes["chatterfy_page"] = _patched_chatterfy_page
+_page_routes["hold_wager_page"] = _patched_hold_wager_page
 _domain_actions["toggle_chatterfy_parser"] = _patched_toggle_chatterfy_parser
 _domain_actions["upload_file"] = _patched_upload_file
+_domain_actions["export_grouped_csv"] = _patched_export_grouped_csv
 
 # =========================================
 # BLOCK 7.5 — USERS
@@ -9791,7 +10109,7 @@ def show_hierarchy(
     geo: str = Query(default=""),
     offer: str = Query(default=""),
     search: str = Query(default=""),
-    period_view: str = Query(default="all"),
+    period_view: str = Query(default="current"),
     period_label: str = Query(default=""),
 ):
     return _page_routes["show_hierarchy"](request, buyer, manager, geo, offer, search, period_view, period_label)
@@ -9805,7 +10123,7 @@ def show_dashboard(
     geo: str = Query(default=""),
     offer: str = Query(default=""),
     search: str = Query(default=""),
-    period_view: str = Query(default="all"),
+    period_view: str = Query(default="current"),
     period_label: str = Query(default=""),
 ):
     return _page_routes["show_dashboard"](request, buyer, manager, geo, offer, search, period_view, period_label)
