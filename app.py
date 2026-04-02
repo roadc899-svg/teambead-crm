@@ -7388,13 +7388,6 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
 
     sheet_board = "".join([
         _render_finance_sheet_section(
-            "ТЕКУЩИЙ ОСТАТОК",
-            balances["total"],
-            ["Категория", "Описание", "Владелец", "Кошелек", "Сумма"],
-            wallet_rows,
-            tone="orange",
-        ),
-        _render_finance_sheet_section(
             "РАСХОД",
             snapshot.get("totals", {}).get("expenses", 0),
             ["Дата", "Категория", "Сумма", "Кто оплатил", "Комментарий"],
@@ -7421,6 +7414,13 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
             ["Дата", "Сумма", "От куда", "Куда", "Комментарий"],
             transfer_rows,
             tone="blue",
+        ),
+        _render_finance_sheet_section(
+            "ТЕКУЩИЙ ОСТАТОК",
+            balances["total"],
+            ["Категория", "Описание", "Владелец", "Кошелек", "Сумма"],
+            wallet_rows,
+            tone="orange",
         ),
     ])
 
@@ -7607,12 +7607,12 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
     }}
     .finance-excel-header {{
         display:grid;
-        gap:16px;
+        gap:0;
         align-items:start;
     }}
     .finance-excel-header-main {{
         display:grid;
-        gap:14px;
+        gap:0;
     }}
     .finance-period-toolbar {{
         display:flex;
@@ -7620,6 +7620,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         align-items:flex-end;
         justify-content:space-between;
         flex-wrap:wrap;
+        margin-top:-6px;
     }}
     .finance-period-toolbar .panel.compact-panel.filters {{
         margin:0;
@@ -7738,9 +7739,6 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         <div class="panel compact-panel">
             <div class="finance-excel-header">
                 <div class="finance-excel-header-main">
-                    <div>
-                        <div class="panel-title">Finance</div>
-                    </div>
                     <div class="finance-period-toolbar">
                         <div class="panel compact-panel filters">
                             <form method="get" action="/finance" style="justify-content:flex-start;" data-persist-filters="finance">
@@ -7749,9 +7747,6 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
                                 <button type="submit" class="btn small-btn">Filter</button>
                                 <a href="/finance" class="ghost-btn small-btn" data-reset-filters="finance">Reset</a>
                             </form>
-                        </div>
-                        <div class="toolbar-actions">
-                            {create_panel}
                         </div>
                     </div>
                 </div>
