@@ -6638,6 +6638,24 @@ def compute_finance_balances(snapshot, manual):
     }
 
 
+def get_finance_pending_cpa_map(period_label=""):
+    previous_period_label = get_previous_period_label(period_label)
+    if not previous_period_label:
+        return {}
+    db = SessionLocal()
+    try:
+        rows = db.query(PartnerRow).filter(PartnerRow.period_label == previous_period_label).all()
+    finally:
+        db.close()
+    result = {}
+    for row in rows:
+        cabinet_name = safe_text(getattr(row, "cabinet_name", "")).strip()
+        if not cabinet_name:
+            continue
+        result[cabinet_name] = result.get(cabinet_name, 0.0) + safe_number(getattr(row, "cpa_amount", 0))
+    return result
+
+
 # =========================================
 # BLOCK 6 — AGGREGATION
 # =========================================
@@ -7458,6 +7476,12 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         for row in cabinet_rows
         if safe_text(getattr(row, "name", "")).strip()
     })
+    cabinet_primary_brand_map = {
+        safe_text(getattr(row, "name", "")).strip(): (split_list_tokens(getattr(row, "brands", "")) or [""])[0]
+        for row in cabinet_rows
+        if safe_text(getattr(row, "name", "")).strip()
+    }
+    pending_cpa_map = get_finance_pending_cpa_map(effective_period_label)
     payer_names = sorted({
         *(safe_text(item.get("wallet")) for item in wallet_source_rows if safe_text(item.get("wallet"))),
         *(safe_text(item.get("description")) for item in wallet_source_rows if safe_text(item.get("description"))),
@@ -7521,8 +7545,6 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
             item.get("category", ""),
             item.get("description", ""),
             format_money(item.get("amount", 0)),
-            item.get("wallet", ""),
-            item.get("reconciliation", ""),
             item.get("comment", ""),
         )
         for item in snapshot.get("pending", [])
@@ -7532,11 +7554,18 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
             item.category or "",
             item.description or "",
             format_money(item.amount),
-            item.wallet or "",
-            item.reconciliation or "",
             item.comment or "",
         )
         for item in manual.get("pending", [])
+    ]
+    pending_existing_cabinets = [
+        safe_text(item.get("description", "")).strip()
+        for item in snapshot.get("pending", [])
+        if safe_text(item.get("description", "")).strip()
+    ] + [
+        safe_text(getattr(item, "description", "")).strip()
+        for item in manual.get("pending", [])
+        if safe_text(getattr(item, "description", "")).strip()
     ]
     transfer_rows = [
         (
@@ -7588,28 +7617,41 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         ],
         "green",
     )
+    pending_footer_html = inline_add_row(
+        "/finance/pending/save",
+        "Add Pending",
+        5,
+        [
+            {"name": "pending_date", "type": "date"},
+            {"name": "category", "type": "select", "options": income_brand_options, "class_name": "finance-pending-brand"},
+            {"name": "description", "type": "select", "options": income_cabinet_options, "class_name": "finance-pending-cabinet"},
+            {"name": "amount", "type": "number", "placeholder": "Сумма", "class_name": "finance-inline-field-amount finance-pending-amount"},
+            {"name": "comment", "placeholder": "Комментарий"},
+        ],
+        "yellow",
+    )
+    transfer_footer_html = inline_add_row(
+        "/finance/transfers/save",
+        "Add Transfer",
+        5,
+        [
+            {"name": "transfer_date", "type": "date"},
+            {"name": "from_wallet", "placeholder": "От куда"},
+            {"name": "to_wallet", "placeholder": "Куда"},
+            {"name": "amount", "type": "number", "placeholder": "Сумма", "class_name": "finance-inline-field-amount"},
+            {"name": "comment", "placeholder": "Комментарий"},
+        ],
+        "blue",
+    )
 
     sheet_board_top = "".join([
         _render_finance_sheet_section(
             "ОЖИДАЕМ",
             pending_total,
-            ["Дата", "Категория", "Описание", "Сумма", "Кошель", "Сверка", "Комментарий"],
+            ["Дата", "Бренд", "Кабинет", "Сумма", "Комментарии"],
             pending_rows,
             tone="yellow",
-            action_html=plus_form(
-                "/finance/pending/save",
-                [
-                    {"name": "pending_date", "label": "Date", "type": "date"},
-                    {"name": "category", "label": "Category"},
-                    {"name": "description", "label": "Description"},
-                    {"name": "amount", "label": "Amount", "type": "number", "placeholder": "0.00"},
-                    {"name": "wallet", "label": "Wallet"},
-                    {"name": "reconciliation", "label": "Reconciliation"},
-                    {"name": "comment", "label": "Comment", "type": "textarea"},
-                ],
-                "Add Pending",
-                "yellow",
-            ),
+            footer_html=pending_footer_html,
         ),
         _render_finance_sheet_section(
             "ТЕКУЩИЙ ОСТАТОК",
@@ -7655,18 +7697,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
             ["Дата", "Сумма", "От куда", "Куда", "Комментарий"],
             transfer_rows,
             tone="blue",
-            action_html=plus_form(
-                "/finance/transfers/save",
-                [
-                    {"name": "transfer_date", "label": "Date", "type": "date"},
-                    {"name": "amount", "label": "Amount", "type": "number", "placeholder": "0.00"},
-                    {"name": "from_wallet", "label": "From"},
-                    {"name": "to_wallet", "label": "To"},
-                    {"name": "comment", "label": "Comment", "type": "textarea"},
-                ],
-                "Add Transfer",
-                "blue",
-            ),
+            footer_html=transfer_footer_html,
         ),
     ])
 
@@ -8132,6 +8163,70 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
     }}
     </style>
     {message_html}
+    <script>
+    window.financePendingCabinetAmounts = {json.dumps(pending_cpa_map)};
+    window.financePendingCabinetBrands = {json.dumps(cabinet_primary_brand_map)};
+    window.financePendingCabinets = {json.dumps(income_cabinet_options)};
+    window.financePendingExistingCabinets = {json.dumps(pending_existing_cabinets)};
+    </script>
+    <script>
+    (() => {{
+        const amountMap = window.financePendingCabinetAmounts || {{}};
+        const brandMap = window.financePendingCabinetBrands || {{}};
+        const cabinetList = Array.isArray(window.financePendingCabinets) ? window.financePendingCabinets : [];
+        const existingCabinets = new Set(Array.isArray(window.financePendingExistingCabinets) ? window.financePendingExistingCabinets : []);
+        const bindPendingInlineForms = () => {{
+            document.querySelectorAll('.finance-inline-add-form').forEach((form) => {{
+                if (form.dataset.pendingBound === '1') return;
+                const dateField = form.querySelector('input[name="pending_date"]');
+                const cabinetField = form.querySelector('.finance-pending-cabinet select');
+                const brandField = form.querySelector('.finance-pending-brand select');
+                const amountField = form.querySelector('.finance-pending-amount input');
+                if (!cabinetField || !brandField || !amountField) return;
+                const currentDate = () => {{
+                    const now = new Date();
+                    const month = String(now.getMonth() + 1).padStart(2, '0');
+                    const day = String(now.getDate()).padStart(2, '0');
+                    return `${{now.getFullYear()}}-${{month}}-${{day}}`;
+                }};
+                const pickNextCabinet = () => {{
+                    const available = cabinetList.find((name) => name && !existingCabinets.has(name));
+                    return available || cabinetList[0] || '';
+                }};
+                const syncPendingValues = () => {{
+                    const cabinet = cabinetField.value || '';
+                    if (!cabinet) return;
+                    const brand = brandMap[cabinet] || '';
+                    const amount = amountMap[cabinet];
+                    if (brand) brandField.value = brand;
+                    if (amount !== undefined && amount !== null) {{
+                        amountField.value = Number(amount || 0).toFixed(2);
+                    }}
+                }};
+                const primePendingValues = () => {{
+                    if (dateField && !dateField.value) dateField.value = currentDate();
+                    if (!cabinetField.value) {{
+                        const nextCabinet = pickNextCabinet();
+                        if (nextCabinet) cabinetField.value = nextCabinet;
+                    }}
+                    syncPendingValues();
+                }};
+                cabinetField.addEventListener('change', syncPendingValues);
+                form.closest('.finance-inline-add')?.addEventListener('toggle', () => {{
+                    if (form.closest('.finance-inline-add')?.open) primePendingValues();
+                }});
+                primePendingValues();
+                form.dataset.pendingBound = '1';
+            }});
+        }};
+        bindPendingInlineForms();
+        document.addEventListener('toggle', (event) => {{
+            if (event.target && event.target.matches('.finance-inline-add')) {{
+                bindPendingInlineForms();
+            }}
+        }});
+    }})();
+    </script>
     <div class="finance-excel-layout">
         {render_active_period_banner(effective_period_label if period_context["period_view"] != "all" else "")}
         <div class="panel compact-panel">
