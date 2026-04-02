@@ -8878,7 +8878,8 @@ def _render_dashboard_page_v2(
         }
 
     def aggregate_dashboard_metrics(items, field=""):
-        totals = {field: 0.0 for field in dashboard_numeric_fields}
+        hierarchy_field = field
+        totals = {metric_name: 0.0 for metric_name in dashboard_numeric_fields}
         fb_average_fields = {"fb_frequency", "fb_ctr"}
         fb_derived_cost_fields = {
             "fb_cost_per_content_view",
@@ -8893,18 +8894,18 @@ def _render_dashboard_page_v2(
         fb_average_counts = {field: 0 for field in fb_average_fields}
 
         for item in items:
-            for field in dashboard_numeric_fields:
-                if field in fb_average_fields or field in fb_derived_cost_fields:
+            for metric_name in dashboard_numeric_fields:
+                if metric_name in fb_average_fields or metric_name in fb_derived_cost_fields:
                     continue
-                totals[field] += safe_number(item.get(field, 0))
-            for field in fb_average_fields:
-                value = safe_number(item.get(field, 0))
-                fb_average_totals[field] += value
-                fb_average_counts[field] += 1
+                totals[metric_name] += safe_number(item.get(metric_name, 0))
+            for average_field in fb_average_fields:
+                value = safe_number(item.get(average_field, 0))
+                fb_average_totals[average_field] += value
+                fb_average_counts[average_field] += 1
 
-        for field in fb_average_fields:
-            count = fb_average_counts[field]
-            totals[field] = (fb_average_totals[field] / count) if count else 0.0
+        for average_field in fb_average_fields:
+            count = fb_average_counts[average_field]
+            totals[average_field] = (fb_average_totals[average_field] / count) if count else 0.0
 
         totals["fb_cost_per_content_view"] = (
             totals["spend"] / totals["fb_material_views"] if totals["fb_material_views"] > 0 else 0.0
@@ -8928,7 +8929,7 @@ def _render_dashboard_page_v2(
             totals["spend"] / totals["fb_purchases"] if totals["fb_purchases"] > 0 else 0.0
         )
         totals["cap_fill"] = cap_fill_percent(totals["cap_current_ftd"], totals["cap_total"])
-        totals.update(get_dashboard_chatterfy_metrics(field, items))
+        totals.update(get_dashboard_chatterfy_metrics(hierarchy_field, items))
         return totals
 
     def hierarchy_bucket_sort_key(bucket_name, bucket_rows):
