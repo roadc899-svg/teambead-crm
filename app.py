@@ -7749,6 +7749,32 @@ def normalize_dashboard_platform(value):
     return raw
 
 
+def normalize_dashboard_brand(value):
+    return safe_text(value).strip().lower()
+
+
+def build_dashboard_scope_key(cabinet_name="", brand="", geo=""):
+    return (
+        safe_text(cabinet_name).strip().upper(),
+        normalize_dashboard_brand(brand),
+        normalize_geo_value(geo),
+    )
+
+
+def get_dashboard_scope_brands(raw_brand_value=""):
+    brands = [safe_text(item).strip() for item in split_list_tokens(raw_brand_value) if safe_text(item).strip()]
+    return brands or [""]
+
+
+def get_dashboard_scope_lookup_keys(cabinet_name="", brand="", geo=""):
+    primary_key = build_dashboard_scope_key(cabinet_name, brand, geo)
+    fallback_key = build_dashboard_scope_key(cabinet_name, "", geo)
+    keys = [primary_key]
+    if fallback_key != primary_key:
+        keys.append(fallback_key)
+    return keys
+
+
 def dashboard_offer_matches_cabinet(cabinet_row, offer_value):
     clean_offer = safe_text(offer_value).strip().lower()
     if not clean_offer:
@@ -7849,6 +7875,74 @@ def build_dashboard_caps_flow_map(period_label=""):
     return result
 
 
+def build_dashboard_players_scope_map(period_label=""):
+    rows = get_partner_rows_by_period(period_label=period_label)
+    result = {}
+    for row in rows:
+        brand_values = list(dict.fromkeys([*get_dashboard_scope_brands(getattr(row, "brand_name", "")), ""]))
+        geo_value = safe_text(getattr(row, "country", ""))
+        cabinet_name = safe_text(getattr(row, "cabinet_name", ""))
+        deposit_amount = safe_number(getattr(row, "deposit_amount", 0))
+        cpa_amount = safe_number(getattr(row, "cpa_amount", 0))
+        is_qualified = bool(getattr(row, "is_qualified_ftd", False)) or cpa_amount > 0
+        for brand_value in brand_values:
+            scope_key = build_dashboard_scope_key(cabinet_name, brand_value, geo_value)
+            if not scope_key[0] or not scope_key[2]:
+                continue
+            bucket = result.setdefault(scope_key, {
+                "players_ftd": 0.0,
+                "qual_ftd": 0.0,
+                "income": 0.0,
+            })
+            if deposit_amount > 0:
+                bucket["players_ftd"] += 1
+            if is_qualified:
+                bucket["qual_ftd"] += 1
+                bucket["income"] += cpa_amount
+    for bucket in result.values():
+        bucket["rate"] = (bucket["income"] / bucket["qual_ftd"]) if bucket["qual_ftd"] > 0 else 0.0
+    return result
+
+
+def build_dashboard_caps_scope_map(period_label=""):
+    ensure_caps_table()
+    cabinet_meta_map = {
+        safe_text(getattr(item, "name", "")): item
+        for item in get_cabinet_rows()
+        if safe_text(getattr(item, "name", ""))
+    }
+    db = SessionLocal()
+    try:
+        query = db.query(CapRow)
+        if period_label:
+            query = query.filter(CapRow.period_label == period_label)
+        caps = query.all()
+    finally:
+        db.close()
+
+    result = {}
+    for cap in caps:
+        cabinet_name = safe_text(getattr(cap, "cabinet_name", "") or getattr(cap, "buyer", ""))
+        cabinet_item = cabinet_meta_map.get(cabinet_name)
+        brand_values = list(dict.fromkeys([*get_dashboard_scope_brands(getattr(cabinet_item, "brands", "") if cabinet_item else ""), ""]))
+        geo_value = safe_text(getattr(cap, "geo", "") or getattr(cap, "code", ""))
+        for brand_value in brand_values:
+            scope_key = build_dashboard_scope_key(cabinet_name, brand_value, geo_value)
+            if not scope_key[0] or not scope_key[2]:
+                continue
+            bucket = result.setdefault(scope_key, {
+                "caps_count": 0.0,
+                "cap_total": 0.0,
+                "cap_current_ftd": 0.0,
+            })
+            bucket["caps_count"] += 1
+            bucket["cap_total"] += safe_number(getattr(cap, "cap_value", 0))
+            bucket["cap_current_ftd"] += safe_number(getattr(cap, "current_ftd", 0))
+    for bucket in result.values():
+        bucket["cap_fill"] = cap_fill_percent(bucket["cap_current_ftd"], bucket["cap_total"])
+    return result
+
+
 def build_dashboard_hold_flow_map(period_label=""):
     result = {}
     for item in get_hold_wager_rows(period_label=period_label):
@@ -7876,13 +7970,44 @@ def build_dashboard_hold_flow_map(period_label=""):
     return result
 
 
+def build_dashboard_hold_scope_map(period_label=""):
+    cabinet_meta_map = {
+        safe_text(getattr(item, "name", "")): item
+        for item in get_cabinet_rows()
+        if safe_text(getattr(item, "name", ""))
+    }
+    result = {}
+    for item in get_hold_wager_rows(period_label=period_label):
+        cabinet_name = safe_text(item.get("cabinet_name"))
+        cabinet_item = cabinet_meta_map.get(cabinet_name)
+        brand_values = list(dict.fromkeys([*get_dashboard_scope_brands(getattr(cabinet_item, "brands", "") if cabinet_item else ""), ""]))
+        geo_value = safe_text(item.get("country"))
+        reason = safe_text(item.get("reason")).lower()
+        for brand_value in brand_values:
+            scope_key = build_dashboard_scope_key(cabinet_name, brand_value, geo_value)
+            if not scope_key[0] or not scope_key[2]:
+                continue
+            bucket = result.setdefault(scope_key, {
+                "hold_count": 0.0,
+                "baseline_fail_count": 0.0,
+                "wager_fail_count": 0.0,
+            })
+            bucket["hold_count"] += 1
+            if "baseline" in reason:
+                bucket["baseline_fail_count"] += 1
+            if "wager" in reason:
+                bucket["wager_fail_count"] += 1
+    return result
+
+
 def build_dashboard_rows_v2(user, buyer="", period_label=""):
     buyer_scope = resolve_effective_buyer(user, buyer)
     fb_rows = aggregate_grouped_rows(get_filtered_data(buyer=buyer_scope, period_label=period_label))
     fb_rows = enrich_statistic_rows(fb_rows, period_label=period_label)
     cabinet_map = build_dashboard_cabinet_flow_map()
-    caps_map = build_dashboard_caps_flow_map(period_label=period_label)
-    hold_map = build_dashboard_hold_flow_map(period_label=period_label)
+    players_scope_map = build_dashboard_players_scope_map(period_label=period_label)
+    caps_scope_map = build_dashboard_caps_scope_map(period_label=period_label)
+    hold_scope_map = build_dashboard_hold_scope_map(period_label=period_label)
 
     rows = []
 
@@ -7900,8 +8025,9 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
         cabinet_names = [primary_cabinet_name] if primary_cabinet_name else []
         advertiser_names = [primary_advertiser] if primary_advertiser else []
         active_cabinets = [cab for cab in related_cabinets if safe_text(getattr(cab, "status", "")).lower() == "active"]
-        cap_info = caps_map.get(flow_key, {})
-        hold_info = hold_map.get(flow_key, {})
+        scope_brand = safe_text(item.get("offer"))
+        scope_key = build_dashboard_scope_key(primary_cabinet_name, scope_brand, item.get("geo"))
+        row_weight = safe_number(item.get("ftd")) or safe_number(item.get("leads")) or safe_number(item.get("spend")) or 1.0
 
         row = {
             "buyer": safe_text(item.get("buyer")),
@@ -7943,25 +8069,86 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
             "fb_ftd": safe_number(item.get("ftd", 0)),
             "cpa": safe_number(item.get("cpa_real", 0)),
             "chatterfy": safe_number(item.get("stat_chatterfy", 0)),
-            "players_ftd": safe_number(item.get("stat_total_ftd", 0)),
-            "qual_ftd": safe_number(item.get("stat_qual_ftd", 0)),
-            "rate": safe_number(item.get("stat_rate", 0)),
-            "income": safe_number(item.get("stat_income", 0)),
-            "profit": safe_number(item.get("stat_profit", 0)),
-            "roi": safe_number(item.get("stat_roi", 0)),
-            "caps_count": safe_number(cap_info.get("caps_count", 0)),
-            "cap_total": safe_number(cap_info.get("cap_total", 0)),
-            "cap_current_ftd": safe_number(cap_info.get("cap_current_ftd", 0)),
-            "cap_fill": safe_number(cap_info.get("cap_fill", 0)),
-            "hold_count": safe_number(hold_info.get("hold_count", 0)),
-            "hold_split": f'{format_int_or_float(hold_info.get("baseline_fail_count", 0))}B / {format_int_or_float(hold_info.get("wager_fail_count", 0))}W' if hold_info else "0B / 0W",
+            "players_ftd": 0.0,
+            "qual_ftd": 0.0,
+            "rate": 0.0,
+            "payout": 0.0,
+            "costs_ai": 0.0,
+            "costs": safe_number(item.get("spend", 0)),
+            "profit": 0.0,
+            "roi": 0.0,
+            "caps_count": 0.0,
+            "cap_total": 0.0,
+            "cap_current_ftd": 0.0,
+            "cap_fill": 0.0,
+            "hold_count": 0.0,
+            "hold_baseline_count": 0.0,
+            "hold_wager_count": 0.0,
+            "hold_split": "0B / 0W",
             "active_cabinets": len(active_cabinets),
             "flow_key": flow_key,
+            "dashboard_scope_key": "|".join(scope_key),
+            "dashboard_scope_weight": row_weight,
             "flow_label": " / ".join(filter(None, [safe_text(item.get("platform")), safe_text(item.get("manager")), safe_text(item.get("geo"))])),
             "source_name": safe_text(item.get("source_name")),
             "row_kind": "fb",
         }
         rows.append(row)
+
+    scope_bucket_weights = {}
+    scope_bucket_counts = {}
+    for row in rows:
+        scope_key = safe_text(row.get("dashboard_scope_key"))
+        if not scope_key:
+            continue
+        scope_bucket_weights[scope_key] = scope_bucket_weights.get(scope_key, 0.0) + safe_number(row.get("dashboard_scope_weight", 0))
+        scope_bucket_counts[scope_key] = scope_bucket_counts.get(scope_key, 0) + 1
+
+    for row in rows:
+        scope_key_text = safe_text(row.get("dashboard_scope_key"))
+        if not scope_key_text:
+            row["costs"] = safe_number(row.get("spend", 0)) + safe_number(row.get("costs_ai", 0))
+            row["profit"] = safe_number(row.get("payout", 0)) - safe_number(row.get("costs", 0))
+            row["roi"] = (row["profit"] / row["costs"]) * 100 if safe_number(row.get("costs", 0)) > 0 else 0.0
+            continue
+        scope_key_parts = tuple(scope_key_text.split("|"))
+        weight = safe_number(row.get("dashboard_scope_weight", 0))
+        bucket_weight = scope_bucket_weights.get(scope_key_text, 0.0)
+        bucket_count = scope_bucket_counts.get(scope_key_text, 1)
+        scope_share = (weight / bucket_weight) if bucket_weight > 0 else (1.0 / bucket_count)
+
+        players_info = {}
+        caps_info = {}
+        hold_info = {}
+        scope_lookup_keys = get_dashboard_scope_lookup_keys(scope_key_parts[0], scope_key_parts[1], scope_key_parts[2])
+        for lookup_key in scope_lookup_keys:
+            players_info = players_scope_map.get(lookup_key, {})
+            if players_info:
+                break
+        for lookup_key in scope_lookup_keys:
+            caps_info = caps_scope_map.get(lookup_key, {})
+            if caps_info:
+                break
+        for lookup_key in scope_lookup_keys:
+            hold_info = hold_scope_map.get(lookup_key, {})
+            if hold_info:
+                break
+
+        row["players_ftd"] = safe_number(players_info.get("players_ftd", 0)) * scope_share
+        row["qual_ftd"] = safe_number(players_info.get("qual_ftd", 0)) * scope_share
+        row["payout"] = safe_number(players_info.get("income", 0)) * scope_share
+        row["rate"] = safe_number(players_info.get("rate", 0))
+        row["caps_count"] = safe_number(caps_info.get("caps_count", 0)) * scope_share
+        row["cap_total"] = safe_number(caps_info.get("cap_total", 0)) * scope_share
+        row["cap_current_ftd"] = safe_number(caps_info.get("cap_current_ftd", 0)) * scope_share
+        row["cap_fill"] = cap_fill_percent(row["cap_current_ftd"], row["cap_total"])
+        row["hold_count"] = safe_number(hold_info.get("hold_count", 0)) * scope_share
+        row["hold_baseline_count"] = safe_number(hold_info.get("baseline_fail_count", 0)) * scope_share
+        row["hold_wager_count"] = safe_number(hold_info.get("wager_fail_count", 0)) * scope_share
+        row["hold_split"] = f'{format_int_or_float(row["hold_baseline_count"])}B / {format_int_or_float(row["hold_wager_count"])}W' if hold_info else "0B / 0W"
+        row["costs"] = safe_number(row.get("spend", 0)) + safe_number(row.get("costs_ai", 0))
+        row["profit"] = safe_number(row.get("payout", 0)) - safe_number(row.get("costs", 0))
+        row["roi"] = (row["profit"] / row["costs"]) * 100 if safe_number(row.get("costs", 0)) > 0 else 0.0
 
     return rows
 
@@ -7970,12 +8157,14 @@ def build_dashboard_summary_cards(rows):
     totals = {
         "rows": len(rows),
         "spend": sum(safe_number(row.get("spend", 0)) for row in rows),
+        "costs": sum(safe_number(row.get("costs", 0)) for row in rows),
+        "costs_ai": sum(safe_number(row.get("costs_ai", 0)) for row in rows),
         "leads": sum(safe_number(row.get("leads", 0)) for row in rows),
         "reg": sum(safe_number(row.get("reg", 0)) for row in rows),
         "fb_ftd": sum(safe_number(row.get("fb_ftd", 0)) for row in rows),
         "players_ftd": sum(safe_number(row.get("players_ftd", 0)) for row in rows),
         "chatterfy": sum(safe_number(row.get("chatterfy", 0)) for row in rows),
-        "income": sum(safe_number(row.get("income", 0)) for row in rows),
+        "payout": sum(safe_number(row.get("payout", 0)) for row in rows),
         "profit": sum(safe_number(row.get("profit", 0)) for row in rows),
     }
     cards = [
@@ -7984,9 +8173,9 @@ def build_dashboard_summary_cards(rows):
         ("Leads", format_int_or_float(totals["leads"])),
         ("Reg", format_int_or_float(totals["reg"])),
         ("FB FTD", format_int_or_float(totals["fb_ftd"])),
-        ("Players FTD", format_int_or_float(totals["players_ftd"])),
+        ("FTD", format_int_or_float(totals["players_ftd"])),
         ("Chatterfy", format_int_or_float(totals["chatterfy"])),
-        ("Income", format_money(totals["income"])),
+        ("Payout", format_money(totals["payout"])),
         ("Profit", format_money(totals["profit"])),
     ]
     cards_html = "".join(
@@ -8090,9 +8279,11 @@ def _dashboard_filter_rows(
 
 
 def _dashboard_sort_rows(rows, sort_by="spend", order="desc"):
+    if sort_by == "income":
+        sort_by = "payout"
     numeric_fields = {
         "budget", "spend", "leads", "reg", "cost_reg", "fb_ftd", "cpa", "chatterfy",
-        "players_ftd", "qual_ftd", "income", "profit", "roi", "caps_count",
+        "players_ftd", "qual_ftd", "payout", "costs", "costs_ai", "profit", "roi", "caps_count",
         "cap_total", "cap_current_ftd", "cap_fill", "hold_count", "active_cabinets",
     }
     reverse = safe_text(order).lower() != "asc"
@@ -8103,6 +8294,8 @@ def _dashboard_sort_rows(rows, sort_by="spend", order="desc"):
 
 def _dashboard_sort_link(label, field, **params):
     current_sort = safe_text(params.get("sort_by") or "spend")
+    if current_sort == "income":
+        current_sort = "payout"
     current_order = safe_text(params.get("order") or "desc")
     next_order = "asc" if current_sort != field or current_order == "desc" else "desc"
     arrow = ""
@@ -8145,6 +8338,8 @@ def _render_dashboard_page_v2(
     has_players = safe_text(request.query_params.get("has_players"))
     sort_by = safe_text(request.query_params.get("sort_by") or "spend")
     order = safe_text(request.query_params.get("order") or "desc")
+    if sort_by == "income":
+        sort_by = "payout"
 
     base_rows = build_dashboard_rows_v2(user, buyer=buyer, period_label=effective_period_label)
     buyer_values = [value for value, _label in get_fb_buyer_name_options()] or sorted({safe_text(row.get("buyer")) for row in base_rows if safe_text(row.get("buyer"))})
@@ -8232,8 +8427,8 @@ def _render_dashboard_page_v2(
 
     dashboard_numeric_fields = [
         "budget", "spend", "clicks", "leads", "reg", "rate", "cost_reg", "fb_ftd", "cpa",
-        "chatterfy", "players_ftd", "qual_ftd", "hold_count", "cap_total", "cap_fill",
-        "income", "profit", "roi",
+        "chatterfy", "players_ftd", "qual_ftd", "hold_count", "cap_total", "cap_current_ftd", "cap_fill",
+        "payout", "costs", "costs_ai", "profit", "roi",
         "fb_material_views", "fb_cost_per_content_view", "fb_link_clicks", "fb_cpc",
         "fb_frequency", "fb_ctr", "fb_leads", "fb_cost_per_lead",
         "fb_paid_subscriptions", "fb_cost_per_paid_subscription", "fb_contacts", "fb_cost_per_contact",
@@ -8298,6 +8493,7 @@ def _render_dashboard_page_v2(
         totals["fb_cost_per_purchase"] = (
             totals["spend"] / totals["fb_purchases"] if totals["fb_purchases"] > 0 else 0.0
         )
+        totals["cap_fill"] = cap_fill_percent(totals["cap_current_ftd"], totals["cap_total"])
         return totals
 
     def hierarchy_bucket_sort_key(bucket_name, bucket_rows):
@@ -8360,21 +8556,15 @@ def _render_dashboard_page_v2(
             f'<td class="dashboard-metric-cell" data-col="fb_cost_per_completed_registration">{format_money(values.get("fb_cost_per_completed_registration", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="fb_purchases">{format_int_or_float(values.get("fb_purchases", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="fb_cost_per_purchase">{format_money(values.get("fb_cost_per_purchase", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="clicks">{format_int_or_float(values.get("clicks", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="leads">{format_int_or_float(values.get("leads", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="reg">{format_int_or_float(values.get("reg", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="rate">{format_money(values.get("rate", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="cost_reg">{format_money(values.get("cost_reg", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="fb_ftd">{format_int_or_float(values.get("fb_ftd", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="cpa">{format_money(values.get("cpa", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="chatterfy">{format_int_or_float(values.get("chatterfy", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="players_ftd">{format_int_or_float(values.get("players_ftd", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="qual_ftd">{format_int_or_float(values.get("qual_ftd", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="hold_count">{format_int_or_float(values.get("hold_count", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="hold_split">—</td>',
             f'<td class="dashboard-metric-cell" data-col="cap_total">{format_int_or_float(values.get("cap_total", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="cap_fill">{format_percent(values.get("cap_fill", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="income">{format_money(values.get("income", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="payout">{format_money(values.get("payout", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="costs">{format_money(values.get("costs", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="costs_ai">{""}</td>',
             f'<td class="dashboard-metric-cell" data-col="profit">{format_money(values.get("profit", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="roi">{format_percent(values.get("roi", 0))}</td>',
         ])
@@ -8409,37 +8599,31 @@ def _render_dashboard_page_v2(
         ("buyer", "Buyer"),
         ("budget", "Budget"),
         ("spend", "Spend"),
-        ("fb_material_views", "Просмотры материалов"),
-        ("fb_cost_per_content_view", "Цена за просмотр контента"),
-        ("fb_link_clicks", "Клики по ссылке"),
+        ("fb_material_views", "Views"),
+        ("fb_cost_per_content_view", "CPV"),
+        ("fb_link_clicks", "Clicks"),
         ("fb_cpc", "CPC"),
-        ("fb_frequency", "Частота"),
-        ("fb_ctr", "CTR (все)"),
-        ("fb_leads", "Лиды FB"),
-        ("fb_cost_per_lead", "Цена за лид"),
-        ("fb_paid_subscriptions", "Подписки"),
-        ("fb_cost_per_paid_subscription", "Цена за платную подписку"),
-        ("fb_contacts", "Контакты"),
-        ("fb_cost_per_contact", "Цена за контакт"),
-        ("fb_completed_registrations", "Завершенные регистрации"),
-        ("fb_cost_per_completed_registration", "Цена за завершенную регистрацию"),
-        ("fb_purchases", "Покупки"),
-        ("fb_cost_per_purchase", "Цена за покупку"),
-        ("clicks", "Clicks"),
-        ("leads", "Leads"),
-        ("reg", "Reg"),
-        ("rate", "Rate"),
-        ("cost_reg", "Cost Reg"),
-        ("fb_ftd", "FB FTD"),
-        ("cpa", "CPA"),
-        ("chatterfy", "Chatterfy"),
-        ("players_ftd", "Players FTD"),
+        ("fb_frequency", "Freq"),
+        ("fb_ctr", "CTR"),
+        ("fb_leads", "Leads"),
+        ("fb_cost_per_lead", "CPL"),
+        ("fb_paid_subscriptions", "Follows"),
+        ("fb_cost_per_paid_subscription", "CPF"),
+        ("fb_contacts", "Contacts"),
+        ("fb_cost_per_contact", "CPCt"),
+        ("fb_completed_registrations", "Regs"),
+        ("fb_cost_per_completed_registration", "CPR"),
+        ("fb_purchases", "Purchases"),
+        ("fb_cost_per_purchase", "CPP"),
+        ("players_ftd", "FTD"),
         ("qual_ftd", "Qual FTD"),
         ("hold_count", "Hold"),
         ("hold_split", "Hold Split"),
         ("cap_total", "Cap"),
         ("cap_fill", "Cap Fill"),
-        ("income", "Income"),
+        ("payout", "Payout"),
+        ("costs", "Costs"),
+        ("costs_ai", "Costs AI"),
         ("profit", "Profit"),
         ("roi", "ROI"),
     ]
@@ -8462,6 +8646,16 @@ def _render_dashboard_page_v2(
         "fb_purchases",
         "fb_cost_per_purchase",
     ]
+    fb_collapsed_selectors = ",\n    ".join(
+        [
+            selector
+            for field in fb_detail_columns
+            for selector in [
+                f'.dashboard-v2 #dashboardUnifiedTable.dashboard-fb-metrics-collapsed th[data-col="{field}"]',
+                f'.dashboard-v2 #dashboardUnifiedTable.dashboard-fb-metrics-collapsed td[data-col="{field}"]',
+            ]
+        ]
+    )
 
     def render_dashboard_header_cell(field, label):
         header_link = _dashboard_sort_link(label, field, **filter_params)
@@ -8532,21 +8726,15 @@ def _render_dashboard_page_v2(
             <td class="dashboard-metric-cell" data-col="fb_cost_per_completed_registration">{format_money(row.get("fb_cost_per_completed_registration", 0))}</td>
             <td class="dashboard-metric-cell" data-col="fb_purchases">{format_int_or_float(row.get("fb_purchases", 0))}</td>
             <td class="dashboard-metric-cell" data-col="fb_cost_per_purchase">{format_money(row.get("fb_cost_per_purchase", 0))}</td>
-            <td class="dashboard-metric-cell" data-col="clicks">{format_int_or_float(row.get("clicks", 0))}</td>
-            <td class="dashboard-metric-cell" data-col="leads">{format_int_or_float(row.get("leads", 0))}</td>
-            <td class="dashboard-metric-cell" data-col="reg">{format_int_or_float(row.get("reg", 0))}</td>
-            <td class="dashboard-metric-cell" data-col="rate">{format_money(row.get("rate", 0))}</td>
-            <td class="dashboard-metric-cell" data-col="cost_reg">{format_money(row.get("cost_reg", 0))}</td>
-            <td class="dashboard-metric-cell" data-col="fb_ftd">{format_int_or_float(row.get("fb_ftd", 0))}</td>
-            <td class="dashboard-metric-cell" data-col="cpa">{format_money(row.get("cpa", 0))}</td>
-            <td class="dashboard-metric-cell" data-col="chatterfy">{format_int_or_float(row.get("chatterfy", 0))}</td>
             <td class="dashboard-metric-cell" data-col="players_ftd">{format_int_or_float(row.get("players_ftd", 0))}</td>
             <td class="dashboard-metric-cell" data-col="qual_ftd">{format_int_or_float(row.get("qual_ftd", 0))}</td>
             <td class="dashboard-metric-cell" data-col="hold_count">{format_int_or_float(row.get("hold_count", 0))}</td>
             <td class="dashboard-metric-cell" data-col="hold_split">{escape(row.get("hold_split") or "0B / 0W")}</td>
             <td class="dashboard-metric-cell" data-col="cap_total">{format_int_or_float(row.get("cap_total", 0))}</td>
             <td class="dashboard-metric-cell" data-col="cap_fill">{format_percent(row.get("cap_fill", 0))}</td>
-            <td class="dashboard-metric-cell" data-col="income">{format_money(row.get("income", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="payout">{format_money(row.get("payout", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="costs">{format_money(row.get("costs", 0))}</td>
+            <td class="dashboard-metric-cell" data-col="costs_ai"></td>
             <td class="dashboard-metric-cell" data-col="profit">{format_money(row.get("profit", 0))}</td>
             <td class="dashboard-metric-cell" data-col="roi">{format_percent(row.get("roi", 0))}</td>
         </tr>
@@ -8915,6 +9103,9 @@ def _render_dashboard_page_v2(
         background:#f2f7ff;
         border-color:rgba(59, 86, 138, 0.45);
     }}
+    {fb_collapsed_selectors} {{
+        display:none !important;
+    }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="buyer"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="buyer"] {{
         width:auto;
@@ -8993,8 +9184,12 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable th[data-col="cost_reg"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="cpa"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="cpa"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="income"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="income"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="payout"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="payout"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="costs"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="costs"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="costs_ai"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="costs_ai"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="profit"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="profit"] {{
         width:92px;
@@ -9155,9 +9350,17 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable td[data-col="cap_fill"] {{
         background:#fff8df;
     }}
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="income"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="income"] {{
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="payout"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="payout"] {{
         background:#edf8e7;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="costs"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="costs"] {{
+        background:#fff4e8;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="costs_ai"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="costs_ai"] {{
+        background:#f5f7fb;
     }}
     .dashboard-v2 #dashboardUnifiedTable th[data-col="profit"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="profit"],
@@ -9786,6 +9989,16 @@ def _render_dashboard_page_v2(
         const fbMetricColumns = {json.dumps(fb_detail_columns)};
         const fbToggleButton = document.getElementById('dashboardFbMetricsToggle');
         const toggles = Array.from(document.querySelectorAll('.dashboard-column-toggle'));
+        window.dashboardSetFbMetricsCollapsed = (collapsed) => {{
+            document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
+                table.classList.toggle('dashboard-fb-metrics-collapsed', !!collapsed);
+            }});
+            if (fbToggleButton) {{
+                fbToggleButton.textContent = collapsed ? '+' : '−';
+                fbToggleButton.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+                fbToggleButton.setAttribute('title', collapsed ? 'Expand FB metrics' : 'Collapse FB metrics');
+            }}
+        }};
         window.dashboardToggleFbMetrics = (button) => {{
             if (button) {{
                 button.blur();
@@ -9793,6 +10006,7 @@ def _render_dashboard_page_v2(
             const state = window.dashboardReadState();
             state.fbMetricsCollapsed = !state.fbMetricsCollapsed;
             window.dashboardWriteState(state);
+            window.dashboardSetFbMetricsCollapsed(state.fbMetricsCollapsed);
             applyColumns();
             return false;
         }};
@@ -9814,14 +10028,10 @@ def _render_dashboard_page_v2(
             toggles.forEach((toggle) => {{
                 toggle.checked = !manualHidden.includes(toggle.value);
             }});
+            window.dashboardSetFbMetricsCollapsed(fbMetricsCollapsed);
             document.querySelectorAll('[data-dashboard-tree-table] [data-col]').forEach((cell) => {{
                 cell.style.display = hidden.has(cell.dataset.col) ? 'none' : '';
             }});
-            if (fbToggleButton) {{
-                fbToggleButton.textContent = fbMetricsCollapsed ? '+' : '−';
-                fbToggleButton.setAttribute('aria-expanded', fbMetricsCollapsed ? 'false' : 'true');
-                fbToggleButton.setAttribute('title', fbMetricsCollapsed ? 'Expand FB metrics' : 'Collapse FB metrics');
-            }}
             document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
                 window.dashboardTreeAutoSize(table);
             }});
