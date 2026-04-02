@@ -8776,7 +8776,7 @@ def _render_dashboard_page_v2(
         ("fb_purchases", "DEP"),
         ("fb_cost_per_purchase", "$, DEP"),
         ("players_ftd", "FTD"),
-        ("qual_ftd", "Qual FTD"),
+        ("qual_ftd", "QFTD"),
         ("hold_count", "Hold"),
         ("hold_split", "Hold Split"),
         ("cap_total", "Cap"),
@@ -9347,26 +9347,50 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable th[data-col="budget"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="spend"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="spend"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_material_views"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_material_views"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cost_per_content_view"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cost_per_content_view"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_link_clicks"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_link_clicks"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cpc"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cpc"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_frequency"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_frequency"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_ctr"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_ctr"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_leads"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_leads"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cost_per_lead"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cost_per_lead"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_paid_subscriptions"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_paid_subscriptions"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cost_per_paid_subscription"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cost_per_paid_subscription"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_contacts"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_contacts"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cost_per_contact"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cost_per_contact"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_completed_registrations"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_completed_registrations"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cost_per_completed_registration"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cost_per_completed_registration"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_purchases"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_purchases"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cost_per_purchase"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cost_per_purchase"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="rate"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="rate"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="cost_reg"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="cost_reg"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="cpa"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="cpa"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="players_ftd"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="players_ftd"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="qual_ftd"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="qual_ftd"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="hold_count"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="hold_count"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="hold_split"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="hold_split"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="cap_total"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="cap_total"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="cap_fill"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="cap_fill"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="payout"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="payout"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="costs"],
@@ -9374,50 +9398,54 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable td[data-col="costs_ai"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="costs_ai"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="profit"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="profit"] {{
-        width:92px;
-        min-width:92px;
-        max-width:92px;
-        text-align:right;
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="profit"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="roi"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="roi"] {{
+        width:auto;
+        min-width:0;
+        max-width:none;
+        white-space:nowrap;
     }}
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="hold_split"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="hold_split"] {{
+        text-align:center;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="budget"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="budget"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="spend"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="spend"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_material_views"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_material_views"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cost_per_content_view"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cost_per_content_view"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_link_clicks"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_link_clicks"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_leads"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_leads"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_paid_subscriptions"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_paid_subscriptions"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_contacts"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_contacts"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_completed_registrations"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_completed_registrations"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_purchases"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_purchases"] {{
-        width:88px;
-        min-width:88px;
-        max-width:88px;
-        text-align:right;
-    }}
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cpc"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cpc"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_frequency"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_frequency"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_ctr"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_ctr"] {{
-        width:76px;
-        min-width:76px;
-        max-width:76px;
-        text-align:right;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="clicks"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="clicks"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="leads"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="leads"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="reg"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="reg"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_ftd"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_ftd"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="chatterfy"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="chatterfy"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_ctr"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_leads"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_leads"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cost_per_lead"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cost_per_lead"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_paid_subscriptions"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_paid_subscriptions"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cost_per_paid_subscription"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cost_per_paid_subscription"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_contacts"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_contacts"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cost_per_contact"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cost_per_contact"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_completed_registrations"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_completed_registrations"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cost_per_completed_registration"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cost_per_completed_registration"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_purchases"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_purchases"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="fb_cost_per_purchase"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="fb_cost_per_purchase"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="players_ftd"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="players_ftd"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="qual_ftd"],
@@ -9425,26 +9453,19 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable td[data-col="hold_count"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="hold_count"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="cap_total"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="cap_total"] {{
-        width:70px;
-        min-width:70px;
-        max-width:70px;
-        text-align:right;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="hold_split"],
-    .dashboard-v2 #dashboardUnifiedTable th[data-col="hold_split"] {{
-        width:82px;
-        min-width:82px;
-        max-width:82px;
-        text-align:center;
-    }}
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="cap_total"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="cap_fill"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="cap_fill"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="payout"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="payout"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="costs"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="costs"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="costs_ai"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="costs_ai"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="profit"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="profit"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="roi"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="roi"] {{
-        width:72px;
-        min-width:72px;
-        max-width:72px;
         text-align:right;
     }}
     .dashboard-v2 #dashboardUnifiedTable th[data-col="platform"],
@@ -9852,35 +9873,35 @@ def _render_dashboard_page_v2(
                 adset_name: 54,
                 ad_name: 54,
                 buyer: 44,
-                budget: 72,
-                spend: 72,
-                fb_material_views: 58,
-                fb_cost_per_content_view: 74,
-                fb_link_clicks: 58,
-                fb_cpc: 64,
-                fb_frequency: 58,
-                fb_ctr: 58,
-                fb_leads: 58,
-                fb_cost_per_lead: 70,
-                fb_paid_subscriptions: 58,
-                fb_cost_per_paid_subscription: 68,
-                fb_contacts: 58,
-                fb_cost_per_contact: 68,
-                fb_completed_registrations: 58,
-                fb_cost_per_completed_registration: 68,
-                fb_purchases: 58,
-                fb_cost_per_purchase: 68,
-                players_ftd: 54,
-                qual_ftd: 66,
-                hold_count: 54,
-                hold_split: 82,
-                cap_total: 54,
-                cap_fill: 64,
-                payout: 72,
-                costs: 72,
-                costs_ai: 72,
-                profit: 72,
-                roi: 64,
+                budget: 44,
+                spend: 44,
+                fb_material_views: 44,
+                fb_cost_per_content_view: 44,
+                fb_link_clicks: 44,
+                fb_cpc: 44,
+                fb_frequency: 44,
+                fb_ctr: 44,
+                fb_leads: 44,
+                fb_cost_per_lead: 44,
+                fb_paid_subscriptions: 44,
+                fb_cost_per_paid_subscription: 44,
+                fb_contacts: 44,
+                fb_cost_per_contact: 44,
+                fb_completed_registrations: 44,
+                fb_cost_per_completed_registration: 44,
+                fb_purchases: 44,
+                fb_cost_per_purchase: 44,
+                players_ftd: 44,
+                qual_ftd: 44,
+                hold_count: 44,
+                hold_split: 44,
+                cap_total: 44,
+                cap_fill: 44,
+                payout: 44,
+                costs: 44,
+                costs_ai: 44,
+                profit: 44,
+                roi: 44,
             }};
             const ensureMeasureProbe = () => {{
                 let probe = document.getElementById('dashboardWidthMeasureProbe');
@@ -10037,7 +10058,16 @@ def _render_dashboard_page_v2(
             }});
         }};
 
-        const dashboardStateKey = window.teambeadStorageKey('dashboard-ui-state');
+        const dashboardStorageKey = (suffix) => {{
+            try {{
+                return typeof window.teambeadStorageKey === 'function'
+                    ? window.teambeadStorageKey(suffix)
+                    : suffix;
+            }} catch (_error) {{
+                return suffix;
+            }}
+        }};
+        const dashboardStateKey = dashboardStorageKey('dashboard-ui-state');
         window.dashboardReadState = () => {{
             try {{
                 const parsed = JSON.parse(localStorage.getItem(dashboardStateKey) || '{{}}');
@@ -10052,7 +10082,7 @@ def _render_dashboard_page_v2(
             }} catch (_error) {{}}
         }};
         const dashboardFilterKey = form?.dataset.persistFilters || 'dashboard-v2';
-        const dashboardTreeStateKey = window.teambeadStorageKey('dashboard-tree-state:' + dashboardFilterKey);
+        const dashboardTreeStateKey = dashboardStorageKey('dashboard-tree-state:' + dashboardFilterKey);
         const readDashboardTreeState = () => {{
             try {{
                 const parsed = JSON.parse(localStorage.getItem(dashboardTreeStateKey) || '{{}}');
@@ -10434,7 +10464,7 @@ def _render_dashboard_page_v2(
             }}
         }});
 
-        const hiddenKey = window.teambeadStorageKey('dashboard-columns-hidden');
+        const hiddenKey = dashboardStorageKey('dashboard-columns-hidden');
         const fbMetricColumns = {json.dumps(fb_detail_columns)};
         const fbToggleButton = document.getElementById('dashboardFbMetricsToggle');
         const toggles = Array.from(document.querySelectorAll('.dashboard-column-toggle'));
