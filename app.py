@@ -1002,6 +1002,31 @@ def format_csv_number(value):
     return format_int_or_float(safe_number(value))
 
 
+def get_dashboard_compact_label(field, label="", row=None):
+    raw_label = safe_text(label).strip()
+    row = row or {}
+
+    if field == "campaign_name":
+        launch_date = safe_text(row.get("launch_date")) or safe_text(parse_ad_name(raw_label).get("launch_date"))
+        return launch_date or raw_label or "—"
+
+    if field == "adset_name":
+        offer = safe_text(row.get("offer")) or safe_text(parse_ad_name(raw_label).get("offer"))
+        if offer:
+            return offer
+        parts = [safe_text(part) for part in raw_label.split("/") if safe_text(part)]
+        return (parts[-1] if parts else raw_label) or "—"
+
+    if field == "ad_name":
+        creative = safe_text(row.get("creative")) or safe_text(parse_ad_name(raw_label).get("creative"))
+        if creative:
+            return creative
+        parts = [safe_text(part) for part in raw_label.split("/") if safe_text(part)]
+        return (parts[-1] if parts else raw_label) or "—"
+
+    return raw_label or "—"
+
+
 
 def calc_metrics(clicks, reg, ftd, spend, leads=0):
     clicks = clicks or 0
@@ -7995,6 +8020,10 @@ def _render_dashboard_page_v2(
         ])
 
     def render_hierarchy_label(node, level, variant="caret"):
+        raw_label = safe_text(node.get("label")) or "—"
+        sample_row = (node.get("rows") or [None])[0] or {}
+        display_label = get_dashboard_compact_label(node.get("field"), raw_label, sample_row)
+        title_attr = f' title="{escape(raw_label)}"' if raw_label and raw_label != display_label else ""
         icon_html = (
             '<span class="dashboard-tree-caret">▸</span>'
             if variant == "caret"
@@ -8002,9 +8031,9 @@ def _render_dashboard_page_v2(
         )
         toggle = (
             f'<button type="button" class="dashboard-tree-toggle dashboard-tree-toggle-{escape(variant)}" '
-            f'data-target="{escape(node["id"])}" aria-expanded="false" '
+            f'data-target="{escape(node["id"])}" aria-expanded="false"{title_attr} '
             f'onclick="window.dashboardTreeToggle && window.dashboardTreeToggle(this); return false;">{icon_html}'
-            f'<span class="dashboard-tree-label">{escape(node["label"])}</span></button>'
+            f'<span class="dashboard-tree-label">{escape(display_label)}</span></button>'
         )
         return f'<div class="dashboard-tree-cell dashboard-tree-level-{level}">{toggle}</div>'
 
@@ -8069,6 +8098,9 @@ def _render_dashboard_page_v2(
         ancestors = ancestors or []
         row_class = "soft-green" if safe_number(row.get("profit", 0)) > 0 else ("soft-red" if safe_number(row.get("profit", 0)) < 0 else "")
         hidden_attr = ' hidden' if parent_id else ''
+        raw_ad_name = safe_text(row.get("ad_name")) or "—"
+        display_ad_name = get_dashboard_compact_label("ad_name", raw_ad_name, row)
+        ad_title_attr = f' title="{escape(raw_ad_name)}"' if raw_ad_name != display_ad_name else ""
         row_key = "leaf|" + "|".join([
             safe_text(parent_id) or "root",
             safe_text(row.get("platform")).strip() or "—",
@@ -8086,7 +8118,7 @@ def _render_dashboard_page_v2(
             <td data-col="manager"></td>
             <td data-col="campaign_name"></td>
             <td data-col="adset_name"></td>
-            <td data-col="ad_name">{escape(row.get("ad_name") or "—")}</td>
+            <td data-col="ad_name"{ad_title_attr}>{escape(display_ad_name)}</td>
             <td data-col="buyer">{escape(row.get("buyer") or "—")}</td>
             <td class="dashboard-metric-cell" data-col="budget">{format_money(row.get("budget", 0))}</td>
             <td class="dashboard-metric-cell" data-col="spend">{format_money(row.get("spend", 0))}</td>
@@ -8358,7 +8390,7 @@ def _render_dashboard_page_v2(
         border-bottom:1px solid rgba(138, 159, 194, 0.22);
         transition:font-weight .15s ease, color .15s ease;
     }}
-    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row.dashboard-tree-row-expanded td {{
+    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row.dashboard-tree-row-active td {{
         font-weight:800;
         color:#1b2d50;
     }}
@@ -8427,7 +8459,7 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-toggle[aria-expanded="true"] .dashboard-tree-caret {{
         transform:rotate(90deg);
     }}
-    .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-toggle[aria-expanded="true"] .dashboard-tree-label {{
+    .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-toggle[aria-current="true"] .dashboard-tree-label {{
         font-weight:800;
     }}
     .dashboard-v2 .dashboard-tree-plus {{
@@ -8462,41 +8494,57 @@ def _render_dashboard_page_v2(
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="buyer"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="buyer"] {{
-        width:78px;
-        min-width:78px;
-        max-width:78px;
+        width:auto;
+        min-width:44px;
+        max-width:none;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="platform"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="platform"] {{
-        width:96px;
-        min-width:96px;
-        max-width:96px;
+        width:auto;
+        min-width:54px;
+        max-width:none;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="manager"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="manager"] {{
-        width:110px;
-        min-width:110px;
-        max-width:110px;
+        width:auto;
+        min-width:72px;
+        max-width:none;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="geo"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="geo"] {{
-        width:64px;
-        min-width:64px;
-        max-width:64px;
+        width:auto;
+        min-width:44px;
+        max-width:none;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="campaign_name"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="campaign_name"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="adset_name"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="adset_name"] {{
-        width:188px;
-        min-width:188px;
-        max-width:188px;
+        width:auto;
+        min-width:54px;
+        max-width:none;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="ad_name"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="ad_name"] {{
-        width:220px;
-        min-width:220px;
-        max-width:220px;
+        width:auto;
+        min-width:54px;
+        max-width:none;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="platform"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="platform"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="geo"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="geo"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="manager"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="manager"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="campaign_name"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="campaign_name"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="adset_name"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="adset_name"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="ad_name"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="ad_name"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="buyer"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="buyer"] {{
+        white-space:nowrap;
     }}
     .dashboard-v2 #dashboardUnifiedTable td[data-col="budget"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="budget"],
@@ -8883,6 +8931,39 @@ def _render_dashboard_page_v2(
             }});
         }};
 
+        window.dashboardApplyActiveNode = (table) => {{
+            if (!table) return;
+            const state = window.dashboardReadState();
+            const activeNodes = state.activeNode || {{}};
+            let activeNodeId = activeNodes[table.id || 'dashboard-tree-table'] || '';
+            const treeButtons = Array.from(table.querySelectorAll('.dashboard-tree-toggle'));
+            const availableNodeIds = new Set(treeButtons.map((button) => button.dataset.target || '').filter(Boolean));
+            if (!activeNodeId || !availableNodeIds.has(activeNodeId)) {{
+                const openNodes = treeButtons
+                    .filter((button) => button.getAttribute('aria-expanded') === 'true')
+                    .map((button) => button.dataset.target || '')
+                    .filter(Boolean);
+                activeNodeId = openNodes[openNodes.length - 1] || '';
+            }}
+            Array.from(table.querySelectorAll('tbody tr.dashboard-tree-row')).forEach((row) => {{
+                row.classList.toggle('dashboard-tree-row-active', (row.dataset.nodeId || '') === activeNodeId);
+                const button = row.querySelector('.dashboard-tree-toggle');
+                if (button) {{
+                    if ((row.dataset.nodeId || '') === activeNodeId) button.setAttribute('aria-current', 'true');
+                    else button.removeAttribute('aria-current');
+                }}
+            }});
+        }};
+
+        window.dashboardSetActiveNode = (table, nodeId) => {{
+            if (!table) return;
+            const state = window.dashboardReadState();
+            state.activeNode = state.activeNode || {{}};
+            state.activeNode[table.id || 'dashboard-tree-table'] = nodeId || '';
+            window.dashboardWriteState(state);
+            if (window.dashboardApplyActiveNode) window.dashboardApplyActiveNode(table);
+        }};
+
         window.dashboardTreeToggle = (button) => {{
             if (!button) return false;
             const table = button.closest('[data-dashboard-tree-table]');
@@ -8926,6 +9007,7 @@ def _render_dashboard_page_v2(
                 state.expanded[table.id || 'dashboard-tree-table'] = openNodes;
                 window.dashboardWriteState(state);
             }}
+            if (window.dashboardSetActiveNode) window.dashboardSetActiveNode(table, nodeId);
             if (window.dashboardSyncExpandedRows) window.dashboardSyncExpandedRows(table);
             if (window.dashboardApplyAdsetFocus) window.dashboardApplyAdsetFocus(table);
             if (window.dashboardTreeAutoSize) window.dashboardTreeAutoSize(table);
@@ -8961,9 +9043,18 @@ def _render_dashboard_page_v2(
                         const paddingLeft = parseFloat(style.paddingLeft || '0') || 0;
                         const paddingRight = parseFloat(style.paddingRight || '0') || 0;
                         const contentWidth = Math.max(cell.scrollWidth, cell.firstElementChild?.scrollWidth || 0, cell.textContent?.trim() ? cell.scrollWidth : 0);
-                        width = Math.max(width, Math.ceil(contentWidth + paddingLeft + paddingRight + 2));
+                        width = Math.max(width, Math.ceil(contentWidth + paddingLeft + paddingRight + 10));
                     }});
-                    return width;
+                    const minWidths = {{
+                        platform: 54,
+                        geo: 44,
+                        manager: 72,
+                        campaign_name: 54,
+                        adset_name: 54,
+                        ad_name: 54,
+                        buyer: 44,
+                    }};
+                    return Math.max(minWidths[col] || 44, width);
                 }};
                 const widths = {{}};
                 autoCols.forEach((col) => {{
@@ -9214,6 +9305,7 @@ def _render_dashboard_page_v2(
                     }});
                     expandNode(button);
                 }});
+                if (window.dashboardApplyActiveNode) window.dashboardApplyActiveNode(table);
                 if (window.dashboardSyncExpandedRows) window.dashboardSyncExpandedRows(table);
                 window.dashboardTreeAutoSize(table);
                 if (window.dashboardApplyAdsetFocus) window.dashboardApplyAdsetFocus(table);
