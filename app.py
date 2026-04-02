@@ -9783,6 +9783,49 @@ def _render_dashboard_page_v2(
                 'platform', 'geo', 'manager', 'campaign_name', 'adset_name', 'ad_name',
                 'buyer',
             ];
+            const readWidthCache = () => {{
+                try {{
+                    const parsed = JSON.parse(table.dataset.autoWidthCache || '{{}}');
+                    return parsed && typeof parsed === 'object' ? parsed : {{}};
+                }} catch (_error) {{
+                    return {{}};
+                }}
+            }};
+            const writeWidthCache = (payload) => {{
+                try {{
+                    table.dataset.autoWidthCache = JSON.stringify(payload || {{}});
+                }} catch (_error) {{}}
+            }};
+            const applyCachedWidths = (cache) => {{
+                if (!cache || typeof cache !== 'object') return false;
+                let applied = false;
+                autoCols.forEach((col) => {{
+                    const measuredWidth = parseFloat(cache[col] || 0) || 0;
+                    if (!measuredWidth) return;
+                    applied = true;
+                    Array.from(table.querySelectorAll(`[data-col="${{col}}"]`)).forEach((cell) => {{
+                        cell.style.width = `${{measuredWidth}}px`;
+                        cell.style.minWidth = `${{measuredWidth}}px`;
+                        cell.style.maxWidth = `${{measuredWidth}}px`;
+                    }});
+                }});
+                const cachedTotalWidth = parseFloat(cache.totalWidth || 0) || 0;
+                if (cachedTotalWidth > 0) {{
+                    table.style.width = `${{cachedTotalWidth}}px`;
+                    table.style.minWidth = `${{cachedTotalWidth}}px`;
+                    table.style.maxWidth = `${{cachedTotalWidth}}px`;
+                    applied = true;
+                }}
+                if (applied) {{
+                    table.style.tableLayout = 'fixed';
+                }}
+                return applied;
+            }};
+            if (table.classList.contains('dashboard-fb-metrics-collapsed')) {{
+                if (applyCachedWidths(readWidthCache())) {{
+                    return;
+                }}
+            }}
             autoCols.forEach((col) => {{
                 const allCells = Array.from(table.querySelectorAll(`[data-col="${{col}}"]`));
                 allCells.forEach((cell) => {{
@@ -9849,6 +9892,7 @@ def _render_dashboard_page_v2(
                     table.style.minWidth = `${{totalWidth}}px`;
                     table.style.maxWidth = `${{totalWidth}}px`;
                 }}
+                writeWidthCache({{ ...widths, totalWidth }});
                 table.style.tableLayout = 'fixed';
             }});
         }};
