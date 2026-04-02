@@ -6546,6 +6546,11 @@ def normalize_date_for_compare(value):
     return dt.strftime("%Y-%m-%d") if dt else ""
 
 
+def format_finance_date_display(value):
+    dt = parse_datetime_flexible(value)
+    return dt.strftime("%d.%m.%Y") if dt else safe_text(value)
+
+
 def get_finance_year_options(manual):
     years = set()
     for item in manual.get("expenses", []):
@@ -7397,11 +7402,12 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
 
     def inline_add_row(action, title, columns, fields, button_tone):
         field_html = ""
-        for field in fields:
+        for index, field in enumerate(fields):
             field_type = field.get("type", "text")
             name = field["name"]
             placeholder = field.get("placeholder", "")
             value = escape(safe_text(field.get("value", "")))
+            field_class = escape(field.get("class_name", ""))
             if field_type == "select":
                 control = f'<select name="{escape(name)}">{option_tags(field.get("options", []), safe_text(field.get("value", "")))}</select>'
             elif field_type == "datalist":
@@ -7412,7 +7418,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
                 )
             else:
                 control = f'<input type="{escape(field_type)}" name="{escape(name)}" value="{value}" placeholder="{escape(placeholder)}">'
-            field_html += f'<label>{control}</label>'
+            field_html += f'<label class="finance-inline-field finance-inline-field-{index + 1} {field_class}">{control}</label>'
         return f"""
         <tr class="finance-inline-add-trigger-row">
             <td colspan="{columns}">
@@ -7440,6 +7446,18 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         }
         for item in manual_all.get("wallets", [])
     ]
+    cabinet_rows = get_cabinet_rows()
+    income_brand_options = sorted({
+        safe_text(brand).strip()
+        for row in cabinet_rows
+        for brand in split_list_tokens(getattr(row, "brands", ""))
+        if safe_text(brand).strip()
+    })
+    income_cabinet_options = sorted({
+        safe_text(getattr(row, "name", "")).strip()
+        for row in cabinet_rows
+        if safe_text(getattr(row, "name", "")).strip()
+    })
     payer_names = sorted({
         *(safe_text(item.get("wallet")) for item in wallet_source_rows if safe_text(item.get("wallet"))),
         *(safe_text(item.get("description")) for item in wallet_source_rows if safe_text(item.get("description"))),
@@ -7461,7 +7479,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
     ]
     expense_rows = [
         (
-            item.get("date", ""),
+            format_finance_date_display(item.get("date", "")),
             item.get("category", ""),
             item.get("paid_by", ""),
             format_money(item.get("amount", 0)),
@@ -7470,7 +7488,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         for item in snapshot.get("expenses", [])
     ] + [
         (
-            item.expense_date or "",
+            format_finance_date_display(item.expense_date or ""),
             item.category or "",
             item.from_wallet or item.paid_by or "",
             format_money(item.amount),
@@ -7480,7 +7498,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
     ]
     income_rows = [
         (
-            item.get("date", ""),
+            format_finance_date_display(item.get("date", "")),
             item.get("category", ""),
             item.get("wallet", ""),
             format_money(item.get("amount", 0)),
@@ -7489,7 +7507,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         for item in snapshot.get("income", [])
     ] + [
         (
-            item.income_date or "",
+            format_finance_date_display(item.income_date or ""),
             item.category or "",
             item.wallet_name or item.wallet or "",
             format_money(item.amount),
@@ -7499,7 +7517,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
     ]
     pending_rows = [
         (
-            item.get("date", ""),
+            format_finance_date_display(item.get("date", "")),
             item.get("category", ""),
             item.get("description", ""),
             format_money(item.get("amount", 0)),
@@ -7510,7 +7528,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         for item in snapshot.get("pending", [])
     ] + [
         (
-            item.pending_date or "",
+            format_finance_date_display(item.pending_date or ""),
             item.category or "",
             item.description or "",
             format_money(item.amount),
@@ -7522,7 +7540,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
     ]
     transfer_rows = [
         (
-            item.get("date", ""),
+            format_finance_date_display(item.get("date", "")),
             format_money(item.get("amount", 0)),
             item.get("from_wallet", ""),
             item.get("to_wallet", ""),
@@ -7531,7 +7549,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         for item in snapshot.get("transfers", [])
     ] + [
         (
-            item.transfer_date or "",
+            format_finance_date_display(item.transfer_date or ""),
             format_money(item.amount),
             item.from_wallet or "",
             item.to_wallet or "",
@@ -7552,7 +7570,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
             {"name": "expense_date", "type": "date"},
             {"name": "category", "type": "select", "options": expense_category_options},
             {"name": "from_wallet", "type": "select", "options": payer_names},
-            {"name": "amount", "type": "number", "placeholder": "Сумма"},
+            {"name": "amount", "type": "number", "placeholder": "Сумма", "class_name": "finance-inline-field-amount"},
             {"name": "comment", "type": "datalist", "options": expense_comment_options, "list_id": "finance-expense-comments", "placeholder": "Комментарий"},
         ],
         "red",
@@ -7563,9 +7581,9 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         5,
         [
             {"name": "income_date", "type": "date"},
-            {"name": "category", "placeholder": "Бренд"},
-            {"name": "wallet_name", "placeholder": "Кабинет"},
-            {"name": "amount", "type": "number", "placeholder": "Сумма"},
+            {"name": "category", "type": "select", "options": income_brand_options},
+            {"name": "wallet_name", "type": "select", "options": income_cabinet_options},
+            {"name": "amount", "type": "number", "placeholder": "Сумма", "class_name": "finance-inline-field-amount"},
             {"name": "comment", "placeholder": "Комментарий"},
         ],
         "green",
@@ -8039,17 +8057,20 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
     }}
     .finance-inline-add-form {{
         display:grid;
-        grid-template-columns:repeat(5, minmax(0, 1fr)) auto;
+        grid-template-columns:minmax(0, 1.08fr) minmax(0, 1.18fr) minmax(0, 1.18fr) minmax(88px, 0.72fr) minmax(0, 1.08fr) auto;
         gap:8px;
         align-items:end;
+        width:100%;
     }}
     .finance-inline-add-form label {{
         display:block;
+        min-width:0;
     }}
     .finance-inline-add-form input,
     .finance-inline-add-form select {{
         width:100%;
         min-height:36px;
+        min-width:0;
         border-radius:10px;
         border:1px solid var(--border);
         background:var(--panel-3);
@@ -8057,10 +8078,15 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         padding:8px 10px;
         font:inherit;
     }}
+    .finance-inline-field-amount input {{
+        padding-left:8px;
+        padding-right:8px;
+    }}
     .finance-inline-add-form .btn {{
         min-height:36px;
         min-width:72px;
         padding:8px 14px;
+        justify-self:start;
     }}
     .finance-sheet-cell {{
         padding:5px 10px;
