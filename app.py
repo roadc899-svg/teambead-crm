@@ -6560,6 +6560,10 @@ def get_finance_year_options(manual):
         dt = parse_datetime_flexible(item.transfer_date)
         if dt:
             years.add(str(dt.year))
+    for item in manual.get("pending", []):
+        dt = parse_datetime_flexible(item.pending_date)
+        if dt:
+            years.add(str(dt.year))
     years.update({"2026", "2027"})
     return sorted(years)
 
@@ -6590,6 +6594,7 @@ def filter_finance_manual_rows(manual, date_from="", date_to="", year="", period
         "expenses": [item for item in manual.get("expenses", []) if date_matches_filters(item.expense_date, date_from, date_to, year) and finance_date_matches_period(item.expense_date, period_label)],
         "income": [item for item in manual.get("income", []) if date_matches_filters(item.income_date, date_from, date_to, year) and finance_date_matches_period(item.income_date, period_label)],
         "transfers": [item for item in manual.get("transfers", []) if date_matches_filters(item.transfer_date, date_from, date_to, year) and finance_date_matches_period(item.transfer_date, period_label)],
+        "pending": [item for item in manual.get("pending", []) if date_matches_filters(item.pending_date, date_from, date_to, year) and finance_date_matches_period(item.pending_date, period_label)],
     }
 
 
@@ -7273,7 +7278,7 @@ def _patched_sidebar_html(active_page, current_user=None):
     return html
 
 
-def _render_finance_sheet_section(title, total, headers, rows, tone="orange"):
+def _render_finance_sheet_section(title, total, headers, rows, tone="orange", action_html=""):
     col_count = max(1, len(headers))
     header_html = "".join(f"<th>{escape(header)}</th>" for header in headers)
     row_html = ""
@@ -7289,7 +7294,10 @@ def _render_finance_sheet_section(title, total, headers, rows, tone="orange"):
     <section class="finance-sheet-section finance-sheet-tone-{escape(tone)}">
         <div class="finance-sheet-titlebar">
             <div class="finance-sheet-title">{escape(title)}</div>
-            <div class="finance-sheet-total">{escape(total_text)}</div>
+            <div class="finance-sheet-titlebar-actions">
+                <div class="finance-sheet-total">{escape(total_text)}</div>
+                {action_html}
+            </div>
         </div>
         <div class="finance-sheet-table-wrap">
             <table class="finance-sheet-table">
@@ -7338,7 +7346,34 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         f'<input type="hidden" name="period_label" value="{escape(effective_period_label)}">'
     )
 
-    wallet_source_rows = snapshot.get("wallets") or [
+    def plus_form(action, fields, title, button_tone="orange"):
+        field_html = ""
+        for field in fields:
+            field_type = field.get("type", "text")
+            name = field["name"]
+            label = field["label"]
+            placeholder = field.get("placeholder", "")
+            value = escape(safe_text(field.get("value", "")))
+            if field_type == "textarea":
+                control = f'<textarea name="{escape(name)}" placeholder="{escape(placeholder)}">{value}</textarea>'
+            else:
+                control = f'<input type="{escape(field_type)}" name="{escape(name)}" value="{value}" placeholder="{escape(placeholder)}">'
+            field_html += f'<label><span>{escape(label)}</span>{control}</label>'
+        return f"""
+        <details class="finance-add-menu">
+            <summary class="finance-add-btn" aria-label="Add {escape(title)}">+</summary>
+            <div class="finance-add-popover">
+                <form method="post" action="{escape(action)}" class="finance-add-form">
+                    {hidden_filter_inputs}
+                    <div class="finance-add-form-title">{escape(title)}</div>
+                    <div class="finance-add-form-grid">{field_html}</div>
+                    <button type="submit" class="btn small-btn finance-add-submit finance-add-submit-{escape(button_tone)}">Save</button>
+                </form>
+            </div>
+        </details>
+        """
+
+    wallet_source_rows = list(snapshot.get("wallets", [])) + [
         {
             "category": item.category or "",
             "description": item.description or "",
@@ -7367,6 +7402,15 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
             item.get("comment", ""),
         )
         for item in snapshot.get("expenses", [])
+    ] + [
+        (
+            item.expense_date or "",
+            item.category or "",
+            format_money(item.amount),
+            item.from_wallet or item.paid_by or "",
+            item.comment or "",
+        )
+        for item in manual.get("expenses", [])
     ]
     income_rows = [
         (
@@ -7378,6 +7422,16 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
             item.get("reconciliation", ""),
         )
         for item in snapshot.get("income", [])
+    ] + [
+        (
+            item.income_date or "",
+            item.category or "",
+            item.description or "",
+            format_money(item.amount),
+            item.wallet_name or item.wallet or "",
+            item.from_wallet or item.reconciliation or "",
+        )
+        for item in manual.get("income", [])
     ]
     pending_rows = [
         (
@@ -7390,6 +7444,17 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
             item.get("comment", ""),
         )
         for item in snapshot.get("pending", [])
+    ] + [
+        (
+            item.pending_date or "",
+            item.category or "",
+            item.description or "",
+            format_money(item.amount),
+            item.wallet or "",
+            item.reconciliation or "",
+            item.comment or "",
+        )
+        for item in manual.get("pending", [])
     ]
     transfer_rows = [
         (
@@ -7400,15 +7465,43 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
             item.get("comment", ""),
         )
         for item in snapshot.get("transfers", [])
+    ] + [
+        (
+            item.transfer_date or "",
+            format_money(item.amount),
+            item.from_wallet or "",
+            item.to_wallet or "",
+            item.comment or "",
+        )
+        for item in manual.get("transfers", [])
     ]
+
+    pending_total = snapshot.get("totals", {}).get("pending", 0) + sum(safe_number(item.amount) for item in manual.get("pending", []))
+    expense_total = snapshot.get("totals", {}).get("expenses", 0) + sum(safe_number(item.amount) for item in manual.get("expenses", []))
+    income_total = snapshot.get("totals", {}).get("income", 0) + sum(safe_number(item.amount) for item in manual.get("income", []))
+    transfer_total = snapshot.get("totals", {}).get("transfers", 0) + sum(safe_number(item.amount) for item in manual.get("transfers", []))
 
     sheet_board_top = "".join([
         _render_finance_sheet_section(
             "ОЖИДАЕМ",
-            snapshot.get("totals", {}).get("pending", 0),
+            pending_total,
             ["Дата", "Категория", "Описание", "Сумма", "Кошель", "Сверка", "Комментарий"],
             pending_rows,
             tone="yellow",
+            action_html=plus_form(
+                "/finance/pending/save",
+                [
+                    {"name": "pending_date", "label": "Date", "type": "date"},
+                    {"name": "category", "label": "Category"},
+                    {"name": "description", "label": "Description"},
+                    {"name": "amount", "label": "Amount", "type": "number", "placeholder": "0.00"},
+                    {"name": "wallet", "label": "Wallet"},
+                    {"name": "reconciliation", "label": "Reconciliation"},
+                    {"name": "comment", "label": "Comment", "type": "textarea"},
+                ],
+                "Add Pending",
+                "yellow",
+            ),
         ),
         _render_finance_sheet_section(
             "ТЕКУЩИЙ ОСТАТОК",
@@ -7416,30 +7509,79 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
             ["Категория", "Описание", "Владелец", "Кошелек", "Сумма"],
             wallet_rows,
             tone="orange",
+            action_html=plus_form(
+                "/finance/wallets/save",
+                [
+                    {"name": "category", "label": "Category"},
+                    {"name": "description", "label": "Description"},
+                    {"name": "owner_name", "label": "Owner"},
+                    {"name": "wallet", "label": "Wallet"},
+                    {"name": "amount", "label": "Amount", "type": "number", "placeholder": "0.00"},
+                ],
+                "Add Wallet",
+                "orange",
+            ),
         ),
     ])
 
     sheet_board_bottom = "".join([
         _render_finance_sheet_section(
             "РАСХОД",
-            snapshot.get("totals", {}).get("expenses", 0),
+            expense_total,
             ["Дата", "Категория", "Сумма", "Кто оплатил", "Комментарий"],
             expense_rows,
             tone="red",
+            action_html=plus_form(
+                "/finance/expenses/save",
+                [
+                    {"name": "expense_date", "label": "Date", "type": "date"},
+                    {"name": "category", "label": "Category"},
+                    {"name": "amount", "label": "Amount", "type": "number", "placeholder": "0.00"},
+                    {"name": "from_wallet", "label": "Who paid"},
+                    {"name": "comment", "label": "Comment", "type": "textarea"},
+                ],
+                "Add Expense",
+                "red",
+            ),
         ),
         _render_finance_sheet_section(
             "ПРИХОД",
-            snapshot.get("totals", {}).get("income", 0),
+            income_total,
             ["Дата", "Категория", "Описание", "Сумма", "Кошель", "Сверка"],
             income_rows,
             tone="green",
+            action_html=plus_form(
+                "/finance/income/save",
+                [
+                    {"name": "income_date", "label": "Date", "type": "date"},
+                    {"name": "category", "label": "Category"},
+                    {"name": "comment", "label": "Description"},
+                    {"name": "amount", "label": "Amount", "type": "number", "placeholder": "0.00"},
+                    {"name": "wallet_name", "label": "Wallet"},
+                    {"name": "from_wallet", "label": "Reconciliation"},
+                ],
+                "Add Income",
+                "green",
+            ),
         ),
         _render_finance_sheet_section(
             "ПЕРЕМЕЩЕНИЕ",
-            snapshot.get("totals", {}).get("transfers", 0),
+            transfer_total,
             ["Дата", "Сумма", "От куда", "Куда", "Комментарий"],
             transfer_rows,
             tone="blue",
+            action_html=plus_form(
+                "/finance/transfers/save",
+                [
+                    {"name": "transfer_date", "label": "Date", "type": "date"},
+                    {"name": "amount", "label": "Amount", "type": "number", "placeholder": "0.00"},
+                    {"name": "from_wallet", "label": "From"},
+                    {"name": "to_wallet", "label": "To"},
+                    {"name": "comment", "label": "Comment", "type": "textarea"},
+                ],
+                "Add Transfer",
+                "blue",
+            ),
         ),
     ])
 
@@ -7687,6 +7829,78 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         font-size:18px;
         line-height:1;
         white-space:nowrap;
+    }}
+    .finance-sheet-titlebar-actions {{
+        display:flex;
+        align-items:center;
+        gap:10px;
+    }}
+    .finance-add-menu {{
+        position:relative;
+    }}
+    .finance-add-btn {{
+        list-style:none;
+        width:28px;
+        height:28px;
+        display:inline-flex;
+        align-items:center;
+        justify-content:center;
+        border-radius:999px;
+        border:1px solid rgba(0,0,0,.16);
+        background:rgba(255,255,255,.82);
+        color:#0f172a;
+        font-size:20px;
+        font-weight:900;
+        line-height:1;
+        cursor:pointer;
+        user-select:none;
+    }}
+    .finance-add-btn::-webkit-details-marker {{
+        display:none;
+    }}
+    .finance-add-popover {{
+        position:absolute;
+        right:0;
+        top:calc(100% + 10px);
+        width:min(380px, 88vw);
+        padding:14px;
+        border-radius:18px;
+        border:1px solid var(--border);
+        background:var(--panel);
+        box-shadow:var(--shadow);
+        z-index:20;
+    }}
+    .finance-add-form {{
+        display:grid;
+        gap:12px;
+    }}
+    .finance-add-form-title {{
+        font-weight:900;
+        font-size:14px;
+    }}
+    .finance-add-form-grid {{
+        display:grid;
+        gap:10px;
+    }}
+    .finance-add-form-grid label {{
+        display:grid;
+        gap:6px;
+        font-size:12px;
+        font-weight:800;
+    }}
+    .finance-add-form-grid input,
+    .finance-add-form-grid textarea {{
+        width:100%;
+        border-radius:12px;
+        border:1px solid var(--border);
+        background:var(--panel-3);
+        color:var(--text);
+        padding:10px 12px;
+        font:inherit;
+    }}
+    .finance-add-form-grid textarea {{
+        min-height:88px;
+        resize:vertical;
     }}
     .finance-sheet-tone-orange .finance-sheet-titlebar {{ background:#f6b26b; color:#3a2407; }}
     .finance-sheet-tone-red .finance-sheet-titlebar {{ background:#e06666; color:#fff7f7; }}
@@ -12563,6 +12777,65 @@ def save_finance_transfer(
     period_label: str = Form(default=""),
 ):
     response = _domain_actions["save_finance_transfer"](request, edit_id, transfer_date, category, amount, from_wallet, to_wallet, comment, date_from, date_to, year)
+    return _preserve_finance_redirect_filters(response, period_view, period_label)
+
+
+@app.post("/finance/pending/save")
+def save_finance_pending(
+    request: Request,
+    pending_date: str = Form(default=""),
+    category: str = Form(default=""),
+    description: str = Form(default=""),
+    amount: str = Form(default="0"),
+    wallet: str = Form(default=""),
+    reconciliation: str = Form(default=""),
+    comment: str = Form(default=""),
+    date_from: str = Form(default=""),
+    date_to: str = Form(default=""),
+    year: str = Form(default=""),
+    period_view: str = Form(default="current"),
+    period_label: str = Form(default=""),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    require_any_role(user, "superadmin")
+    ensure_finance_tables()
+    if safe_cap_number(amount) <= 0:
+        return RedirectResponse(
+            url=(
+                f"/finance?period_view={quote_plus(safe_text(period_view) or 'current')}"
+                f"&period_label={quote_plus(safe_text(period_label))}"
+                f"&date_from={quote_plus(safe_text(date_from))}"
+                f"&date_to={quote_plus(safe_text(date_to))}"
+                f"&year={quote_plus(safe_text(year))}"
+                f"&message=Pending+amount+must+be+greater+than+0"
+            ),
+            status_code=303,
+        )
+    db = SessionLocal()
+    try:
+        db.add(FinancePendingRow(
+            pending_date=safe_text(pending_date),
+            category=safe_text(category),
+            description=safe_text(description),
+            amount=safe_cap_number(amount),
+            wallet=safe_text(wallet),
+            reconciliation=safe_text(reconciliation),
+            comment=safe_text(comment),
+        ))
+        db.commit()
+    finally:
+        db.close()
+    response = RedirectResponse(
+        url=(
+            f"/finance?date_from={quote_plus(safe_text(date_from))}"
+            f"&date_to={quote_plus(safe_text(date_to))}"
+            f"&year={quote_plus(safe_text(year))}"
+            f"&message=Pending+saved"
+        ),
+        status_code=303,
+    )
     return _preserve_finance_redirect_filters(response, period_view, period_label)
 
 
