@@ -286,6 +286,20 @@ class FinanceTransferRow(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class FinancePendingRow(Base):
+    __tablename__ = "finance_pending_rows"
+
+    id = Column(Integer, primary_key=True, index=True)
+    pending_date = Column(String, default="")
+    category = Column(String, default="")
+    description = Column(String, default="")
+    amount = Column(Float, default=0)
+    wallet = Column(String, default="")
+    reconciliation = Column(String, default="")
+    comment = Column(String, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class PartnerRow(Base):
     __tablename__ = "partner_rows"
 
@@ -6424,6 +6438,7 @@ def ensure_finance_tables():
             FinanceExpenseRow.__table__,
             FinanceIncomeRow.__table__,
             FinanceTransferRow.__table__,
+            FinancePendingRow.__table__,
         ],
         sqlite_migration,
     )
@@ -6438,6 +6453,7 @@ def load_manual_finance():
             "expenses": db.query(FinanceExpenseRow).order_by(FinanceExpenseRow.id.desc()).all(),
             "income": db.query(FinanceIncomeRow).order_by(FinanceIncomeRow.id.desc()).all(),
             "transfers": db.query(FinanceTransferRow).order_by(FinanceTransferRow.id.desc()).all(),
+            "pending": db.query(FinancePendingRow).order_by(FinancePendingRow.id.desc()).all(),
         }
     finally:
         db.close()
