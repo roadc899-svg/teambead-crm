@@ -6449,11 +6449,11 @@ def load_manual_finance():
     db = SessionLocal()
     try:
         return {
-            "wallets": db.query(FinanceWalletRow).order_by(FinanceWalletRow.id.desc()).all(),
-            "expenses": db.query(FinanceExpenseRow).order_by(FinanceExpenseRow.id.desc()).all(),
-            "income": db.query(FinanceIncomeRow).order_by(FinanceIncomeRow.id.desc()).all(),
-            "transfers": db.query(FinanceTransferRow).order_by(FinanceTransferRow.id.desc()).all(),
-            "pending": db.query(FinancePendingRow).order_by(FinancePendingRow.id.desc()).all(),
+            "wallets": db.query(FinanceWalletRow).order_by(FinanceWalletRow.id.asc()).all(),
+            "expenses": db.query(FinanceExpenseRow).order_by(FinanceExpenseRow.id.asc()).all(),
+            "income": db.query(FinanceIncomeRow).order_by(FinanceIncomeRow.id.asc()).all(),
+            "transfers": db.query(FinanceTransferRow).order_by(FinanceTransferRow.id.asc()).all(),
+            "pending": db.query(FinancePendingRow).order_by(FinancePendingRow.id.asc()).all(),
         }
     finally:
         db.close()
@@ -7954,16 +7954,20 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         display:grid;
         gap:0;
     }}
+    .finance-excel-layout > .panel.compact-panel {{
+        padding:12px 16px;
+    }}
     .finance-period-toolbar {{
         display:flex;
         gap:12px;
-        align-items:flex-end;
+        align-items:center;
         justify-content:space-between;
         flex-wrap:wrap;
-        margin-top:-6px;
+        margin:0;
     }}
     .finance-period-toolbar .panel.compact-panel.filters {{
         margin:0;
+        padding:10px 12px;
     }}
     .finance-period-toolbar form {{
         justify-content:flex-start !important;
