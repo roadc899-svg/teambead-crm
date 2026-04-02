@@ -8769,6 +8769,9 @@ def _render_dashboard_page_v2(
 
     base_rows = build_dashboard_rows_v2(user, buyer=buyer, period_label=effective_period_label)
     dashboard_chatterfy_scope_maps = build_dashboard_chatterfy_scope_maps(period_label=effective_period_label)
+    dashboard_players_scope_map = build_dashboard_players_scope_map(period_label=effective_period_label)
+    dashboard_caps_scope_map = build_dashboard_caps_scope_map(period_label=effective_period_label)
+    dashboard_hold_scope_map = build_dashboard_hold_scope_map(period_label=effective_period_label)
     buyer_values = [value for value, _label in get_fb_buyer_name_options()] or sorted({safe_text(row.get("buyer")) for row in base_rows if safe_text(row.get("buyer"))})
     platform_values = sorted({safe_text(row.get("platform")) for row in base_rows if safe_text(row.get("platform"))})
     manager_values = sorted({safe_text(row.get("manager")) for row in base_rows if safe_text(row.get("manager"))})
@@ -8936,12 +8939,18 @@ def _render_dashboard_page_v2(
             "fb_cost_per_completed_registration",
             "fb_cost_per_purchase",
         }
+        dashboard_derived_fields = {
+            "rate",
+            "profit",
+            "roi",
+            "cap_fill",
+        }
         fb_average_totals = {field: 0.0 for field in fb_average_fields}
         fb_average_counts = {field: 0 for field in fb_average_fields}
 
         for item in items:
             for metric_name in dashboard_numeric_fields:
-                if metric_name in fb_average_fields or metric_name in fb_derived_cost_fields:
+                if metric_name in fb_average_fields or metric_name in fb_derived_cost_fields or metric_name in dashboard_derived_fields:
                     continue
                 totals[metric_name] += safe_number(item.get(metric_name, 0))
             for average_field in fb_average_fields:
@@ -8974,6 +8983,61 @@ def _render_dashboard_page_v2(
         totals["fb_cost_per_purchase"] = (
             totals["spend"] / totals["fb_purchases"] if totals["fb_purchases"] > 0 else 0.0
         )
+
+        if hierarchy_field in {"platform", "geo", "manager"}:
+            seen_player_scope_keys = set()
+            seen_cap_scope_keys = set()
+            seen_hold_scope_keys = set()
+            direct_players_ftd = 0.0
+            direct_qual_ftd = 0.0
+            direct_payout = 0.0
+            direct_cap_total = 0.0
+            direct_cap_current_ftd = 0.0
+            direct_hold_count = 0.0
+
+            def iter_candidate_scope_keys(item):
+                raw_keys = list(item.get("dashboard_candidate_scope_keys", []) or [])
+                scope_key_text = safe_text(item.get("dashboard_scope_key"))
+                if scope_key_text and scope_key_text not in raw_keys:
+                    raw_keys.append(scope_key_text)
+                for raw_key in raw_keys:
+                    parsed_key = tuple(safe_text(raw_key).split("|"))
+                    if len(parsed_key) == 3 and parsed_key[0] and parsed_key[2]:
+                        yield parsed_key
+
+            for item in items:
+                for scope_key in iter_candidate_scope_keys(item):
+                    if scope_key not in seen_player_scope_keys and scope_key in dashboard_players_scope_map:
+                        seen_player_scope_keys.add(scope_key)
+                        players_info = dashboard_players_scope_map.get(scope_key, {})
+                        direct_players_ftd += safe_number(players_info.get("players_ftd", 0))
+                        direct_qual_ftd += safe_number(players_info.get("qual_ftd", 0))
+                        direct_payout += safe_number(players_info.get("income", players_info.get("payout", 0)))
+                        break
+                for scope_key in iter_candidate_scope_keys(item):
+                    if scope_key not in seen_cap_scope_keys and scope_key in dashboard_caps_scope_map:
+                        seen_cap_scope_keys.add(scope_key)
+                        caps_info = dashboard_caps_scope_map.get(scope_key, {})
+                        direct_cap_total += safe_number(caps_info.get("cap_total", 0))
+                        direct_cap_current_ftd += safe_number(caps_info.get("cap_current_ftd", 0))
+                        break
+                for scope_key in iter_candidate_scope_keys(item):
+                    if scope_key not in seen_hold_scope_keys and scope_key in dashboard_hold_scope_map:
+                        seen_hold_scope_keys.add(scope_key)
+                        hold_info = dashboard_hold_scope_map.get(scope_key, {})
+                        direct_hold_count += safe_number(hold_info.get("hold_count", 0))
+                        break
+
+            totals["players_ftd"] = direct_players_ftd
+            totals["qual_ftd"] = direct_qual_ftd
+            totals["payout"] = direct_payout
+            totals["cap_total"] = direct_cap_total
+            totals["cap_current_ftd"] = direct_cap_current_ftd
+            totals["hold_count"] = direct_hold_count
+
+        totals["rate"] = (totals["payout"] / totals["qual_ftd"]) if totals["qual_ftd"] > 0 else 0.0
+        totals["profit"] = totals["payout"] - totals["costs"]
+        totals["roi"] = ((totals["profit"] / totals["costs"]) * 100) if totals["costs"] > 0 else 0.0
         totals["cap_fill"] = cap_fill_percent(totals["cap_current_ftd"], totals["cap_total"])
         totals.update(get_dashboard_chatterfy_metrics(hierarchy_field, items))
         return totals
@@ -9570,29 +9634,11 @@ def _render_dashboard_page_v2(
         transition:font-weight .15s ease, color .15s ease;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row.dashboard-tree-row-active td {{
-        font-weight:800;
+        font-weight:400;
         color:#1b2d50;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody .dashboard-metric-cell {{
         transition:opacity .15s ease, font-weight .15s ease, color .15s ease;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-0 td {{
-        background:#edf5ff;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-1 td {{
-        background:#f5f9ff;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-2 td {{
-        background:#f9fbff;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-3 td {{
-        background:#fcfdff;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-4 td {{
-        background:#ffffff;
-    }}
-    .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-5 td {{
-        background:#ffffff;
     }}
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-cell {{
         display:flex;
@@ -9639,7 +9685,7 @@ def _render_dashboard_page_v2(
         transform:rotate(90deg);
     }}
     .dashboard-v2 #dashboardUnifiedTable .dashboard-tree-toggle[aria-current="true"] .dashboard-tree-label {{
-        font-weight:800;
+        font-weight:400;
     }}
     .dashboard-v2 .dashboard-tree-plus {{
         width:14px;
@@ -10722,7 +10768,6 @@ def _render_dashboard_page_v2(
                 if (isLeafFocus) row.classList.add('dashboard-adset-focus-leaf');
                 if (isParentFocus) {{
                     Array.from(row.querySelectorAll('.dashboard-metric-cell')).forEach((cell) => {{
-                        cell.style.fontWeight = '800';
                         cell.style.color = '#1b2d50';
                     }});
                 }}
