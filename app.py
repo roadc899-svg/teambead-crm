@@ -6030,11 +6030,15 @@ def get_partner_period_options(period_label=""):
         db.close()
 
 
-def get_partner_upload_summaries():
+def get_partner_upload_summaries(period_label=""):
     ensure_partner_table()
+    clean_period_label = safe_text(period_label)
     db = SessionLocal()
     try:
-        rows = db.query(PartnerRow).order_by(PartnerRow.id.desc()).all()
+        query = db.query(PartnerRow)
+        if clean_period_label:
+            query = query.filter(PartnerRow.period_label == clean_period_label)
+        rows = query.order_by(PartnerRow.id.desc()).all()
     finally:
         db.close()
 
@@ -6063,6 +6067,35 @@ def get_partner_upload_summaries():
     result = list(grouped.values())
     result.sort(key=lambda item: (safe_text(item.get("period_label")), safe_text(item.get("cabinet_name")), safe_text(item.get("source_name"))), reverse=True)
     return result
+
+
+def build_partner_report_redirect_url(
+    period_view="current",
+    period_label="",
+    cabinet_name="",
+    brand="",
+    geo="",
+    search="",
+    sort_by="id",
+    order="desc",
+    message="",
+):
+    params = [
+        ("period_view", safe_text(period_view) or "current"),
+        ("period_label", safe_text(period_label)),
+        ("cabinet_name", safe_text(cabinet_name)),
+        ("brand", safe_text(brand)),
+        ("geo", safe_text(geo)),
+        ("search", safe_text(search)),
+        ("sort_by", safe_text(sort_by) or "id"),
+        ("order", safe_text(order).lower() or "desc"),
+    ]
+    if safe_text(message):
+        params.append(("message", safe_text(message)))
+    return "/partner-report?" + "&".join(
+        f"{key}={quote_plus(value)}"
+        for key, value in params
+    )
 
 
 def get_partner_rows_by_period(period_value="", period_label="", cabinet_name="", brand="", geo="", search=""):
@@ -7221,8 +7254,10 @@ _original_show_hierarchy = _page_routes.get("show_hierarchy")
 _original_finance_page = _page_routes.get("finance_page")
 _original_caps_page = _page_routes.get("caps_page")
 _original_partner_report_page = _page_routes.get("partner_report_page")
+_original_partner_report_page_html = partner_report_page_html
 _original_chatterfy_page = _page_routes.get("chatterfy_page")
 _original_hold_wager_page = _page_routes.get("hold_wager_page")
+_original_delete_partner_upload_action = _domain_actions.get("delete_partner_upload")
 _original_render_stats_cards = render_stats_cards
 
 
@@ -7303,6 +7338,232 @@ def _patched_caps_page(
     )
 
 
+def build_players_delete_upload_menu_html(
+    upload_summaries=None,
+    period_view="current",
+    period_label="",
+    cabinet_name="",
+    brand="",
+    geo="",
+    search="",
+    sort_by="id",
+    order="desc",
+):
+    upload_summaries = upload_summaries or []
+    active_period_text = safe_text(period_label) or "all periods"
+    items_html = ""
+    for item in upload_summaries:
+        summary_source = safe_text(item.get("source_name"))
+        if not summary_source:
+            continue
+        cabinet_value = safe_text(item.get("cabinet_name")) or "—"
+        platform_value = safe_text(item.get("platform_label")) or "—"
+        period_value = safe_text(item.get("period_label")) or "—"
+        date_start = safe_text(item.get("date_start")) or "—"
+        date_end = safe_text(item.get("date_end")) or "—"
+        rows_count = format_int_or_float(item.get("rows_count", 0))
+        ftd_count = format_int_or_float(item.get("ftd_count", 0))
+        confirm_text = escape(json.dumps(f"Delete upload {cabinet_value} ({period_value})?"))
+        items_html += f"""
+        <form method="post" action="/partner-report/delete-upload" class="players-delete-upload-item" onsubmit="return window.confirm({confirm_text});">
+            <input type="hidden" name="source_name" value="{escape(summary_source)}">
+            <input type="hidden" name="period_view" value="{escape(period_view)}">
+            <input type="hidden" name="period_label" value="{escape(period_label)}">
+            <input type="hidden" name="cabinet_name" value="{escape(cabinet_name)}">
+            <input type="hidden" name="brand" value="{escape(brand)}">
+            <input type="hidden" name="geo" value="{escape(geo)}">
+            <input type="hidden" name="search" value="{escape(search)}">
+            <input type="hidden" name="sort_by" value="{escape(sort_by)}">
+            <input type="hidden" name="order" value="{escape(order)}">
+            <div class="players-delete-upload-main">
+                <div class="players-delete-upload-title">{escape(cabinet_value)}</div>
+                <div class="players-delete-upload-meta">{escape(platform_value)} · {escape(period_value)}</div>
+                <div class="players-delete-upload-meta">{escape(date_start)} → {escape(date_end)} · Rows {rows_count} · FTD {ftd_count}</div>
+            </div>
+            <button type="submit" class="ghost-btn small-btn players-delete-upload-submit">Delete</button>
+        </form>
+        """
+    if not items_html:
+        items_html = '<div class="players-delete-upload-empty">No uploads in the selected period.</div>'
+    return f"""
+    <details class="upload-menu upload-menu-right players-delete-upload-menu" style="z-index:89;" id="playersDeleteUploadMenu">
+        <summary class="ghost-btn small-btn toolbar-square-icon-btn" aria-label="Delete upload" title="Delete upload">🗑</summary>
+        <div class="upload-menu-list players-delete-upload-menu-list">
+            <div class="panel-subtitle">Uploads available for deletion in {escape(active_period_text)}.</div>
+            <div class="players-delete-upload-scroll">
+                {items_html}
+            </div>
+        </div>
+    </details>
+    """
+
+
+def patch_partner_report_delete_menu(
+    html,
+    upload_summaries=None,
+    period_view="current",
+    period_label="",
+    cabinet_name="",
+    brand="",
+    geo="",
+    search="",
+    sort_by="id",
+    order="desc",
+):
+    if not html:
+        return html
+    delete_menu_html = build_players_delete_upload_menu_html(
+        upload_summaries=upload_summaries,
+        period_view=period_view,
+        period_label=period_label,
+        cabinet_name=cabinet_name,
+        brand=brand,
+        geo=geo,
+        search=search,
+        sort_by=sort_by,
+        order=order,
+    )
+    html = re.sub(
+        r'<details class="upload-menu upload-menu-right" style="z-index:89;">.*?</details>(\s*<details class="upload-menu upload-menu-right" style="z-index:90;" id="playersUploadMenu">)',
+        delete_menu_html + r"\1",
+        html,
+        count=1,
+        flags=re.S,
+    )
+    html = re.sub(
+        r'\s*<div class="confirm-overlay" id="playersDeleteUploadOverlay" aria-hidden="true">.*?</div>\s*(<script>)',
+        r"\n\n    \1",
+        html,
+        count=1,
+        flags=re.S,
+    )
+    html = re.sub(
+        r'\s*const deleteOverlay = document\.getElementById\("playersDeleteUploadOverlay"\);.*?document\.addEventListener\("keydown", \(event\) => \{\s*if \(event\.key === "Escape" && deleteOverlay\?\.classList\.contains\("open"\)\) closeDeleteModal\(\);\s*\}\);\s*',
+        "\n        ",
+        html,
+        count=1,
+        flags=re.S,
+    )
+    delete_menu_css = """
+            .players-delete-upload-menu .upload-menu-list.players-delete-upload-menu-list {
+                width: min(560px, calc(100vw - 40px));
+                max-width: min(560px, calc(100vw - 40px));
+                padding: 12px;
+            }
+            .players-delete-upload-scroll {
+                margin-top: 10px;
+                max-height: min(58vh, 420px);
+                overflow: auto;
+                display: grid;
+                gap: 10px;
+            }
+            .players-delete-upload-item {
+                display: grid;
+                grid-template-columns: minmax(0, 1fr) auto;
+                gap: 12px;
+                align-items: center;
+                padding: 11px 12px;
+                border: 1px solid var(--border);
+                border-radius: 16px;
+                background: var(--panel-2);
+            }
+            .players-delete-upload-main {
+                min-width: 0;
+                display: grid;
+                gap: 4px;
+            }
+            .players-delete-upload-title {
+                font-size: 15px;
+                font-weight: 900;
+                color: var(--text);
+                line-height: 1.2;
+                word-break: break-word;
+            }
+            .players-delete-upload-meta {
+                font-size: 12px;
+                font-weight: 700;
+                color: var(--muted);
+                line-height: 1.35;
+                word-break: break-word;
+            }
+            .players-delete-upload-submit {
+                min-width: 84px;
+                justify-content: center;
+            }
+            .players-delete-upload-empty {
+                padding: 14px 12px;
+                border: 1px dashed var(--border);
+                border-radius: 16px;
+                background: var(--panel-2);
+                color: var(--muted);
+                font-weight: 800;
+                text-align: center;
+            }
+            @media (max-width: 720px) {
+                .players-delete-upload-item {
+                    grid-template-columns: minmax(0, 1fr);
+                }
+                .players-delete-upload-submit {
+                    width: 100%;
+                }
+            }
+"""
+    if delete_menu_css.strip() not in html:
+        html = html.replace("</style>", delete_menu_css + "\n        </style>", 1)
+    return html
+
+
+def _patched_partner_report_page_html(
+    current_user,
+    rows,
+    upload_summaries=None,
+    source_name="",
+    cabinet_name="",
+    brand="",
+    upload_platform="1xbet",
+    geo="",
+    search="",
+    period_view="current",
+    period_label="",
+    sort_by="id",
+    order="desc",
+    success_text="",
+    error_text="",
+):
+    html = _original_partner_report_page_html(
+        current_user,
+        rows,
+        upload_summaries=upload_summaries,
+        source_name=source_name,
+        cabinet_name=cabinet_name,
+        brand=brand,
+        upload_platform=upload_platform,
+        geo=geo,
+        search=search,
+        period_view=period_view,
+        period_label=period_label,
+        sort_by=sort_by,
+        order=order,
+        success_text=success_text,
+        error_text=error_text,
+    )
+    return patch_partner_report_delete_menu(
+        html,
+        upload_summaries=upload_summaries,
+        period_view=period_view,
+        period_label=period_label,
+        cabinet_name=cabinet_name,
+        brand=brand,
+        geo=geo,
+        search=search,
+        sort_by=sort_by,
+        order=order,
+    )
+
+
+partner_report_page_html = _patched_partner_report_page_html
+
+
 def _patched_partner_report_page(
     request: Request,
     source_name: str = Query(default=""),
@@ -7317,18 +7578,48 @@ def _patched_partner_report_page(
     message: str = Query(default=""),
 ):
     period_context = normalize_period_filter(period_view, period_label)
-    return _original_partner_report_page(
-        request,
-        source_name,
-        period_context["period_view"],
-        period_context["period_label"],
-        cabinet_name,
-        brand,
-        geo,
-        search,
-        sort_by,
-        order,
-        message,
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "partner")
+    effective_period_label = period_context["period_label"] or get_current_period_label()
+    upload_summaries = get_partner_upload_summaries(effective_period_label)
+    filtered = get_partner_rows_by_period(
+        period_value=source_name,
+        period_label=effective_period_label,
+        cabinet_name=cabinet_name,
+        brand=brand,
+        geo=geo,
+        search=search,
+    )
+    reverse = order != "asc"
+    numeric_fields = {"deposit_amount", "bet_amount", "company_income", "cpa_amount"}
+
+    def sort_value(row):
+        value = getattr(row, sort_by, "")
+        if sort_by in numeric_fields:
+            return safe_number(value)
+        if sort_by == "id":
+            return safe_number(row.id)
+        if sort_by in {"brand_name", "geo_name"}:
+            return safe_text(value).lower()
+        return safe_text(value).lower()
+
+    filtered.sort(key=sort_value, reverse=reverse)
+    return partner_report_page_html(
+        user,
+        filtered,
+        upload_summaries=upload_summaries,
+        source_name=source_name,
+        period_view=period_context["period_view"],
+        period_label=effective_period_label,
+        cabinet_name=cabinet_name,
+        brand=brand,
+        geo=geo,
+        search=search,
+        sort_by=sort_by,
+        order=order,
+        success_text=message,
     )
 
 
@@ -7379,6 +7670,73 @@ def _patched_hold_wager_page(
         period_context["period_label"],
         cabinet_name,
         search,
+    )
+
+
+def _patched_delete_partner_upload_action(
+    request: Request,
+    source_name: str = Form(default=""),
+    period_view: str = Form(default="current"),
+    period_label: str = Form(default=""),
+    cabinet_name: str = Form(default=""),
+    brand: str = Form(default=""),
+    geo: str = Form(default=""),
+    search: str = Form(default=""),
+    sort_by: str = Form(default="id"),
+    order: str = Form(default="desc"),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "partner")
+    period_context = normalize_period_filter(period_view, period_label)
+    clean_source_name = safe_text(source_name)
+    if not clean_source_name:
+        return RedirectResponse(
+            url=build_partner_report_redirect_url(
+                period_view=period_context["period_view"],
+                period_label=period_context["period_label"],
+                cabinet_name=cabinet_name,
+                brand=brand,
+                geo=geo,
+                search=search,
+                sort_by=sort_by,
+                order=order,
+                message="Upload not found",
+            ),
+            status_code=303,
+        )
+
+    ensure_partner_table()
+    db = SessionLocal()
+    deleted_count = 0
+    try:
+        delete_query = db.query(PartnerRow).filter(PartnerRow.source_name == clean_source_name)
+        deleted_count = delete_query.count()
+        if deleted_count:
+            delete_query.delete(synchronize_session=False)
+            db.commit()
+        else:
+            db.rollback()
+    finally:
+        db.close()
+
+    if deleted_count:
+        clear_runtime_cache("stat_support::")
+        refresh_cap_current_ftd_from_partner()
+    return RedirectResponse(
+        url=build_partner_report_redirect_url(
+            period_view=period_context["period_view"],
+            period_label=period_context["period_label"],
+            cabinet_name=cabinet_name,
+            brand=brand,
+            geo=geo,
+            search=search,
+            sort_by=sort_by,
+            order=order,
+            message="Upload deleted" if deleted_count else "Upload not found",
+        ),
+        status_code=303,
     )
 
 
@@ -8111,7 +8469,8 @@ def _render_dashboard_page_v2(
         if field == "budget":
             extra_html = (
                 '<button type="button" class="dashboard-fb-toggle" id="dashboardFbMetricsToggle" '
-                'aria-expanded="true" title="Toggle FB metrics">−</button>'
+                'aria-expanded="true" title="Toggle FB metrics" '
+                'onclick="window.dashboardToggleFbMetrics && window.dashboardToggleFbMetrics(this); return false;">−</button>'
             )
         return (
             f'<th data-col="{escape(field)}">'
@@ -9427,6 +9786,16 @@ def _render_dashboard_page_v2(
         const fbMetricColumns = {json.dumps(fb_detail_columns)};
         const fbToggleButton = document.getElementById('dashboardFbMetricsToggle');
         const toggles = Array.from(document.querySelectorAll('.dashboard-column-toggle'));
+        window.dashboardToggleFbMetrics = (button) => {{
+            if (button) {{
+                button.blur();
+            }}
+            const state = window.dashboardReadState();
+            state.fbMetricsCollapsed = !state.fbMetricsCollapsed;
+            window.dashboardWriteState(state);
+            applyColumns();
+            return false;
+        }};
         const applyColumns = () => {{
             let manualHidden = [];
             let fbMetricsCollapsed = false;
@@ -9491,10 +9860,7 @@ def _render_dashboard_page_v2(
             fbToggleButton.addEventListener('click', (event) => {{
                 event.preventDefault();
                 event.stopPropagation();
-                const state = window.dashboardReadState();
-                state.fbMetricsCollapsed = !state.fbMetricsCollapsed;
-                window.dashboardWriteState(state);
-                applyColumns();
+                window.dashboardToggleFbMetrics(fbToggleButton);
             }});
         }}
         applyColumns();
@@ -10100,6 +10466,7 @@ _page_routes["partner_report_page"] = _patched_partner_report_page
 _page_routes["chatterfy_page"] = _patched_chatterfy_page
 _page_routes["hold_wager_page"] = _patched_hold_wager_page
 _domain_actions["toggle_chatterfy_parser"] = _patched_toggle_chatterfy_parser
+_domain_actions["delete_partner_upload"] = _patched_delete_partner_upload_action
 _domain_actions["upload_file"] = _patched_upload_file
 _domain_actions["export_grouped_csv"] = _patched_export_grouped_csv
 
