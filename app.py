@@ -9018,30 +9018,31 @@ def _render_dashboard_page_v2(
             })
         return result
 
-    def render_dashboard_metric_cells(values):
+    def render_dashboard_metric_cells(values, hierarchy_column=""):
+        hide_non_fb_metrics = hierarchy_column in {"campaign_name", "adset_name", "ad_name"}
         return "".join([
             f'<td class="dashboard-metric-cell" data-col="budget">{format_money(values.get("budget", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="chatterfy">{format_int_or_float(values.get("chatterfy", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="chat_sub">{format_int_or_float(values.get("chat_sub", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="chat_sub2con_rate">{format_percent(values.get("chat_sub2con_rate", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="chat_con">{format_int_or_float(values.get("chat_con", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="chat_con2ra_rate">{format_percent(values.get("chat_con2ra_rate", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="chat_ra">{format_int_or_float(values.get("chat_ra", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="chat_ra2ftd_rate">{format_percent(values.get("chat_ra2ftd_rate", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="chat_ftd">{format_int_or_float(values.get("chat_ftd", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="chat_sub2ftd_rate">{format_percent(values.get("chat_sub2ftd_rate", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="chat_wa">{format_int_or_float(values.get("chat_wa", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="chat_rd">{format_int_or_float(values.get("chat_rd", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="chat_unique_rd_rate">{format_percent(values.get("chat_unique_rd_rate", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="chat_stopped">{format_int_or_float(values.get("chat_stopped", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="chat_redep_rate">{format_percent(values.get("chat_redep_rate", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="chat_aviator">{format_int_or_float(values.get("chat_aviator", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="chat_chicken">{format_int_or_float(values.get("chat_chicken", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="chat_rabbit">{format_int_or_float(values.get("chat_rabbit", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="chat_balloonix">{format_int_or_float(values.get("chat_balloonix", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="chat_penalty">{format_int_or_float(values.get("chat_penalty", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="chat_open_games">{format_int_or_float(values.get("chat_open_games", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="chat_open_games_rate">{format_percent(values.get("chat_open_games_rate", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chatterfy">{" " if hide_non_fb_metrics else format_int_or_float(values.get("chatterfy", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_sub">{" " if hide_non_fb_metrics else format_int_or_float(values.get("chat_sub", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_sub2con_rate">{" " if hide_non_fb_metrics else format_percent(values.get("chat_sub2con_rate", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_con">{" " if hide_non_fb_metrics else format_int_or_float(values.get("chat_con", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_con2ra_rate">{" " if hide_non_fb_metrics else format_percent(values.get("chat_con2ra_rate", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_ra">{" " if hide_non_fb_metrics else format_int_or_float(values.get("chat_ra", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_ra2ftd_rate">{" " if hide_non_fb_metrics else format_percent(values.get("chat_ra2ftd_rate", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_ftd">{" " if hide_non_fb_metrics else format_int_or_float(values.get("chat_ftd", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_sub2ftd_rate">{" " if hide_non_fb_metrics else format_percent(values.get("chat_sub2ftd_rate", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_wa">{" " if hide_non_fb_metrics else format_int_or_float(values.get("chat_wa", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_rd">{" " if hide_non_fb_metrics else format_int_or_float(values.get("chat_rd", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_unique_rd_rate">{" " if hide_non_fb_metrics else format_percent(values.get("chat_unique_rd_rate", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_stopped">{" " if hide_non_fb_metrics else format_int_or_float(values.get("chat_stopped", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_redep_rate">{" " if hide_non_fb_metrics else format_percent(values.get("chat_redep_rate", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_aviator">{" " if hide_non_fb_metrics else format_int_or_float(values.get("chat_aviator", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_chicken">{" " if hide_non_fb_metrics else format_int_or_float(values.get("chat_chicken", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_rabbit">{" " if hide_non_fb_metrics else format_int_or_float(values.get("chat_rabbit", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_balloonix">{" " if hide_non_fb_metrics else format_int_or_float(values.get("chat_balloonix", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_penalty">{" " if hide_non_fb_metrics else format_int_or_float(values.get("chat_penalty", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_open_games">{" " if hide_non_fb_metrics else format_int_or_float(values.get("chat_open_games", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="chat_open_games_rate">{" " if hide_non_fb_metrics else format_percent(values.get("chat_open_games_rate", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="spend">{format_money(values.get("spend", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="fb_material_views">{format_int_or_float(values.get("fb_material_views", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="fb_cost_per_content_view">{format_money(values.get("fb_cost_per_content_view", 0))}</td>',
@@ -9059,17 +9060,17 @@ def _render_dashboard_page_v2(
             f'<td class="dashboard-metric-cell" data-col="fb_cost_per_completed_registration">{format_money(values.get("fb_cost_per_completed_registration", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="fb_purchases">{format_int_or_float(values.get("fb_purchases", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="fb_cost_per_purchase">{format_money(values.get("fb_cost_per_purchase", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="players_ftd">{format_int_or_float(values.get("players_ftd", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="qual_ftd">{format_int_or_float(values.get("qual_ftd", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="hold_count">{format_int_or_float(values.get("hold_count", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="hold_split">—</td>',
-            f'<td class="dashboard-metric-cell" data-col="cap_total">{format_int_or_float(values.get("cap_total", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="cap_fill">{format_percent(values.get("cap_fill", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="payout">{format_money(values.get("payout", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="costs">{format_money(values.get("costs", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="costs_ai">{""}</td>',
-            f'<td class="dashboard-metric-cell" data-col="profit">{format_money(values.get("profit", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="roi">{format_percent(values.get("roi", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="players_ftd">{" " if hide_non_fb_metrics else format_int_or_float(values.get("players_ftd", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="qual_ftd">{" " if hide_non_fb_metrics else format_int_or_float(values.get("qual_ftd", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="hold_count">{" " if hide_non_fb_metrics else format_int_or_float(values.get("hold_count", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="hold_split">{" " if hide_non_fb_metrics else "—"}</td>',
+            f'<td class="dashboard-metric-cell" data-col="cap_total">{" " if hide_non_fb_metrics else format_int_or_float(values.get("cap_total", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="cap_fill">{" " if hide_non_fb_metrics else format_percent(values.get("cap_fill", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="payout">{" " if hide_non_fb_metrics else format_money(values.get("payout", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="costs">{" " if hide_non_fb_metrics else format_money(values.get("costs", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="costs_ai"></td>',
+            f'<td class="dashboard-metric-cell" data-col="profit">{" " if hide_non_fb_metrics else format_money(values.get("profit", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="roi">{" " if hide_non_fb_metrics else format_percent(values.get("roi", 0))}</td>',
         ])
 
     def render_hierarchy_label(node, level, variant="caret"):
@@ -9370,7 +9371,7 @@ def _render_dashboard_page_v2(
                 <td data-col="adset_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "adset_name" else ""}</td>
                 <td data-col="ad_name">—</td>
                 <td data-col="buyer">—</td>
-                {render_dashboard_metric_cells(node["metrics"])}
+                {render_dashboard_metric_cells(node["metrics"], node["column"])}
             </tr>
             """
             if node["children"]:
