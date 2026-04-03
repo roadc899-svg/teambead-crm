@@ -6604,27 +6604,49 @@ def filter_finance_manual_rows(manual, date_from="", date_to="", year="", period
 
 
 def compute_finance_balances(snapshot, manual):
+    cabinet_to_wallet_map = {}
+    wallet_to_cabinet_map = {}
+    for row in get_cabinet_rows():
+        cabinet_name = safe_text(getattr(row, "name", "")).strip()
+        wallet_tokens = [safe_text(item).strip() for item in split_list_tokens(getattr(row, "wallet", "")) if safe_text(item).strip()]
+        if cabinet_name and wallet_tokens and cabinet_name not in cabinet_to_wallet_map:
+            cabinet_to_wallet_map[cabinet_name] = wallet_tokens[0]
+        for wallet_value in wallet_tokens:
+            wallet_to_cabinet_map[wallet_value] = cabinet_name
+
+    def resolve_balance_key(*values):
+        for raw_value in values:
+            value = safe_text(raw_value).strip()
+            if not value:
+                continue
+            if value in wallet_to_cabinet_map:
+                return value
+            if value in cabinet_to_wallet_map:
+                return cabinet_to_wallet_map[value]
+            return value
+        return "Unassigned"
+
     balance_map = {}
 
     for item in snapshot.get("wallets", []):
-        key = safe_text(item.get("wallet")) or safe_text(item.get("description")) or safe_text(item.get("owner")) or "Unknown"
+        key = resolve_balance_key(item.get("wallet"), item.get("description"), item.get("owner"), "Unknown")
         balance_map[key] = balance_map.get(key, 0.0) + safe_number(item.get("amount"))
 
     for item in manual.get("wallets", []):
-        key = safe_text(item.wallet) or safe_text(item.description) or safe_text(item.owner_name) or f"Wallet {item.id}"
+        key = resolve_balance_key(item.wallet, item.description, item.owner_name, f"Wallet {item.id}")
         balance_map[key] = balance_map.get(key, 0.0) + safe_number(item.amount)
 
     for item in manual.get("income", []):
-        key = safe_text(item.wallet_name) or safe_text(item.wallet) or "Unassigned"
+        key = resolve_balance_key(item.wallet_name, item.wallet, "Unassigned")
         balance_map[key] = balance_map.get(key, 0.0) + safe_number(item.amount)
 
     for item in manual.get("expenses", []):
-        key = safe_text(item.wallet_name) or safe_text(item.from_wallet) or safe_text(item.paid_by) or "Unassigned"
+        key = resolve_balance_key(item.from_wallet, item.paid_by, item.wallet_name, "Unassigned")
         balance_map[key] = balance_map.get(key, 0.0) - safe_number(item.amount)
 
     for item in manual.get("transfers", []):
-        from_key = safe_text(item.from_wallet)
-        to_key = safe_text(item.to_wallet)
+        from_key = resolve_balance_key(item.from_wallet)
+        to_key = resolve_balance_key(item.to_wallet)
         if from_key:
             balance_map[from_key] = balance_map.get(from_key, 0.0) - safe_number(item.amount)
         if to_key:
@@ -7534,6 +7556,23 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         for row in cabinet_rows
         if safe_text(getattr(row, "name", "")).strip()
     })
+    wallet_to_cabinet_map = {}
+    wallet_partner_meta_map = {}
+    for row in cabinet_rows:
+        cabinet_name = safe_text(getattr(row, "name", "")).strip()
+        if not cabinet_name:
+            continue
+        brand_value = (split_list_tokens(getattr(row, "brands", "")) or [safe_text(getattr(row, "advertiser", "")) or ""])[0]
+        for wallet_token in split_list_tokens(getattr(row, "wallet", "")):
+            wallet_value = safe_text(wallet_token).strip()
+            if wallet_value:
+                wallet_to_cabinet_map[wallet_value] = cabinet_name
+                wallet_partner_meta_map[wallet_value] = {
+                    "category": "Рекламодатель" if safe_text(getattr(row, "advertiser", "")).strip() else "",
+                    "description": brand_value,
+                    "owner": cabinet_name,
+                    "wallet": wallet_value,
+                }
     cabinet_primary_brand_map = {
         safe_text(getattr(row, "name", "")).strip(): (split_list_tokens(getattr(row, "brands", "")) or [""])[0]
         for row in cabinet_rows
@@ -7545,22 +7584,42 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         *(safe_text(item.get("description")) for item in wallet_source_rows if safe_text(item.get("description"))),
         *(safe_text(item.wallet) for item in manual.get("wallets", []) if safe_text(item.wallet)),
         *(safe_text(item.description) for item in manual.get("wallets", []) if safe_text(item.description)),
+        *wallet_partner_meta_map.keys(),
+        *income_cabinet_options,
         'Chatterfy',
         'Fun Agency',
         'Brocard',
         'Dima',
         'Ivan',
     })
-    wallet_rows = [
-        (
+    wallet_balance_map = {safe_text(item.get("wallet_name")): safe_number(item.get("balance", 0)) for item in balances.get("rows", [])}
+    wallet_seen_keys = set()
+    wallet_rows = []
+    for item in wallet_source_rows:
+        wallet_key = safe_text(item.get("wallet")) or safe_text(item.get("description")) or safe_text(item.get("owner"))
+        if wallet_key in wallet_seen_keys:
+            continue
+        wallet_seen_keys.add(wallet_key)
+        wallet_rows.append((
             item.get("category", ""),
             item.get("description", ""),
-            item.get("owner", ""),
+            wallet_to_cabinet_map.get(safe_text(item.get("wallet")).strip(), safe_text(item.get("owner"))),
             item.get("wallet", ""),
-            format_money(item.get("amount", 0)),
-        )
-        for item in wallet_source_rows
-    ] + [
+            format_money(wallet_balance_map.get(wallet_key, item.get("amount", 0))),
+        ))
+    for wallet_key, balance_value in wallet_balance_map.items():
+        partner_meta = wallet_partner_meta_map.get(wallet_key)
+        if not partner_meta or wallet_key in wallet_seen_keys:
+            continue
+        wallet_seen_keys.add(wallet_key)
+        wallet_rows.append((
+            partner_meta.get("category", ""),
+            partner_meta.get("description", ""),
+            partner_meta.get("owner", ""),
+            partner_meta.get("wallet", ""),
+            format_money(balance_value),
+        ))
+    wallet_rows += [
         {
             "__html__": inline_edit_rows(
                 f"wallet-{item.id}",
@@ -7569,9 +7628,9 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
                 (
                     item.category or "",
                     item.description or "",
-                    item.owner_name or "",
+                    wallet_to_cabinet_map.get(safe_text(item.wallet).strip(), safe_text(item.owner_name)),
                     item.wallet or "",
-                    format_money(item.amount),
+                    format_money(wallet_balance_map.get(safe_text(item.wallet) or safe_text(item.description) or safe_text(item.owner_name) or f"Wallet {item.id}", item.amount)),
                 ),
                 [
                     {"name": "category", "type": "select", "options": expense_category_options, "value": item.category or ""},
@@ -7613,7 +7672,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
                 ),
                 [
                     {"name": "category", "type": "select", "options": expense_category_options, "value": item.category or ""},
-                    {"name": "from_wallet", "type": "select", "options": payer_names, "value": item.from_wallet or item.paid_by or ""},
+                    {"name": "from_wallet", "type": "datalist", "options": payer_names, "list_id": f"expense-payers-{item.id}", "placeholder": "Кто платит", "value": item.from_wallet or item.paid_by or ""},
                     {"name": "amount", "type": "number", "placeholder": "Сумма", "class_name": "finance-inline-field-amount", "value": f"{safe_number(item.amount):.2f}"},
                     {"name": "comment", "type": "datalist", "options": expense_comment_options, "list_id": f"expense-comments-{item.id}", "placeholder": "Комментарий", "value": item.comment or ""},
                 ],
@@ -7828,7 +7887,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         5,
         [
             {"name": "category", "type": "select", "options": expense_category_options},
-            {"name": "from_wallet", "type": "select", "options": payer_names},
+            {"name": "from_wallet", "type": "datalist", "options": payer_names, "list_id": "finance-expense-payers", "placeholder": "Кто платит"},
             {"name": "amount", "type": "number", "placeholder": "Сумма", "class_name": "finance-inline-field-amount"},
             {"name": "comment", "type": "datalist", "options": expense_comment_options, "list_id": "finance-expense-comments", "placeholder": "Комментарий"},
         ],
