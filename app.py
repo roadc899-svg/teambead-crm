@@ -301,6 +301,15 @@ class FinancePendingRow(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class DashboardBudgetRow(Base):
+    __tablename__ = "dashboard_budget_rows"
+
+    id = Column(Integer, primary_key=True, index=True)
+    row_key = Column(String, unique=True, index=True, nullable=False, default="")
+    amount = Column(Float, default=0)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
 class PartnerRow(Base):
     __tablename__ = "partner_rows"
 
@@ -6671,6 +6680,56 @@ def ensure_finance_tables():
     )
 
 
+def ensure_dashboard_budget_table():
+    ensure_table_once("dashboard_budget_rows", [DashboardBudgetRow.__table__])
+
+
+def load_dashboard_budget_map():
+    ensure_dashboard_budget_table()
+    cache_key = "dashboard_budget_map"
+    cached = RUNTIME_CACHE.get(cache_key)
+    if cached is not None:
+        return dict(cached)
+    db = SessionLocal()
+    try:
+        result = {
+            safe_text(item.row_key): safe_number(item.amount)
+            for item in db.query(DashboardBudgetRow).all()
+            if safe_text(item.row_key)
+        }
+        RUNTIME_CACHE[cache_key] = dict(result)
+        return result
+    finally:
+        db.close()
+
+
+def save_dashboard_budget_value(row_key, amount_text):
+    ensure_dashboard_budget_table()
+    clean_row_key = safe_text(row_key).strip()
+    if not clean_row_key:
+        return {"ok": False, "error": "Missing row key."}
+    normalized_text = safe_text(amount_text).strip()
+    numeric_amount = safe_number(normalized_text) if normalized_text else 0.0
+    db = SessionLocal()
+    try:
+        item = db.query(DashboardBudgetRow).filter(DashboardBudgetRow.row_key == clean_row_key).first()
+        if not normalized_text:
+            if item:
+                db.delete(item)
+                db.commit()
+        else:
+            if not item:
+                item = DashboardBudgetRow(row_key=clean_row_key)
+                db.add(item)
+            item.amount = numeric_amount
+            item.updated_at = datetime.utcnow()
+            db.commit()
+        clear_runtime_cache("dashboard_budget_map")
+        return {"ok": True, "amount": numeric_amount if normalized_text else 0.0, "is_empty": not normalized_text}
+    finally:
+        db.close()
+
+
 def load_manual_finance():
     ensure_finance_tables()
     db = SessionLocal()
@@ -9036,7 +9095,7 @@ def _patched_render_stats_cards(totals):
         ("Budget", format_money(totals.get("active_budget", 0))),
     ]
     cards_html = "".join(
-        f'<div class="stat-card"><div class="name">{escape(name)}</div><div class="value">{escape(value)}</div></div>'
+        f'<div class="stat-card" data-summary-card="{escape(name.lower())}"><div class="name">{escape(name)}</div><div class="value">{escape(value)}</div></div>'
         for name, value in cards
     )
     return f'<div class="panel compact-panel"><div class="stats-grid">{cards_html}</div></div>'
@@ -10108,6 +10167,7 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
     buyer_scope = resolve_effective_buyer(user, buyer)
     fb_rows = aggregate_grouped_rows(get_filtered_data(buyer=buyer_scope, period_label=period_label))
     fb_rows = enrich_statistic_rows(fb_rows, period_label=period_label)
+    dashboard_budget_map = load_dashboard_budget_map()
     cabinet_map = build_dashboard_cabinet_flow_map()
     players_flow_map = build_dashboard_players_flow_map(period_label=period_label)
     players_scope_map = build_dashboard_players_scope_map(period_label=period_label)
@@ -10119,7 +10179,22 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
     finance_expense_total = get_dashboard_finance_expense_period_total(period_label)
     rows = []
 
+    def build_dashboard_budget_key(item):
+        return "|".join([
+            "dashboard-budget",
+            safe_text(item.get("buyer")).strip() or "—",
+            safe_text(item.get("platform")).strip() or "—",
+            safe_text(item.get("geo")).strip() or "—",
+            safe_text(item.get("manager")).strip() or "—",
+            safe_text(item.get("campaign_name")).strip() or "—",
+            safe_text(item.get("adset_name")).strip() or "—",
+            safe_text(item.get("ad_name")).strip() or "—",
+            safe_text(item.get("account_id")).strip() or "—",
+            safe_text(item.get("source_name")).strip() or "—",
+        ])
+
     for item in fb_rows:
+        budget_row_key = build_dashboard_budget_key(item)
         platform_key = normalize_dashboard_platform(item.get("platform"))
         flow_lookup_keys = build_dashboard_flow_lookup_keys(platform_key, item.get("manager"), item.get("geo"))
         flow_key = flow_lookup_keys[0] if flow_lookup_keys else tuple()
@@ -10166,7 +10241,8 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
             "ad_name": safe_text(item.get("ad_name")),
             "account_id": safe_text(item.get("account_id")),
             "launch_date": safe_text(item.get("launch_date")),
-            "budget": None,
+            "dashboard_budget_key": budget_row_key,
+            "budget": safe_number(dashboard_budget_map.get(budget_row_key, 0)),
             "spend": safe_number(item.get("spend", 0)),
             "fb_material_views": safe_number(item.get("material_views", 0)),
             "fb_cost_per_content_view": safe_number(item.get("cost_per_content_view", 0)),
@@ -10367,6 +10443,7 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
 def build_dashboard_summary_cards(rows):
     totals = {
         "rows": len(rows),
+        "budget": sum(safe_number(row.get("budget", 0)) for row in rows),
         "spend": sum(safe_number(row.get("spend", 0)) for row in rows),
         "costs": sum(safe_number(row.get("costs", 0)) for row in rows),
         "costs_ai": sum(safe_number(row.get("costs_ai", 0)) for row in rows),
@@ -10380,6 +10457,7 @@ def build_dashboard_summary_cards(rows):
     }
     cards = [
         ("Rows", format_int_or_float(totals["rows"])),
+        ("Budget", format_money(totals["budget"])),
         ("Spend", format_money(totals["spend"])),
         ("Leads", format_int_or_float(totals["leads"])),
         ("Reg", format_int_or_float(totals["reg"])),
@@ -10873,7 +10951,7 @@ def _render_dashboard_page_v2(
         hide_non_fb_metrics = hierarchy_column in {"campaign_name", "adset_name", "ad_name"}
         hide_budget_metric = hierarchy_column == "ad_name"
         return "".join([
-            f'<td class="dashboard-metric-cell dashboard-manual-budget-cell" data-col="budget" contenteditable="true" spellcheck="false">{" " if hide_budget_metric else ""}</td>',
+            f'<td class="dashboard-metric-cell" data-col="budget">{" " if hide_budget_metric else format_money(values.get("budget", 0)) if safe_number(values.get("budget", 0)) > 0 else ""}</td>',
             f'<td class="dashboard-metric-cell" data-col="chatterfy">{" " if hide_non_fb_metrics else format_int_or_float(values.get("chatterfy", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="chat_sub">{" " if hide_non_fb_metrics else format_int_or_float(values.get("chat_sub", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="chat_sub2con_rate">{" " if hide_non_fb_metrics else format_percent(values.get("chat_sub2con_rate", 0))}</td>',
@@ -11094,16 +11172,19 @@ def _render_dashboard_page_v2(
         raw_ad_name = safe_text(row.get("ad_name")) or "—"
         display_ad_name = get_dashboard_compact_label("ad_name", raw_ad_name, row)
         ad_title_attr = f' title="{escape(raw_ad_name)}"' if raw_ad_name != display_ad_name else ""
-        row_key = "leaf|" + "|".join([
-            safe_text(parent_id) or "root",
-            safe_text(row.get("platform")).strip() or "—",
-            safe_text(row.get("geo")).strip() or "—",
-            safe_text(row.get("manager")).strip() or "—",
-            safe_text(row.get("campaign_name")).strip() or "—",
-            safe_text(row.get("adset_name")).strip() or "—",
-            safe_text(row.get("ad_name")).strip() or "—",
-            safe_text(row.get("account_id")).strip() or "—",
-        ])
+        row_key = safe_text(row.get("dashboard_budget_key")) or (
+            "leaf|" + "|".join([
+                safe_text(parent_id) or "root",
+                safe_text(row.get("platform")).strip() or "—",
+                safe_text(row.get("geo")).strip() or "—",
+                safe_text(row.get("manager")).strip() or "—",
+                safe_text(row.get("campaign_name")).strip() or "—",
+                safe_text(row.get("adset_name")).strip() or "—",
+                safe_text(row.get("ad_name")).strip() or "—",
+                safe_text(row.get("account_id")).strip() or "—",
+            ])
+        )
+        budget_display = format_money(row.get("budget", 0)) if safe_number(row.get("budget", 0)) > 0 else ""
         return f"""
         <tr class="dashboard-leaf-row {row_class}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}" data-row-key="{escape(row_key)}"{hidden_attr}>
             <td data-col="platform"></td>
@@ -11113,7 +11194,7 @@ def _render_dashboard_page_v2(
             <td data-col="adset_name"></td>
             <td data-col="ad_name"{ad_title_attr}>{escape(display_ad_name)}</td>
             <td data-col="buyer">{escape(row.get("buyer") or "—")}</td>
-            <td class="dashboard-metric-cell dashboard-manual-budget-cell" data-col="budget" contenteditable="true" spellcheck="false"></td>
+            <td class="dashboard-metric-cell dashboard-manual-budget-cell" data-col="budget" data-budget-key="{escape(row_key)}" data-budget-raw="{escape(str(safe_number(row.get("budget", 0))) if safe_number(row.get("budget", 0)) > 0 else '')}" contenteditable="true" spellcheck="false">{escape(budget_display)}</td>
             <td class="dashboard-metric-cell" data-col="chatterfy"></td>
             <td class="dashboard-metric-cell" data-col="chat_sub"></td>
             <td class="dashboard-metric-cell" data-col="chat_sub2con_rate"></td>
@@ -12638,6 +12719,119 @@ def _render_dashboard_page_v2(
                 }});
             }});
         }};
+        window.dashboardFormatBudgetMoney = (value) => {{
+            const amount = Number(value || 0);
+            if (!Number.isFinite(amount) || amount <= 0) return '';
+            return new Intl.NumberFormat('en-US', {{
+                style: 'currency',
+                currency: 'USD',
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+            }}).format(amount);
+        }};
+        window.dashboardParseBudgetValue = (value) => {{
+            const text = String(value || '').replace(/\\u00a0/g, ' ').trim();
+            if (!text) return 0;
+            const normalized = text.replace(/[^0-9,.-]/g, '').replace(',', '.');
+            const amount = Number(normalized);
+            return Number.isFinite(amount) ? amount : 0;
+        }};
+        window.dashboardRefreshBudgetDisplay = (table) => {{
+            if (!table) return;
+            const leafRows = Array.from(table.querySelectorAll('tbody tr.dashboard-leaf-row'));
+            let totalBudget = 0;
+            leafRows.forEach((row) => {{
+                const cell = row.querySelector('td[data-col="budget"][data-budget-key]');
+                const amount = Number(cell?.dataset?.budgetRaw || '0');
+                if (Number.isFinite(amount)) totalBudget += amount;
+            }});
+            Array.from(table.querySelectorAll('tbody tr.dashboard-tree-row[data-node-id]')).forEach((row) => {{
+                const nodeId = row.dataset.nodeId || '';
+                const cell = row.querySelector('td[data-col="budget"]');
+                if (!nodeId || !cell) return;
+                let nodeBudget = 0;
+                leafRows.forEach((leafRow) => {{
+                    const ancestors = (leafRow.dataset.ancestors || '').split(',').filter(Boolean);
+                    if (!ancestors.includes(nodeId)) return;
+                    const leafCell = leafRow.querySelector('td[data-col="budget"][data-budget-key]');
+                    const amount = Number(leafCell?.dataset?.budgetRaw || '0');
+                    if (Number.isFinite(amount)) nodeBudget += amount;
+                }});
+                cell.textContent = window.dashboardFormatBudgetMoney(nodeBudget);
+            }});
+            const budgetSummary = document.querySelector('[data-summary-card="budget"] .value');
+            if (budgetSummary) budgetSummary.textContent = window.dashboardFormatBudgetMoney(totalBudget) || '$0.00';
+        }};
+        window.dashboardBindBudgetEditors = () => {{
+            document.querySelectorAll('td.dashboard-manual-budget-cell[data-budget-key]').forEach((cell) => {{
+                if (cell.dataset.budgetBound === '1') return;
+                const restoreFormattedValue = () => {{
+                    const amount = Number(cell.dataset.budgetRaw || '0');
+                    cell.textContent = window.dashboardFormatBudgetMoney(amount);
+                }};
+                cell.addEventListener('focus', () => {{
+                    const rawValue = String(cell.dataset.budgetRaw || '').trim();
+                    cell.dataset.previousBudgetRaw = rawValue;
+                    cell.textContent = rawValue;
+                    const selection = window.getSelection();
+                    const range = document.createRange();
+                    range.selectNodeContents(cell);
+                    selection?.removeAllRanges();
+                    selection?.addRange(range);
+                }});
+                cell.addEventListener('keydown', (event) => {{
+                    if (event.key === 'Enter') {{
+                        event.preventDefault();
+                        cell.blur();
+                    }}
+                    if (event.key === 'Escape') {{
+                        event.preventDefault();
+                        cell.dataset.budgetRaw = cell.dataset.previousBudgetRaw || '';
+                        restoreFormattedValue();
+                        cell.blur();
+                    }}
+                }});
+                cell.addEventListener('blur', async () => {{
+                    const amount = window.dashboardParseBudgetValue(cell.textContent || '');
+                    const rawValue = amount > 0 ? amount.toFixed(2) : '';
+                    if ((cell.dataset.previousBudgetRaw || '') === rawValue) {{
+                        cell.dataset.budgetRaw = rawValue;
+                        restoreFormattedValue();
+                        window.dashboardRefreshBudgetDisplay(cell.closest('[data-dashboard-tree-table]'));
+                        return;
+                    }}
+                    try {{
+                        cell.dataset.budgetSaving = '1';
+                        const response = await fetch('/dashboard/budget/save', {{
+                            method: 'POST',
+                            credentials: 'same-origin',
+                            headers: {{
+                                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                                'Accept': 'application/json',
+                            }},
+                            body: new URLSearchParams({{
+                                row_key: cell.dataset.budgetKey || '',
+                                amount: rawValue,
+                            }}),
+                        }});
+                        const payload = await response.json();
+                        if (!response.ok || !payload?.ok) throw new Error(payload?.error || 'Save failed');
+                        cell.dataset.budgetRaw = payload.is_empty ? '' : Number(payload.amount || 0).toFixed(2);
+                        restoreFormattedValue();
+                        const table = cell.closest('[data-dashboard-tree-table]');
+                        window.dashboardRefreshBudgetDisplay(table);
+                        if (window.dashboardTreeAutoSize && table) window.dashboardTreeAutoSize(table);
+                    }} catch (_error) {{
+                        cell.dataset.budgetRaw = cell.dataset.previousBudgetRaw || '';
+                        restoreFormattedValue();
+                    }} finally {{
+                        delete cell.dataset.budgetSaving;
+                    }}
+                }});
+                restoreFormattedValue();
+                cell.dataset.budgetBound = '1';
+            }});
+        }};
         window.restoreDashboardUiState = () => {{
             document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
             const getTreeButtons = () => Array.from(table.querySelectorAll('.dashboard-tree-toggle'));
@@ -12723,10 +12917,12 @@ def _render_dashboard_page_v2(
                 window.dashboardTreeAutoSize(table);
                 if (window.dashboardApplyAdsetFocus) window.dashboardApplyAdsetFocus(table);
                 if (window.dashboardApplyPerformanceHeatmap) window.dashboardApplyPerformanceHeatmap(table);
+                if (window.dashboardRefreshBudgetDisplay) window.dashboardRefreshBudgetDisplay(table);
                 if (window.dashboardApplySelectedRows) window.dashboardApplySelectedRows(table);
                 if (window.dashboardApplySelectedColumns) window.dashboardApplySelectedColumns(table);
                 if (window.dashboardApplySelectedCells) window.dashboardApplySelectedCells(table);
             }});
+            if (window.dashboardBindBudgetEditors) window.dashboardBindBudgetEditors();
         }};
         const scheduleDashboardUiRestore = () => {{
             requestAnimationFrame(() => {{
@@ -13969,6 +14165,21 @@ def show_dashboard(
     period_label: str = Query(default=""),
 ):
     return _page_routes["show_dashboard"](request, buyer, manager, geo, offer, search, period_view, period_label)
+
+
+@app.post("/dashboard/budget/save")
+def save_dashboard_budget(
+    request: Request,
+    row_key: str = Form(default=""),
+    amount: str = Form(default=""),
+):
+    user = get_current_user(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    enforce_page_access(user, "hierarchy")
+    result = save_dashboard_budget_value(row_key, amount)
+    status_code = 200 if result.get("ok") else 400
+    return JSONResponse(result, status_code=status_code)
 
 
 # =========================================
