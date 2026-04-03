@@ -7592,12 +7592,19 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         'Dima',
         'Ivan',
     })
+    def wallet_identity(wallet_value="", description_value="", owner_value="", fallback=""):
+        return safe_text(wallet_value).strip() or safe_text(description_value).strip() or safe_text(owner_value).strip() or safe_text(fallback).strip()
+
     wallet_balance_map = {safe_text(item.get("wallet_name")): safe_number(item.get("balance", 0)) for item in balances.get("rows", [])}
+    manual_wallet_keys = {
+        wallet_identity(item.wallet, item.description, item.owner_name, f"Wallet {item.id}")
+        for item in manual.get("wallets", [])
+    }
     wallet_seen_keys = set()
     wallet_rows = []
     for item in wallet_source_rows:
-        wallet_key = safe_text(item.get("wallet")) or safe_text(item.get("description")) or safe_text(item.get("owner"))
-        if wallet_key in wallet_seen_keys:
+        wallet_key = wallet_identity(item.get("wallet"), item.get("description"), item.get("owner"))
+        if wallet_key in wallet_seen_keys or wallet_key in manual_wallet_keys:
             continue
         wallet_seen_keys.add(wallet_key)
         wallet_rows.append((
@@ -7609,7 +7616,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         ))
     for wallet_key, balance_value in wallet_balance_map.items():
         partner_meta = wallet_partner_meta_map.get(wallet_key)
-        if not partner_meta or wallet_key in wallet_seen_keys:
+        if not partner_meta or wallet_key in wallet_seen_keys or wallet_key in manual_wallet_keys:
             continue
         wallet_seen_keys.add(wallet_key)
         wallet_rows.append((
@@ -7619,8 +7626,12 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
             partner_meta.get("wallet", ""),
             format_money(balance_value),
         ))
-    wallet_rows += [
-        {
+    for item in manual.get("wallets", []):
+        wallet_key = wallet_identity(item.wallet, item.description, item.owner_name, f"Wallet {item.id}")
+        if wallet_key in wallet_seen_keys:
+            continue
+        wallet_seen_keys.add(wallet_key)
+        wallet_rows.append({
             "__html__": inline_edit_rows(
                 f"wallet-{item.id}",
                 "/finance/wallets/save",
@@ -7630,7 +7641,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
                     item.description or "",
                     wallet_to_cabinet_map.get(safe_text(item.wallet).strip(), safe_text(item.owner_name)),
                     item.wallet or "",
-                    format_money(wallet_balance_map.get(safe_text(item.wallet) or safe_text(item.description) or safe_text(item.owner_name) or f"Wallet {item.id}", item.amount)),
+                    format_money(wallet_balance_map.get(wallet_key, item.amount)),
                 ),
                 [
                     {"name": "category", "type": "select", "options": expense_category_options, "value": item.category or ""},
@@ -7645,9 +7656,7 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
                 delete_field_name="wallet_id",
                 delete_field_value=item.id,
             )
-        }
-        for item in manual.get("wallets", [])
-    ]
+        })
     expense_rows = [
         (
             format_finance_date_display(item.get("date", "")),
@@ -7732,34 +7741,53 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         for item in manual.get("income", [])
     ]
     previous_period_label = get_previous_period_label(effective_period_label)
+    paid_pending_cabinets = {
+        safe_text(getattr(item, "description", "")).strip()
+        for item in manual.get("pending", [])
+        if safe_text(getattr(item, "reconciliation", "")).strip().lower() == "paid"
+    }
     pending_rows = []
     for item in snapshot.get("pending", []):
         brand_value = item.get("category", "")
         cabinet_value = item.get("description", "")
         amount_value = safe_number(item.get("amount", 0))
+        if safe_text(cabinet_value).strip() in paid_pending_cabinets:
+            continue
         pending_rows.append({
             "__html__": f"""
             <tr>
                 <td><div class="finance-sheet-cell">{escape(brand_value)}</div></td>
                 <td><div class="finance-sheet-cell">{escape(cabinet_value)}</div></td>
                 <td>
-                    <form method="post" action="/finance/pending/save" class="finance-row-edit-form">
-                        {hidden_filter_inputs}
-                        <input type="hidden" name="category" value="{escape(brand_value)}">
-                        <input type="hidden" name="description" value="{escape(cabinet_value)}">
-                        <input type="hidden" name="pending_date" value="">
-                        <input type="hidden" name="wallet" value="">
-                        <input type="hidden" name="reconciliation" value="">
-                        <input type="hidden" name="comment" value="">
-                        <input type="number" step="0.01" name="amount" value="{amount_value:.2f}">
-                        <button type="submit" class="ghost-btn small-btn">Save</button>
-                    </form>
+                    <div class="finance-inline-edit-actions">
+                        <form method="post" action="/finance/pending/save" class="finance-row-edit-form">
+                            {hidden_filter_inputs}
+                            <input type="hidden" name="category" value="{escape(brand_value)}">
+                            <input type="hidden" name="description" value="{escape(cabinet_value)}">
+                            <input type="hidden" name="pending_date" value="">
+                            <input type="hidden" name="wallet" value="">
+                            <input type="hidden" name="reconciliation" value="">
+                            <input type="hidden" name="comment" value="">
+                            <input type="number" step="0.01" name="amount" value="{amount_value:.2f}">
+                            <button type="submit" class="ghost-btn small-btn">Save</button>
+                        </form>
+                        <form method="post" action="/finance/pending/mark-paid" class="finance-inline-delete-form finance-row-edit-form">
+                            {hidden_filter_inputs}
+                            <input type="hidden" name="category" value="{escape(brand_value)}">
+                            <input type="hidden" name="description" value="{escape(cabinet_value)}">
+                            <input type="hidden" name="amount" value="{amount_value:.2f}">
+                            <input type="hidden" name="comment" value="">
+                            <button type="submit" class="ghost-btn small-btn finance-inline-paid-btn">✓</button>
+                        </form>
+                    </div>
                 </td>
                 <td><div class="finance-sheet-cell"></div></td>
             </tr>
             """
         })
     for item in manual.get("pending", []):
+        if safe_text(item.reconciliation or "").strip().lower() == "paid":
+            continue
         pending_rows.append({
             "__html__": f"""
             <tr>
@@ -7778,6 +7806,15 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
                             <input type="hidden" name="comment" value="">
                             <input type="number" step="0.01" name="amount" value="{safe_number(item.amount):.2f}">
                             <button type="submit" class="ghost-btn small-btn">Save</button>
+                        </form>
+                        <form method="post" action="/finance/pending/mark-paid" class="finance-inline-delete-form finance-row-edit-form">
+                            {hidden_filter_inputs}
+                            <input type="hidden" name="edit_id" value="{item.id}">
+                            <input type="hidden" name="category" value="{escape(item.category or '')}">
+                            <input type="hidden" name="description" value="{escape(item.description or '')}">
+                            <input type="hidden" name="amount" value="{safe_number(item.amount):.2f}">
+                            <input type="hidden" name="comment" value="">
+                            <button type="submit" class="ghost-btn small-btn finance-inline-paid-btn">✓</button>
                         </form>
                         <form method="post" action="/finance/pending/delete" class="finance-inline-delete-form finance-row-edit-form">
                             {hidden_filter_inputs}
@@ -7814,17 +7851,27 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
                 <td><div class="finance-sheet-cell">{escape(safe_text(cabinet_primary_brand_map.get(cabinet_name, "")))}</div></td>
                 <td><div class="finance-sheet-cell">{escape(cabinet_name)}</div></td>
                 <td>
-                    <form method="post" action="/finance/pending/save" class="finance-row-edit-form">
-                        {hidden_filter_inputs}
-                        <input type="hidden" name="category" value="{escape(safe_text(cabinet_primary_brand_map.get(cabinet_name, '')))}">
-                        <input type="hidden" name="description" value="{escape(cabinet_name)}">
-                        <input type="hidden" name="pending_date" value="">
-                        <input type="hidden" name="wallet" value="">
-                        <input type="hidden" name="reconciliation" value="">
-                        <input type="hidden" name="comment" value="">
-                        <input type="number" step="0.01" name="amount" value="{amount_value:.2f}">
-                        <button type="submit" class="ghost-btn small-btn">Save</button>
-                    </form>
+                    <div class="finance-inline-edit-actions">
+                        <form method="post" action="/finance/pending/save" class="finance-row-edit-form">
+                            {hidden_filter_inputs}
+                            <input type="hidden" name="category" value="{escape(safe_text(cabinet_primary_brand_map.get(cabinet_name, '')))}">
+                            <input type="hidden" name="description" value="{escape(cabinet_name)}">
+                            <input type="hidden" name="pending_date" value="">
+                            <input type="hidden" name="wallet" value="">
+                            <input type="hidden" name="reconciliation" value="">
+                            <input type="hidden" name="comment" value="">
+                            <input type="number" step="0.01" name="amount" value="{amount_value:.2f}">
+                            <button type="submit" class="ghost-btn small-btn">Save</button>
+                        </form>
+                        <form method="post" action="/finance/pending/mark-paid" class="finance-inline-delete-form finance-row-edit-form">
+                            {hidden_filter_inputs}
+                            <input type="hidden" name="category" value="{escape(safe_text(cabinet_primary_brand_map.get(cabinet_name, '')))}">
+                            <input type="hidden" name="description" value="{escape(cabinet_name)}">
+                            <input type="hidden" name="amount" value="{amount_value:.2f}">
+                            <input type="hidden" name="comment" value="">
+                            <button type="submit" class="ghost-btn small-btn finance-inline-paid-btn">✓</button>
+                        </form>
+                    </div>
                 </td>
                 <td><div class="finance-sheet-cell"></div></td>
             </tr>
@@ -7873,9 +7920,14 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         for item in manual.get("transfers", [])
     ]
 
+    visible_snapshot_pending_total = sum(
+        safe_number(item.get("amount", 0))
+        for item in snapshot.get("pending", [])
+        if safe_text(item.get("description", "")).strip() not in paid_pending_cabinets
+    )
     pending_total = (
-        snapshot.get("totals", {}).get("pending", 0)
-        + sum(safe_number(item.amount) for item in manual.get("pending", []))
+        visible_snapshot_pending_total
+        + sum(safe_number(item.amount) for item in manual.get("pending", []) if safe_text(item.reconciliation or "").strip().lower() != "paid")
         + sum(safe_number(pending_cpa_map.get(cabinet_name, 0)) for cabinet_name in income_cabinet_options if cabinet_name not in pending_existing_cabinet_set)
     )
     expense_total = snapshot.get("totals", {}).get("expenses", 0) + sum(safe_number(item.amount) for item in manual.get("expenses", []))
@@ -8459,6 +8511,13 @@ def _patched_finance_page_html(current_user, success_text="", error_text="", for
         color:#b42318 !important;
         border-color:rgba(180,35,24,.22) !important;
         background:rgba(255,255,255,.9) !important;
+    }}
+    .finance-inline-paid-btn {{
+        color:#067647 !important;
+        border-color:rgba(6,118,71,.22) !important;
+        background:rgba(255,255,255,.9) !important;
+        min-width:38px !important;
+        padding:0 10px !important;
     }}
     .finance-row-edit-form {{
         display:flex;
@@ -13531,6 +13590,71 @@ def save_finance_pending(
             f"&date_to={quote_plus(safe_text(date_to))}"
             f"&year={quote_plus(safe_text(year))}"
             f"&message=Pending+saved"
+        ),
+        status_code=303,
+    )
+    return _preserve_finance_redirect_filters(response, period_view, period_label)
+
+
+@app.post("/finance/pending/mark-paid")
+def mark_finance_pending_paid(
+    request: Request,
+    edit_id: str = Form(default=""),
+    category: str = Form(default=""),
+    description: str = Form(default=""),
+    amount: str = Form(default="0"),
+    comment: str = Form(default=""),
+    date_from: str = Form(default=""),
+    date_to: str = Form(default=""),
+    year: str = Form(default=""),
+    period_view: str = Form(default="current"),
+    period_label: str = Form(default=""),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    require_any_role(user, "superadmin")
+    ensure_finance_tables()
+    amount_value = safe_cap_number(amount)
+    if amount_value <= 0:
+        response = RedirectResponse(
+            url=(
+                f"/finance?date_from={quote_plus(safe_text(date_from))}"
+                f"&date_to={quote_plus(safe_text(date_to))}"
+                f"&year={quote_plus(safe_text(year))}"
+                f"&message=Pending+amount+must+be+greater+than+0"
+            ),
+            status_code=303,
+        )
+        return _preserve_finance_redirect_filters(response, period_view, period_label)
+    db = SessionLocal()
+    try:
+        income_item = FinanceIncomeRow()
+        income_item.income_date = _finance_today_iso()
+        income_item.category = safe_text(category)
+        income_item.wallet_name = safe_text(description)
+        income_item.amount = amount_value
+        income_item.comment = safe_text(comment)
+        db.add(income_item)
+
+        pending_item = db.query(FinancePendingRow).filter(FinancePendingRow.id == safe_number(edit_id)).first() if edit_id else None
+        if not pending_item:
+            pending_item = FinancePendingRow()
+            db.add(pending_item)
+        pending_item.category = safe_text(category)
+        pending_item.description = safe_text(description)
+        pending_item.amount = amount_value
+        pending_item.reconciliation = "paid"
+        pending_item.comment = safe_text(comment)
+        db.commit()
+    finally:
+        db.close()
+    response = RedirectResponse(
+        url=(
+            f"/finance?date_from={quote_plus(safe_text(date_from))}"
+            f"&date_to={quote_plus(safe_text(date_to))}"
+            f"&year={quote_plus(safe_text(year))}"
+            f"&message=Pending+moved+to+income"
         ),
         status_code=303,
     )
