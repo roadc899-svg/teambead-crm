@@ -11876,7 +11876,7 @@ def _render_dashboard_page_v2(
         background:#e7f8fb;
         color:#1f3555;
         font-weight:700;
-        transition:background-color .18s ease, color .18s ease, box-shadow .18s ease;
+        transition:color .18s ease, font-weight .18s ease;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr.soft-green td[data-col="profit"],
     .dashboard-v2 #dashboardUnifiedTable tbody tr.soft-green td[data-col="roi"] {{
@@ -12597,17 +12597,13 @@ def _render_dashboard_page_v2(
             }};
             const clearCell = (cell) => {{
                 if (!cell) return;
-                cell.style.backgroundColor = '';
                 cell.style.color = '';
                 cell.style.fontWeight = '';
-                cell.style.boxShadow = '';
             }};
-            const greenLight = [229, 248, 236];
-            const greenStrong = [120, 220, 167];
-            const greenText = [15, 140, 88];
-            const redLight = [255, 236, 238];
-            const redStrong = [245, 160, 170];
-            const redText = [190, 54, 78];
+            const greenTextSoft = [46, 140, 96];
+            const greenTextStrong = [15, 140, 88];
+            const redTextSoft = [199, 91, 109];
+            const redTextStrong = [190, 54, 78];
             ['profit', 'roi'].forEach((column) => {{
                 const allCells = Array.from(table.querySelectorAll(`tbody td[data-col="${{column}}"]`));
                 allCells.forEach(clearCell);
@@ -12628,31 +12624,24 @@ def _render_dashboard_page_v2(
                 values.forEach((item) => {{
                     const value = item.value;
                     let ratio = 0;
-                    let background = '';
                     let color = '';
                     if (minValue < 0 && maxValue > 0) {{
                         if (value >= 0) {{
                             ratio = maxValue > 0 ? clamp(value / maxValue, 0, 1) : 0;
-                            background = mixColor(greenLight, greenStrong, ratio);
-                            color = mixColor([42, 92, 60], greenText, ratio);
+                            color = mixColor(greenTextSoft, greenTextStrong, ratio);
                         }} else {{
                             ratio = minValue < 0 ? clamp(Math.abs(value / minValue), 0, 1) : 0;
-                            background = mixColor(redLight, redStrong, ratio);
-                            color = mixColor([120, 50, 62], redText, ratio);
+                            color = mixColor(redTextSoft, redTextStrong, ratio);
                         }}
                     }} else if (maxValue <= 0) {{
                         ratio = minValue < 0 ? clamp(Math.abs(value / minValue), 0, 1) : 0;
-                        background = mixColor(redLight, redStrong, ratio);
-                        color = mixColor([120, 50, 62], redText, ratio);
+                        color = mixColor(redTextSoft, redTextStrong, ratio);
                     }} else {{
                         ratio = maxValue > 0 ? clamp(value / maxValue, 0, 1) : 0;
-                        background = mixColor(greenLight, greenStrong, ratio);
-                        color = mixColor([42, 92, 60], greenText, ratio);
+                        color = mixColor(greenTextSoft, greenTextStrong, ratio);
                     }}
-                    item.cell.style.backgroundColor = background;
                     item.cell.style.color = color;
                     item.cell.style.fontWeight = ratio > 0.72 ? '800' : '700';
-                    item.cell.style.boxShadow = `inset 0 0 0 1px rgba(255,255,255,${{0.28 + (ratio * 0.18)}})`;
                 }});
             }});
         }};
