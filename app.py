@@ -5199,7 +5199,7 @@ def build_chatterfy_users_url(bot_id):
     clean_bot_id = safe_text(bot_id).strip()
     if not clean_bot_id:
         return ""
-    return f"https://new.chatterfy.ai/bots/{clean_bot_id}/users"
+    return f"https://old.chatterfy.ai/bots/{clean_bot_id}/users"
 
 
 def build_chatterfy_chat_link(bot_id="", chat_id="", fallback_url=""):
@@ -11071,32 +11071,9 @@ def _render_dashboard_page_v2(
 
     def render_dashboard_header_cell(field, label):
         header_link = _dashboard_sort_link(label, field, **filter_params)
-        extra_html = ""
-        if field == "budget":
-            extra_html = (
-                '<button type="button" class="dashboard-fb-toggle" id="dashboardFbMetricsToggle" '
-                'aria-expanded="true" title="Toggle FB metrics" '
-                'onclick="if (window.dashboardToggleFbMetrics) return window.dashboardToggleFbMetrics(this); '
-                '(function(btn){'
-                'var table=document.getElementById(\'dashboardUnifiedTable\');'
-                'if(!table) return false;'
-                'var collapsed=!table.classList.contains(\'dashboard-fb-metrics-collapsed\');'
-                'table.classList.toggle(\'dashboard-fb-metrics-collapsed\', collapsed);'
-                'btn.textContent=collapsed?\'+\':\'−\';'
-                'btn.setAttribute(\'aria-expanded\', collapsed?\'false\':\'true\');'
-                'btn.setAttribute(\'title\', collapsed?\'Expand FB metrics\':\'Collapse FB metrics\');'
-                'try{'
-                'var stateKey=window.teambeadStorageKey?window.teambeadStorageKey(\'dashboard-ui-state\'):\'dashboard-ui-state\';'
-                'var state=JSON.parse(localStorage.getItem(stateKey)||\'{}\');'
-                'state.fbMetricsCollapsed=collapsed;'
-                'localStorage.setItem(stateKey, JSON.stringify(state));'
-                '}catch(_error){}'
-                'return false;'
-                '})(this); return false;">−</button>'
-            )
         return (
             f'<th data-col="{escape(field)}">'
-            f'<div class="dashboard-header-stack">{extra_html}<span class="dashboard-header-label">{header_link}</span></div>'
+            f'<div class="dashboard-header-stack"><span class="dashboard-header-label">{header_link}</span></div>'
             f'</th>'
         )
 
@@ -12008,6 +11985,10 @@ def _render_dashboard_page_v2(
                 <div class="panel-subtitle">Compact dashboard view across FB, Players, Chatterfy, Caps, Cabinets and Hold.</div>
             </div>
             <div class="dashboard-table-actions">
+                <button type="button" class="ghost-btn small-btn dashboard-metrics-launcher" id="dashboardFbMetricsToggle" data-dashboard-fb-toggle aria-expanded="true" title="Toggle FB metrics" onclick="if (window.dashboardToggleFbMetrics) return window.dashboardToggleFbMetrics(this); return false;">
+                    <span class="dashboard-fb-toggle" data-dashboard-toggle-icon aria-hidden="true">−</span>
+                    <span>FB</span>
+                </button>
                 <button type="button" class="ghost-btn small-btn dashboard-metrics-launcher" data-dashboard-chatterfy-toggle aria-expanded="true" title="Toggle Chatterfy metrics" onclick="if (window.dashboardToggleChatterfyMetrics) return window.dashboardToggleChatterfyMetrics(this); return false;">
                     <span class="dashboard-fb-toggle" data-dashboard-toggle-icon aria-hidden="true">−</span>
                     <span>Chatterfy</span>
@@ -12791,7 +12772,7 @@ def _render_dashboard_page_v2(
         const hiddenKey = dashboardStorageKey('dashboard-columns-hidden');
         const fbMetricColumns = {json.dumps(fb_detail_columns)};
         const chatterfyMetricColumns = {json.dumps(chatterfy_detail_columns)};
-        const fbToggleButton = document.getElementById('dashboardFbMetricsToggle');
+        const fbToggleButtons = Array.from(document.querySelectorAll('[data-dashboard-fb-toggle]'));
         const chatterfyToggleButtons = Array.from(document.querySelectorAll('[data-dashboard-chatterfy-toggle]'));
         const toggles = Array.from(document.querySelectorAll('.dashboard-column-toggle'));
         const dashboardSetColumnVisibility = (col, shouldHide) => {{
@@ -12807,11 +12788,12 @@ def _render_dashboard_page_v2(
             fbMetricColumns.forEach((col) => {{
                 dashboardSetColumnVisibility(col, !!collapsed);
             }});
-            if (fbToggleButton) {{
-                fbToggleButton.textContent = collapsed ? '+' : '−';
-                fbToggleButton.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-                fbToggleButton.setAttribute('title', collapsed ? 'Expand FB metrics' : 'Collapse FB metrics');
-            }}
+            fbToggleButtons.forEach((button) => {{
+                button.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+                button.setAttribute('title', collapsed ? 'Expand FB metrics' : 'Collapse FB metrics');
+                const icon = button.querySelector('[data-dashboard-toggle-icon]');
+                if (icon) icon.textContent = collapsed ? '+' : '−';
+            }});
         }};
         window.dashboardSetChatterfyMetricsCollapsed = (collapsed) => {{
             document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
