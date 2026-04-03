@@ -13641,6 +13641,7 @@ def mark_finance_pending_paid(
         if not pending_item:
             pending_item = FinancePendingRow()
             db.add(pending_item)
+        pending_item.pending_date = _finance_today_iso()
         pending_item.category = safe_text(category)
         pending_item.description = safe_text(description)
         pending_item.amount = amount_value
