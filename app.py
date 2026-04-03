@@ -10115,6 +10115,7 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
     caps_scope_map = build_dashboard_caps_scope_map(period_label=period_label)
     hold_flow_map = build_dashboard_hold_flow_map(period_label=period_label)
     hold_scope_map = build_dashboard_hold_scope_map(period_label=period_label)
+    ai_spend_total = get_chatterfy_finance_period_spend(period_label)
     finance_expense_total = get_dashboard_finance_expense_period_total(period_label)
     rows = []
 
@@ -10219,6 +10220,15 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
         }
         rows.append(row)
 
+    total_leads = sum(safe_number(row.get("leads", 0)) for row in rows)
+    ai_cost_fallback = (ai_spend_total / len(rows)) if rows else 0.0
+    for row in rows:
+        leads_value = safe_number(row.get("leads", 0))
+        row["costs_ai"] = (
+            ai_spend_total * (leads_value / total_leads)
+            if ai_spend_total > 0 and total_leads > 0 and leads_value > 0
+            else (ai_cost_fallback if ai_spend_total > 0 and total_leads <= 0 else 0.0)
+        )
     service_cost_per_row = (finance_expense_total / len(rows)) if rows else 0.0
     for row in rows:
         row["costs_service"] = service_cost_per_row
@@ -10346,13 +10356,10 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
         row["hold_baseline_count"] = safe_number(hold_info.get("baseline_fail_count", 0)) * hold_share
         row["hold_wager_count"] = safe_number(hold_info.get("wager_fail_count", 0)) * hold_share
         row["hold_split"] = f'{format_int_or_float(row["hold_baseline_count"])}B / {format_int_or_float(row["hold_wager_count"])}W' if hold_info else "0B / 0W"
-        row["costs"] = (
-            safe_number(row.get("spend", 0))
-            + safe_number(row.get("costs_ai", 0))
-            + safe_number(row.get("costs_service", 0))
-        )
-        row["profit"] = safe_number(row.get("payout", 0)) - safe_number(row.get("costs", 0))
-        row["roi"] = (row["profit"] / row["costs"]) * 100 if safe_number(row.get("costs", 0)) > 0 else 0.0
+        row["costs"] = safe_number(row.get("spend", 0))
+        total_costs = row["costs"] + safe_number(row.get("costs_ai", 0)) + safe_number(row.get("costs_service", 0))
+        row["profit"] = safe_number(row.get("payout", 0)) - total_costs
+        row["roi"] = (row["profit"] / total_costs) * 100 if total_costs > 0 else 0.0
 
     return rows
 
@@ -10547,11 +10554,6 @@ def _render_dashboard_page_v2(
 
     base_rows = build_dashboard_rows_v2(user, buyer=buyer, period_label=effective_period_label)
     dashboard_chatterfy_scope_maps = build_dashboard_chatterfy_scope_maps(period_label=effective_period_label)
-    dashboard_chatterfy_total_sub = sum(
-        safe_number(item.get("chat_sub", 0))
-        for item in (dashboard_chatterfy_scope_maps.get("platform", {}) or {}).values()
-    )
-    dashboard_chatterfy_period_spend = get_chatterfy_finance_period_spend(effective_period_label)
     dashboard_players_scope_map = build_dashboard_players_scope_map(period_label=effective_period_label)
     dashboard_caps_scope_map = build_dashboard_caps_scope_map(period_label=effective_period_label)
     dashboard_hold_scope_map = build_dashboard_hold_scope_map(period_label=effective_period_label)
@@ -10819,15 +10821,11 @@ def _render_dashboard_page_v2(
             totals["hold_count"] = direct_hold_count
 
         totals.update(get_dashboard_chatterfy_metrics(hierarchy_field, items))
-        totals["costs_ai"] = (
-            dashboard_chatterfy_period_spend * (totals["chat_sub"] / dashboard_chatterfy_total_sub)
-            if dashboard_chatterfy_period_spend > 0 and dashboard_chatterfy_total_sub > 0 and totals["chat_sub"] > 0
-            else 0.0
-        )
-        totals["costs"] = totals["spend"] + totals["costs_ai"] + totals["costs_service"]
+        totals["costs"] = totals["spend"]
+        total_costs = totals["costs"] + totals["costs_ai"] + totals["costs_service"]
         totals["rate"] = (totals["payout"] / totals["qual_ftd"]) if totals["qual_ftd"] > 0 else 0.0
-        totals["profit"] = totals["payout"] - totals["costs"]
-        totals["roi"] = ((totals["profit"] / totals["costs"]) * 100) if totals["costs"] > 0 else 0.0
+        totals["profit"] = totals["payout"] - total_costs
+        totals["roi"] = ((totals["profit"] / total_costs) * 100) if total_costs > 0 else 0.0
         totals["cap_fill"] = cap_fill_percent(totals["cap_current_ftd"], totals["cap_total"])
         return totals
 
@@ -11876,6 +11874,9 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable th[data-col="roi"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="roi"] {{
         background:#e7f8fb;
+        color:#1f3555;
+        font-weight:700;
+        transition:background-color .18s ease, color .18s ease, box-shadow .18s ease;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr.soft-green td[data-col="profit"],
     .dashboard-v2 #dashboardUnifiedTable tbody tr.soft-green td[data-col="roi"] {{
@@ -12161,6 +12162,7 @@ def _render_dashboard_page_v2(
             if (window.dashboardSyncExpandedRows) window.dashboardSyncExpandedRows(table);
             if (window.dashboardApplyAdsetFocus) window.dashboardApplyAdsetFocus(table);
             if (window.dashboardTreeAutoSize) window.dashboardTreeAutoSize(table);
+            if (window.dashboardApplyPerformanceHeatmap) window.dashboardApplyPerformanceHeatmap(table);
             return false;
         }};
 
@@ -12576,6 +12578,84 @@ def _render_dashboard_page_v2(
                 }}
             }});
         }};
+        window.dashboardApplyPerformanceHeatmap = (table) => {{
+            if (!table) return;
+            const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+            const mixChannel = (start, end, ratio) => Math.round(start + ((end - start) * ratio));
+            const mixColor = (start, end, ratio) => {{
+                const safeRatio = clamp(ratio, 0, 1);
+                return `rgb(${{mixChannel(start[0], end[0], safeRatio)}}, ${{mixChannel(start[1], end[1], safeRatio)}}, ${{mixChannel(start[2], end[2], safeRatio)}})`;
+            }};
+            const parseValue = (cell) => {{
+                if (!cell) return null;
+                const text = (cell.textContent || '').replace(/\\u00a0/g, ' ').trim();
+                if (!text) return null;
+                const normalized = text.replace(/[^0-9+\\-.]/g, '');
+                if (!normalized || normalized === '-' || normalized === '.' || normalized === '+') return null;
+                const value = Number(normalized);
+                return Number.isFinite(value) ? value : null;
+            }};
+            const clearCell = (cell) => {{
+                if (!cell) return;
+                cell.style.backgroundColor = '';
+                cell.style.color = '';
+                cell.style.fontWeight = '';
+                cell.style.boxShadow = '';
+            }};
+            const greenLight = [229, 248, 236];
+            const greenStrong = [120, 220, 167];
+            const greenText = [15, 140, 88];
+            const redLight = [255, 236, 238];
+            const redStrong = [245, 160, 170];
+            const redText = [190, 54, 78];
+            ['profit', 'roi'].forEach((column) => {{
+                const allCells = Array.from(table.querySelectorAll(`tbody td[data-col="${{column}}"]`));
+                allCells.forEach(clearCell);
+                const values = allCells
+                    .filter((cell) => {{
+                        const row = cell.closest('tr');
+                        if (!row || row.hidden) return false;
+                        return window.getComputedStyle(cell).display !== 'none';
+                    }})
+                    .map((cell) => ({{
+                        cell,
+                        value: parseValue(cell),
+                    }}))
+                    .filter((item) => item.value !== null);
+                if (!values.length) return;
+                const minValue = Math.min(...values.map((item) => item.value));
+                const maxValue = Math.max(...values.map((item) => item.value));
+                values.forEach((item) => {{
+                    const value = item.value;
+                    let ratio = 0;
+                    let background = '';
+                    let color = '';
+                    if (minValue < 0 && maxValue > 0) {{
+                        if (value >= 0) {{
+                            ratio = maxValue > 0 ? clamp(value / maxValue, 0, 1) : 0;
+                            background = mixColor(greenLight, greenStrong, ratio);
+                            color = mixColor([42, 92, 60], greenText, ratio);
+                        }} else {{
+                            ratio = minValue < 0 ? clamp(Math.abs(value / minValue), 0, 1) : 0;
+                            background = mixColor(redLight, redStrong, ratio);
+                            color = mixColor([120, 50, 62], redText, ratio);
+                        }}
+                    }} else if (maxValue <= 0) {{
+                        ratio = minValue < 0 ? clamp(Math.abs(value / minValue), 0, 1) : 0;
+                        background = mixColor(redLight, redStrong, ratio);
+                        color = mixColor([120, 50, 62], redText, ratio);
+                    }} else {{
+                        ratio = maxValue > 0 ? clamp(value / maxValue, 0, 1) : 0;
+                        background = mixColor(greenLight, greenStrong, ratio);
+                        color = mixColor([42, 92, 60], greenText, ratio);
+                    }}
+                    item.cell.style.backgroundColor = background;
+                    item.cell.style.color = color;
+                    item.cell.style.fontWeight = ratio > 0.72 ? '800' : '700';
+                    item.cell.style.boxShadow = `inset 0 0 0 1px rgba(255,255,255,${{0.28 + (ratio * 0.18)}})`;
+                }});
+            }});
+        }};
         window.restoreDashboardUiState = () => {{
             document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
             const getTreeButtons = () => Array.from(table.querySelectorAll('.dashboard-tree-toggle'));
@@ -12660,6 +12740,7 @@ def _render_dashboard_page_v2(
                 if (window.dashboardSyncExpandedRows) window.dashboardSyncExpandedRows(table);
                 window.dashboardTreeAutoSize(table);
                 if (window.dashboardApplyAdsetFocus) window.dashboardApplyAdsetFocus(table);
+                if (window.dashboardApplyPerformanceHeatmap) window.dashboardApplyPerformanceHeatmap(table);
                 if (window.dashboardApplySelectedRows) window.dashboardApplySelectedRows(table);
                 if (window.dashboardApplySelectedColumns) window.dashboardApplySelectedColumns(table);
                 if (window.dashboardApplySelectedCells) window.dashboardApplySelectedCells(table);
@@ -12809,6 +12890,7 @@ def _render_dashboard_page_v2(
             }});
             document.querySelectorAll('[data-dashboard-tree-table]').forEach((table) => {{
                 window.dashboardTreeAutoSize(table);
+                if (window.dashboardApplyPerformanceHeatmap) window.dashboardApplyPerformanceHeatmap(table);
             }});
         }};
         document.querySelectorAll('.dashboard-filter-grid select, .dashboard-filter-grid input').forEach((field) => {{
