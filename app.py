@@ -11878,18 +11878,18 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable td[data-col="roi"] {{
         background:#e7f8fb;
         color:#1f3555;
-        font-weight:700;
-        transition:color .18s ease, font-weight .18s ease;
+        font-weight:400;
+        transition:color .18s ease;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr.soft-green td[data-col="profit"],
     .dashboard-v2 #dashboardUnifiedTable tbody tr.soft-green td[data-col="roi"] {{
         color:#0f8c58;
-        font-weight:800;
+        font-weight:400;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr.soft-red td[data-col="profit"],
     .dashboard-v2 #dashboardUnifiedTable tbody tr.soft-red td[data-col="roi"] {{
         color:#d84c57;
-        font-weight:800;
+        font-weight:400;
     }}
     .dashboard-v2 table[data-dashboard-tree-table] {{
         table-layout:fixed;
@@ -12644,7 +12644,7 @@ def _render_dashboard_page_v2(
                         color = mixColor(greenTextSoft, greenTextStrong, ratio);
                     }}
                     item.cell.style.color = color;
-                    item.cell.style.fontWeight = ratio > 0.72 ? '800' : '700';
+                    item.cell.style.fontWeight = '400';
                 }});
             }});
         }};
