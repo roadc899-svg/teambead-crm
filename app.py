@@ -10948,15 +10948,16 @@ def _render_dashboard_page_v2(
             })
         return result
 
-    def build_dashboard_campaign_budget_key(sample_row, campaign_label):
+    def build_dashboard_adset_budget_key(sample_row, adset_label):
         return "|".join([
             "dashboard-budget",
-            "campaign",
+            "adset",
             safe_text(sample_row.get("buyer")).strip() or "—",
             safe_text(sample_row.get("platform")).strip() or "—",
             safe_text(sample_row.get("geo")).strip() or "—",
             safe_text(sample_row.get("manager")).strip() or "—",
-            safe_text(campaign_label).strip() or "—",
+            safe_text(sample_row.get("campaign_name")).strip() or "—",
+            safe_text(adset_label).strip() or "—",
             safe_text(sample_row.get("source_name")).strip() or "—",
         ])
 
@@ -11281,7 +11282,7 @@ def _render_dashboard_page_v2(
             hidden_attr = ' hidden' if parent_id else ''
             current_ancestors = [*ancestors, node["id"]]
             sample_row = (node.get("rows") or [None])[0] or {}
-            budget_key = build_dashboard_campaign_budget_key(sample_row, node.get("label")) if node["column"] == "campaign_name" else ""
+            budget_key = build_dashboard_adset_budget_key(sample_row, node.get("label")) if node["column"] == "adset_name" else ""
             budget_amount = safe_number(dashboard_budget_map.get(budget_key, 0)) if budget_key else 0.0
             html += f"""
             <tr class="dashboard-tree-row dashboard-tree-row-level-{level}" data-node-id="{escape(node["id"])}" data-node-field="{escape(node["field"])}" data-row-key="{escape(node["id"])}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}"{hidden_attr}>
