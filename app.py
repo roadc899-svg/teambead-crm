@@ -5434,6 +5434,23 @@ def get_chatterfy_finance_period_spend(period_label=""):
     return safe_number(config.get("finance_period_spend"))
 
 
+def get_dashboard_finance_expense_period_total(period_label=""):
+    snapshot = load_finance_snapshot()
+    manual = load_manual_finance()
+    target_period_label = safe_text(period_label)
+    snapshot_total = sum(
+        safe_number(item.get("amount", 0))
+        for item in snapshot.get("expenses", [])
+        if finance_date_matches_period(item.get("date", ""), target_period_label)
+    )
+    manual_total = sum(
+        safe_number(item.amount)
+        for item in manual.get("expenses", [])
+        if finance_date_matches_period(item.expense_date, target_period_label)
+    )
+    return snapshot_total + manual_total
+
+
 def save_chatterfy_parser_config(data):
     ensure_upload_dir()
     with CHATTERFY_CONFIG_LOCK:
@@ -10098,6 +10115,7 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
     caps_scope_map = build_dashboard_caps_scope_map(period_label=period_label)
     hold_flow_map = build_dashboard_hold_flow_map(period_label=period_label)
     hold_scope_map = build_dashboard_hold_scope_map(period_label=period_label)
+    finance_expense_total = get_dashboard_finance_expense_period_total(period_label)
     rows = []
 
     for item in fb_rows:
@@ -10177,6 +10195,7 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
             "rate": 0.0,
             "payout": 0.0,
             "costs_ai": 0.0,
+            "costs_service": 0.0,
             "costs": safe_number(item.get("spend", 0)),
             "profit": 0.0,
             "roi": 0.0,
@@ -10199,6 +10218,10 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
             "row_kind": "fb",
         }
         rows.append(row)
+
+    service_cost_per_row = (finance_expense_total / len(rows)) if rows else 0.0
+    for row in rows:
+        row["costs_service"] = service_cost_per_row
 
     scope_bucket_weights = {}
     scope_bucket_counts = {}
@@ -10323,7 +10346,11 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
         row["hold_baseline_count"] = safe_number(hold_info.get("baseline_fail_count", 0)) * hold_share
         row["hold_wager_count"] = safe_number(hold_info.get("wager_fail_count", 0)) * hold_share
         row["hold_split"] = f'{format_int_or_float(row["hold_baseline_count"])}B / {format_int_or_float(row["hold_wager_count"])}W' if hold_info else "0B / 0W"
-        row["costs"] = safe_number(row.get("spend", 0)) + safe_number(row.get("costs_ai", 0))
+        row["costs"] = (
+            safe_number(row.get("spend", 0))
+            + safe_number(row.get("costs_ai", 0))
+            + safe_number(row.get("costs_service", 0))
+        )
         row["profit"] = safe_number(row.get("payout", 0)) - safe_number(row.get("costs", 0))
         row["roi"] = (row["profit"] / row["costs"]) * 100 if safe_number(row.get("costs", 0)) > 0 else 0.0
 
@@ -10460,7 +10487,7 @@ def _dashboard_sort_rows(rows, sort_by="spend", order="desc"):
         sort_by = "payout"
     numeric_fields = {
         "budget", "spend", "leads", "reg", "cost_reg", "fb_ftd", "cpa", "chatterfy",
-        "players_ftd", "qual_ftd", "payout", "costs", "costs_ai", "profit", "roi", "caps_count",
+        "players_ftd", "qual_ftd", "payout", "costs", "costs_ai", "costs_service", "profit", "roi", "caps_count",
         "cap_total", "cap_current_ftd", "cap_fill", "hold_count", "active_cabinets",
     }
     reverse = safe_text(order).lower() != "asc"
@@ -10614,7 +10641,7 @@ def _render_dashboard_page_v2(
     dashboard_numeric_fields = [
         "budget", "spend", "clicks", "leads", "reg", "rate", "cost_reg", "fb_ftd", "cpa",
         "chatterfy", "players_ftd", "qual_ftd", "hold_count", "cap_total", "cap_current_ftd", "cap_fill",
-        "payout", "costs", "costs_ai", "profit", "roi",
+        "payout", "costs", "costs_ai", "costs_service", "profit", "roi",
         "fb_material_views", "fb_cost_per_content_view", "fb_link_clicks", "fb_cpc",
         "fb_frequency", "fb_ctr", "fb_leads", "fb_cost_per_lead",
         "fb_paid_subscriptions", "fb_cost_per_paid_subscription", "fb_contacts", "fb_cost_per_contact",
@@ -10797,7 +10824,7 @@ def _render_dashboard_page_v2(
             if dashboard_chatterfy_period_spend > 0 and dashboard_chatterfy_total_sub > 0 and totals["chat_sub"] > 0
             else 0.0
         )
-        totals["costs"] = totals["spend"] + totals["costs_ai"]
+        totals["costs"] = totals["spend"] + totals["costs_ai"] + totals["costs_service"]
         totals["rate"] = (totals["payout"] / totals["qual_ftd"]) if totals["qual_ftd"] > 0 else 0.0
         totals["profit"] = totals["payout"] - totals["costs"]
         totals["roi"] = ((totals["profit"] / totals["costs"]) * 100) if totals["costs"] > 0 else 0.0
@@ -10896,6 +10923,7 @@ def _render_dashboard_page_v2(
             f'<td class="dashboard-metric-cell" data-col="payout">{" " if hide_non_fb_metrics else format_money(values.get("payout", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="costs">{" " if hide_non_fb_metrics else format_money(values.get("costs", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="costs_ai">{" " if hide_non_fb_metrics else format_money(values.get("costs_ai", 0))}</td>',
+            f'<td class="dashboard-metric-cell" data-col="costs_service">{" " if hide_non_fb_metrics else format_money(values.get("costs_service", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="profit">{" " if hide_non_fb_metrics else format_money(values.get("profit", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="roi">{" " if hide_non_fb_metrics else format_percent(values.get("roi", 0))}</td>',
         ])
@@ -10975,7 +11003,8 @@ def _render_dashboard_page_v2(
         ("cap_fill", "Cap Fill"),
         ("payout", "Payout"),
         ("costs", "Costs"),
-        ("costs_ai", "Costs AI"),
+        ("costs_ai", "AI"),
+        ("costs_service", "Service"),
         ("profit", "Profit"),
         ("roi", "ROI"),
     ]
@@ -11157,6 +11186,7 @@ def _render_dashboard_page_v2(
             <td class="dashboard-metric-cell" data-col="payout"></td>
             <td class="dashboard-metric-cell" data-col="costs"></td>
             <td class="dashboard-metric-cell" data-col="costs_ai"></td>
+            <td class="dashboard-metric-cell" data-col="costs_service"></td>
             <td class="dashboard-metric-cell" data-col="profit"></td>
             <td class="dashboard-metric-cell" data-col="roi"></td>
         </tr>
@@ -11624,6 +11654,8 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable th[data-col="costs"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="costs_ai"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="costs_ai"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="costs_service"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="costs_service"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="profit"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="profit"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="roi"],
@@ -11689,6 +11721,8 @@ def _render_dashboard_page_v2(
     .dashboard-v2 #dashboardUnifiedTable th[data-col="costs"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="costs_ai"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="costs_ai"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="costs_service"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="costs_service"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="profit"],
     .dashboard-v2 #dashboardUnifiedTable th[data-col="profit"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="roi"],
@@ -11832,8 +11866,10 @@ def _render_dashboard_page_v2(
         background:#fff4e8;
     }}
     .dashboard-v2 #dashboardUnifiedTable th[data-col="costs_ai"],
-    .dashboard-v2 #dashboardUnifiedTable td[data-col="costs_ai"] {{
-        background:#f5f7fb;
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="costs_ai"],
+    .dashboard-v2 #dashboardUnifiedTable th[data-col="costs_service"],
+    .dashboard-v2 #dashboardUnifiedTable td[data-col="costs_service"] {{
+        background:#ffeaf2;
     }}
     .dashboard-v2 #dashboardUnifiedTable th[data-col="profit"],
     .dashboard-v2 #dashboardUnifiedTable td[data-col="profit"],
@@ -12142,7 +12178,7 @@ def _render_dashboard_page_v2(
                 'fb_contacts', 'fb_cost_per_contact', 'fb_completed_registrations',
                 'fb_cost_per_completed_registration', 'fb_purchases', 'fb_cost_per_purchase',
                 'players_ftd', 'qual_ftd', 'hold_count', 'hold_split', 'cap_total',
-                'cap_fill', 'payout', 'costs', 'costs_ai', 'profit', 'roi',
+                'cap_fill', 'payout', 'costs', 'costs_ai', 'costs_service', 'profit', 'roi',
             ];
             const minWidths = {{
                 platform: 54,
@@ -12200,6 +12236,7 @@ def _render_dashboard_page_v2(
                 payout: 44,
                 costs: 44,
                 costs_ai: 44,
+                costs_service: 44,
                 profit: 44,
                 roi: 44,
             }};
