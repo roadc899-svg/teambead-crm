@@ -58,6 +58,7 @@ CHATTERFY_PARSER_ACCOUNT_EMAIL = "roadc899@gmail.com"
 CHATTERFY_PARSER_ACCOUNT_PASSWORD = "nCjcTV0Om,W/zs/"
 ONEXBET_RUNTIME_DIR = os.path.join(DATA_UPLOAD_DIR, "onexbet_runtime")
 ONEXBET_ACCOUNTS_PATH = os.path.join(ONEXBET_RUNTIME_DIR, "accounts.json")
+ONEXBET_LEGACY_CONFIG_PATH = os.path.join(DATA_UPLOAD_DIR, "onexbet_parser_config.json")
 ONEXBET_SESSION_DIR = os.path.join(ONEXBET_RUNTIME_DIR, "sessions")
 ONEXBET_STATUS_PATH = os.path.join(".", "parser_1xbet_status.json")
 ONEXBET_LOGIN_URL = "https://1xpartners.com/sign-in"
@@ -1853,6 +1854,8 @@ def build_onex_account_statuses(state=None):
         result.append({
             "id": account_id,
             "label": safe_text(account.get("label")) or account_id,
+            "login": safe_text(account.get("login")),
+            "source": safe_text(account.get("source")) or "accounts_json",
             "status_key": meta["key"],
             "status_label": meta["label"],
             "status_note": meta["note"],
@@ -1939,7 +1942,31 @@ def get_onexbet_accounts():
             "label": safe_text(item.get("label")) or account_id,
             "login": safe_text(item.get("login")),
             "password": safe_text(item.get("password")),
+            "source": "accounts_json",
         })
+    if result:
+        return result
+
+    legacy_payload = read_json_file(ONEXBET_LEGACY_CONFIG_PATH, default={})
+    legacy_login = safe_text(legacy_payload.get("login")).strip()
+    legacy_password = safe_text(legacy_payload.get("password"))
+    if not legacy_login and not legacy_password:
+        return result
+
+    raw_id = (
+        safe_text(legacy_payload.get("account_id"))
+        or safe_text(legacy_payload.get("label"))
+        or legacy_login
+        or "primary"
+    )
+    account_id = re.sub(r"[^a-z0-9]+", "-", raw_id.strip().lower()).strip("-") or "primary"
+    result.append({
+        "id": account_id,
+        "label": safe_text(legacy_payload.get("label")).strip() or legacy_login or "Primary cabinet",
+        "login": legacy_login,
+        "password": legacy_password,
+        "source": "legacy_config",
+    })
     return result
 
 
