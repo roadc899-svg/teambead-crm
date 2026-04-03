@@ -103,6 +103,7 @@ AUTO_IMPORT_CHECKS = set()
 RUNTIME_CACHE = {}
 LIVE_DATA_VERSION = int(time.time() * 1000)
 CHATTERFY_SYNC_LOCK = threading.Lock()
+CHATTERFY_FINANCE_SYNC_LOCK = threading.Lock()
 
 
 class ChatterfySyncStopped(RuntimeError):
@@ -5446,6 +5447,10 @@ def chatterfy_parser_append_log(message, kind="info", config=None):
             "auto_sync_enabled", "sync_state", "period_view", "period_label", "date_start", "date_end",
             "bot_url", "email", "password", "last_run_at", "last_success_at", "last_error",
             "last_count", "last_duration_seconds",
+            "finance_enabled", "finance_sync_state", "finance_company_id", "finance_company_name",
+            "finance_period_label", "finance_date_start", "finance_date_end", "finance_balance",
+            "finance_month_expense", "finance_period_spend", "finance_transaction_count",
+            "finance_last_success_at", "finance_last_error",
         ):
             if key in latest:
                 config[key] = latest[key]
@@ -5520,6 +5525,157 @@ def chatterfy_parser_next_run_seconds(config=None):
         return None
     seconds = int((next_run - get_crm_local_now()).total_seconds())
     return max(0, seconds)
+
+
+def chatterfy_localize_timestamp(value):
+    parsed = parse_datetime_flexible(value)
+    if not parsed:
+        return None
+    raw_value = safe_text(value)
+    if parsed.tzinfo:
+        return parsed.astimezone(LOCAL_TIMEZONE)
+    if raw_value.endswith("Z"):
+        return parsed.replace(tzinfo=timezone.utc).astimezone(LOCAL_TIMEZONE)
+    return parsed.replace(tzinfo=LOCAL_TIMEZONE)
+
+
+def chatterfy_parser_display_timestamp(value, fallback="Never"):
+    localized = chatterfy_localize_timestamp(value)
+    return localized.strftime("%d.%m.%Y\n%H:%M") if localized else fallback
+
+
+def chatterfy_parser_money_text(value, empty="—"):
+    raw_value = safe_text(value)
+    if raw_value == "" and value not in (0, 0.0):
+        return empty
+    return f"${safe_number(value):,.2f}"
+
+
+def chatterfy_parser_period_window(date_start="", date_end=""):
+    start_dt = parse_datetime_flexible(date_start)
+    end_dt = parse_datetime_flexible(date_end)
+    if not start_dt or not end_dt:
+        raise ValueError("Choose a valid finance period.")
+    start_dt = datetime.combine(start_dt.date(), datetime.min.time()).replace(tzinfo=LOCAL_TIMEZONE)
+    end_dt = datetime.combine(end_dt.date(), datetime.max.time()).replace(tzinfo=LOCAL_TIMEZONE)
+    if end_dt < start_dt:
+        raise ValueError("Finance period end date must be greater than or equal to start date.")
+    return start_dt, end_dt
+
+
+def chatterfy_list_companies(token):
+    response = chatterfy_api_request("/companies", token=token)
+    companies = response.get("companies") if isinstance(response, dict) else response
+    return [item for item in (companies or []) if isinstance(item, dict)]
+
+
+def chatterfy_resolve_finance_company(token, config=None):
+    config = config or {}
+    companies = chatterfy_list_companies(token)
+    if not companies:
+        raise RuntimeError("No Chatterfy companies are available for this account.")
+    preferred_id = safe_text(config.get("finance_company_id"))
+    preferred_name = safe_text(config.get("finance_company_name")).strip().lower()
+    for item in companies:
+        if preferred_id and safe_text(item.get("id")) == preferred_id:
+            return item
+    for item in companies:
+        if preferred_name and safe_text(item.get("name")).strip().lower() == preferred_name:
+            return item
+    for item in companies:
+        if safe_text(item.get("user_role")).strip().lower() == "owner":
+            return item
+    for item in companies:
+        if "team bead" in safe_text(item.get("name")).strip().lower():
+            return item
+    return companies[0]
+
+
+def chatterfy_collect_finance_snapshot(config=None, token=""):
+    config = dict(config or {})
+    working_config = build_chatterfy_parser_config_payload(
+        bot_url=safe_text(config.get("bot_url")),
+        period_view=safe_text(config.get("period_view")) or "period",
+        period_label=safe_text(config.get("period_label")),
+        auto_sync_enabled=bool(config.get("auto_sync_enabled")),
+        existing_config=config,
+    )
+    auth_token = safe_text(token)
+    if not auth_token:
+        auth_token = chatterfy_login_and_get_token(
+            safe_text(working_config.get("email")) or CHATTERFY_PARSER_ACCOUNT_EMAIL,
+            safe_text(working_config.get("password")) or CHATTERFY_PARSER_ACCOUNT_PASSWORD,
+        )
+    company = chatterfy_resolve_finance_company(auth_token, config=working_config)
+    company_id = safe_text(company.get("id"))
+    balance_payload = chatterfy_api_request(f"/companies/{company_id}/balance", token=auth_token)
+    start_dt, end_dt = chatterfy_parser_period_window(
+        safe_text(working_config.get("date_start")),
+        safe_text(working_config.get("date_end")),
+    )
+    period_spend = 0.0
+    transaction_count = 0
+    for item in balance_payload.get("transactions") or []:
+        created_at = chatterfy_localize_timestamp(item.get("created_at"))
+        if not created_at or created_at < start_dt or created_at > end_dt:
+            continue
+        period_spend += safe_number(item.get("balance"))
+        transaction_count += 1
+    return {
+        "finance_company_id": company_id,
+        "finance_company_name": safe_text(company.get("name")) or "Chatterfy Company",
+        "finance_period_label": safe_text(working_config.get("period_label")),
+        "finance_date_start": safe_text(working_config.get("date_start")),
+        "finance_date_end": safe_text(working_config.get("date_end")),
+        "finance_balance": safe_number(balance_payload.get("balance")),
+        "finance_month_expense": safe_number(balance_payload.get("month_expense")),
+        "finance_period_spend": period_spend,
+        "finance_transaction_count": transaction_count,
+        "finance_last_success_at": get_crm_local_now().isoformat(),
+        "finance_last_error": "",
+        "finance_sync_state": "idle",
+    }
+
+
+def perform_chatterfy_finance_sync(config=None, token="", initiated_by="manual"):
+    if not CHATTERFY_FINANCE_SYNC_LOCK.acquire(blocking=False):
+        raise RuntimeError("Chatterfy finance sync is already running.")
+    try:
+        latest = dict(get_chatterfy_parser_config() or {})
+        working = dict(latest)
+        working.update(config or {})
+        working["finance_sync_state"] = "running"
+        working["finance_last_error"] = ""
+        save_chatterfy_parser_config(working)
+        snapshot = chatterfy_collect_finance_snapshot(working, token=token)
+        updated = dict(get_chatterfy_parser_config() or {})
+        updated.update(snapshot)
+        updated["finance_enabled"] = bool(updated.get("finance_enabled"))
+        updated["finance_sync_state"] = "idle" if updated.get("finance_enabled") else "stopped"
+        save_chatterfy_parser_config(updated)
+        return {
+            "initiated_by": initiated_by,
+            **snapshot,
+        }
+    except Exception as exc:
+        latest = dict(get_chatterfy_parser_config() or {})
+        latest["finance_last_error"] = safe_text(exc)
+        latest["finance_sync_state"] = "error" if latest.get("finance_enabled") else "stopped"
+        save_chatterfy_parser_config(latest)
+        raise
+    finally:
+        CHATTERFY_FINANCE_SYNC_LOCK.release()
+
+
+def run_chatterfy_finance_sync_async(config_updates=None, initiated_by="manual"):
+    def worker():
+        config = dict(get_chatterfy_parser_config() or {})
+        config.update(config_updates or {})
+        try:
+            perform_chatterfy_finance_sync(config=config, initiated_by=initiated_by)
+        except Exception:
+            pass
+    threading.Thread(target=worker, name=f"chatterfy-finance-{initiated_by}", daemon=True).start()
 
 
 def format_duration_clock(total_seconds):
@@ -5599,16 +5755,25 @@ def chatterfy_parser_log_entries(logs, limit=14):
 
 def chatterfy_parser_runtime_payload(config=None):
     config = config or get_chatterfy_parser_config()
-    last_success_dt = parse_datetime_flexible(config.get("last_success_at"))
-    if last_success_dt and last_success_dt.tzinfo:
-        last_success_dt = last_success_dt.astimezone(LOCAL_TIMEZONE)
-    elif last_success_dt:
-        last_success_dt = last_success_dt.replace(tzinfo=LOCAL_TIMEZONE)
-    last_success_at = last_success_dt.strftime("%d.%m.%Y\n%H:%M") if last_success_dt else "Never"
+    last_success_at = chatterfy_parser_display_timestamp(config.get("last_success_at"))
     sync_state = safe_text(config.get("sync_state")) or "stopped"
     next_run_seconds = chatterfy_parser_next_run_seconds(config)
     is_active = sync_state in {"running", "idle"} and bool(config.get("auto_sync_enabled"))
     is_stopping = sync_state == "pause_pending"
+    finance_enabled = bool(config.get("finance_enabled"))
+    finance_sync_state = safe_text(config.get("finance_sync_state")) or ("idle" if finance_enabled else "stopped")
+    if finance_sync_state == "running":
+        finance_status_label = "Syncing"
+        finance_status_color = "#2563eb"
+    elif finance_sync_state == "error":
+        finance_status_label = "Error"
+        finance_status_color = "#dc2626"
+    elif finance_enabled:
+        finance_status_label = "Enabled"
+        finance_status_color = "#16a34a"
+    else:
+        finance_status_label = "Disabled"
+        finance_status_color = "#64748b"
     return {
         "status_label": chatterfy_parser_status_label(config),
         "status_color": chatterfy_parser_status_color(config),
@@ -5623,6 +5788,23 @@ def chatterfy_parser_runtime_payload(config=None):
         "button_label": "Stop" if is_active or is_stopping else "Start",
         "button_style": "background:#d94b4b; border-color:#d94b4b; color:#fff;" if is_active or is_stopping else "background:#2563eb; border-color:#2563eb; color:#fff;",
         "logs": chatterfy_parser_log_entries(config.get("logs") or []),
+        "finance": {
+            "enabled": finance_enabled,
+            "sync_state": finance_sync_state,
+            "status_label": finance_status_label,
+            "status_color": finance_status_color,
+            "period_spend_text": chatterfy_parser_money_text(config.get("finance_period_spend")),
+            "balance_text": chatterfy_parser_money_text(config.get("finance_balance")),
+            "month_expense_text": chatterfy_parser_money_text(config.get("finance_month_expense")),
+            "last_success_at": chatterfy_parser_display_timestamp(config.get("finance_last_success_at")),
+            "last_error": safe_text(config.get("finance_last_error")),
+            "period_label": safe_text(config.get("finance_period_label")) or safe_text(config.get("period_label")),
+            "company_name": safe_text(config.get("finance_company_name")) or "Team Bead",
+            "transaction_count": int(safe_number(config.get("finance_transaction_count"))),
+            "toggle_label": "Disable" if finance_enabled else "Enable",
+            "toggle_style": "background:#d94b4b; border-color:#d94b4b; color:#fff;" if finance_enabled else "background:#2563eb; border-color:#2563eb; color:#fff;",
+            "refresh_label": "Syncing..." if finance_sync_state == "running" else "Sync now",
+        },
     }
 
 
@@ -5658,6 +5840,19 @@ def build_chatterfy_parser_config_payload(
         "last_error": safe_text(existing_config.get("last_error")),
         "last_count": safe_number(existing_config.get("last_count")),
         "last_duration_seconds": safe_number(existing_config.get("last_duration_seconds")),
+        "finance_enabled": bool(existing_config.get("finance_enabled")),
+        "finance_sync_state": safe_text(existing_config.get("finance_sync_state")) or "stopped",
+        "finance_company_id": safe_text(existing_config.get("finance_company_id")),
+        "finance_company_name": safe_text(existing_config.get("finance_company_name")),
+        "finance_period_label": safe_text(existing_config.get("finance_period_label")),
+        "finance_date_start": safe_text(existing_config.get("finance_date_start")),
+        "finance_date_end": safe_text(existing_config.get("finance_date_end")),
+        "finance_balance": safe_number(existing_config.get("finance_balance")),
+        "finance_month_expense": safe_number(existing_config.get("finance_month_expense")),
+        "finance_period_spend": safe_number(existing_config.get("finance_period_spend")),
+        "finance_transaction_count": safe_number(existing_config.get("finance_transaction_count")),
+        "finance_last_success_at": safe_text(existing_config.get("finance_last_success_at")),
+        "finance_last_error": safe_text(existing_config.get("finance_last_error")),
     }
 
 
@@ -5710,6 +5905,12 @@ def perform_chatterfy_parser_sync(config, initiated_by="manual"):
         updated_config["last_error"] = ""
         updated_config["last_count"] = int(result["count"])
         updated_config["last_duration_seconds"] = int((get_crm_local_now() - sync_started_at).total_seconds())
+        if updated_config.get("finance_enabled"):
+            try:
+                updated_config.update(chatterfy_collect_finance_snapshot(updated_config, token=token))
+            except Exception as finance_exc:
+                updated_config["finance_last_error"] = safe_text(finance_exc)
+                updated_config["finance_sync_state"] = "error"
         updated_config["sync_state"] = "stopped" if pause_after_sync or not updated_config.get("auto_sync_enabled") else "idle"
         if pause_after_sync:
             updated_config["auto_sync_enabled"] = False
@@ -7242,6 +7443,26 @@ def toggle_chatterfy_parser(
     period_label: str = Form(default=""),
 ):
     return _domain_actions["toggle_chatterfy_parser"](request, bot_url, period_view, period_label)
+
+
+@app.post("/chatterfy-parser/finance-toggle")
+def toggle_chatterfy_finance_parser(
+    request: Request,
+    bot_url: str = Form(default=""),
+    period_view: str = Form(default="period"),
+    period_label: str = Form(default=""),
+):
+    return _toggle_chatterfy_finance_parser(request, bot_url, period_view, period_label)
+
+
+@app.post("/chatterfy-parser/finance-refresh")
+def refresh_chatterfy_finance_parser(
+    request: Request,
+    bot_url: str = Form(default=""),
+    period_view: str = Form(default="period"),
+    period_label: str = Form(default=""),
+):
+    return _refresh_chatterfy_finance_parser(request, bot_url, period_view, period_label)
 
 
 # Rebind extracted view/layout functions from dedicated modules while keeping route contracts intact.
@@ -12616,6 +12837,61 @@ def _inject_chatterfy_parser_live_button_refresh(html: str) -> str:
                     });
                 }
             }
+            function updateFinancePanel(data) {
+                const finance = data.finance || {};
+                const setText = function(id, value) {
+                    const el = document.getElementById(id);
+                    if (el) el.textContent = value || '';
+                    return el;
+                };
+                const setButton = function(formAction, buttonText, buttonStyle) {
+                    const form = document.querySelector('form[action="' + formAction + '"]');
+                    if (!form) return;
+                    const button = form.querySelector('button[type="submit"]');
+                    if (!button) return;
+                    if (buttonText) button.textContent = buttonText;
+                    if (buttonStyle) {
+                        buttonStyle.split(';').forEach(function(rule) {
+                            const parts = rule.split(':');
+                            if (parts.length < 2) return;
+                            const prop = parts[0].trim();
+                            const value = parts.slice(1).join(':').trim();
+                            if (!prop) return;
+                            button.style.setProperty(prop, value);
+                        });
+                    }
+                };
+                const statusEl = setText('chatterfyFinanceStatusLabel', finance.status_label);
+                if (statusEl && finance.status_color) statusEl.style.color = finance.status_color;
+                setText('chatterfyFinancePeriodSpend', finance.period_spend_text);
+                setText('chatterfyFinanceBalance', finance.balance_text);
+                setText('chatterfyFinanceMonthExpense', finance.month_expense_text);
+                setText('chatterfyFinanceLastSuccess', finance.last_success_at);
+                setText('chatterfyFinancePeriodLabel', finance.period_label);
+                setText('chatterfyFinanceCompanyName', finance.company_name);
+                setText('chatterfyFinanceTransactionCount', String(finance.transaction_count || 0));
+                const financeErrorWrap = document.getElementById('chatterfyFinanceLastErrorWrapper');
+                const financeErrorBox = document.getElementById('chatterfyFinanceLastError');
+                if (financeErrorWrap && financeErrorBox) {
+                    if (finance.last_error) {
+                        financeErrorWrap.style.display = '';
+                        financeErrorBox.textContent = finance.last_error;
+                    } else {
+                        financeErrorWrap.style.display = 'none';
+                        financeErrorBox.textContent = '';
+                    }
+                }
+                setButton('/chatterfy-parser/finance-toggle', finance.toggle_label, finance.toggle_style);
+                const refreshForm = document.querySelector('form[action="/chatterfy-parser/finance-refresh"]');
+                if (refreshForm) {
+                    refreshForm.style.display = finance.enabled ? '' : 'none';
+                    const refreshButton = refreshForm.querySelector('button[type="submit"]');
+                    if (refreshButton) {
+                        refreshButton.textContent = finance.refresh_label || 'Sync now';
+                        refreshButton.disabled = finance.sync_state === 'running';
+                    }
+                }
+            }
             async function refresh() {
 """
     if update_fn_old in html and "function updateToggleButton(data)" not in html:
@@ -12697,7 +12973,7 @@ def _inject_chatterfy_parser_live_button_refresh(html: str) -> str:
     )
     html = html.replace(
         "                    renderLogs(data.logs);\n                } catch (error) {\n",
-        "                    updateToggleButton(data);\n                    renderLogs(data.logs);\n                } catch (error) {\n",
+        "                    updateToggleButton(data);\n                    updateFinancePanel(data);\n                    renderLogs(data.logs);\n                } catch (error) {\n",
         1,
     )
     html = html.replace(
@@ -12706,6 +12982,84 @@ def _inject_chatterfy_parser_live_button_refresh(html: str) -> str:
         1,
     )
     return html
+
+
+def _render_chatterfy_finance_panel(form_data=None, config=None):
+    form_data = form_data or {}
+    config = config or get_chatterfy_parser_config()
+    finance = chatterfy_parser_runtime_payload(config).get("finance") or {}
+    toggle_button_style = safe_text(finance.get("toggle_style")) or "background:#2563eb; border-color:#2563eb; color:#fff;"
+    refresh_style = "display:none;" if not finance.get("enabled") else ""
+    finance_error = safe_text(finance.get("last_error"))
+    finance_error_html = f"""
+        <div id="chatterfyFinanceLastErrorWrapper" class="notice notice-danger" style="margin-top:14px; {'display:none;' if not finance_error else ''}">
+            <strong>Finance error:</strong>
+            <span id="chatterfyFinanceLastError">{escape(finance_error)}</span>
+        </div>
+    """
+    return f"""
+    <div class="panel compact-panel" id="chatterfyParserFinancePanel" style="margin-top:18px; border:1px solid #dbe5f2; border-radius:24px; padding:18px 20px; background:linear-gradient(180deg, rgba(255,255,255,0.98), rgba(245,249,255,0.96)); box-shadow:0 18px 40px rgba(27,55,102,0.08);">
+        <div style="display:flex; justify-content:space-between; gap:14px; align-items:flex-start; flex-wrap:wrap;">
+            <div>
+                <div class="panel-title" style="margin-bottom:4px;">Chatterfy Finance</div>
+                <div class="panel-subtitle">Billing snapshot for the selected CRM period.</div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                <form method="post" action="/chatterfy-parser/finance-refresh" style="{refresh_style}">
+                    <input type="hidden" name="bot_url" value="{escape(safe_text(form_data.get("bot_url")))}">
+                    <input type="hidden" name="period_view" value="{escape(safe_text(form_data.get("period_view")) or "period")}">
+                    <input type="hidden" name="period_label" value="{escape(safe_text(form_data.get("period_label")))}">
+                    <button type="submit" class="ghost-btn small-btn" {'disabled' if safe_text(finance.get("sync_state")) == "running" else ''}>{escape(safe_text(finance.get("refresh_label")) or "Sync now")}</button>
+                </form>
+                <form method="post" action="/chatterfy-parser/finance-toggle">
+                    <input type="hidden" name="bot_url" value="{escape(safe_text(form_data.get("bot_url")))}">
+                    <input type="hidden" name="period_view" value="{escape(safe_text(form_data.get("period_view")) or "period")}">
+                    <input type="hidden" name="period_label" value="{escape(safe_text(form_data.get("period_label")))}">
+                    <button type="submit" class="btn small-btn" style="{escape(toggle_button_style)}">{escape(safe_text(finance.get("toggle_label")) or "Enable")}</button>
+                </form>
+            </div>
+        </div>
+        <div style="display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:12px; margin-top:16px;">
+            <div style="padding:14px 15px; border-radius:18px; background:#f8fbff; border:1px solid #dbe5f2;">
+                <div style="font-size:11px; font-weight:800; letter-spacing:0.08em; text-transform:uppercase; color:#64748b;">Period Spend</div>
+                <div id="chatterfyFinancePeriodSpend" style="margin-top:10px; font-size:28px; font-weight:900; color:#0f172a;">{escape(safe_text(finance.get("period_spend_text")) or "—")}</div>
+            </div>
+            <div style="padding:14px 15px; border-radius:18px; background:#f8fbff; border:1px solid #dbe5f2;">
+                <div style="font-size:11px; font-weight:800; letter-spacing:0.08em; text-transform:uppercase; color:#64748b;">Balance</div>
+                <div id="chatterfyFinanceBalance" style="margin-top:10px; font-size:28px; font-weight:900; color:#0f172a;">{escape(safe_text(finance.get("balance_text")) or "—")}</div>
+            </div>
+            <div style="padding:14px 15px; border-radius:18px; background:#f8fbff; border:1px solid #dbe5f2;">
+                <div style="font-size:11px; font-weight:800; letter-spacing:0.08em; text-transform:uppercase; color:#64748b;">Month Expense</div>
+                <div id="chatterfyFinanceMonthExpense" style="margin-top:10px; font-size:28px; font-weight:900; color:#0f172a;">{escape(safe_text(finance.get("month_expense_text")) or "—")}</div>
+            </div>
+        </div>
+        <div style="display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px; margin-top:12px;">
+            <div style="padding:12px 14px; border-radius:16px; background:#fbfdff; border:1px solid #dbe5f2;">
+                <div style="font-size:11px; font-weight:800; letter-spacing:0.08em; text-transform:uppercase; color:#64748b;">Company</div>
+                <div id="chatterfyFinanceCompanyName" style="margin-top:8px; font-size:16px; font-weight:800; color:#1f2f4f;">{escape(safe_text(finance.get("company_name")) or "Team Bead")}</div>
+            </div>
+            <div style="padding:12px 14px; border-radius:16px; background:#fbfdff; border:1px solid #dbe5f2;">
+                <div style="font-size:11px; font-weight:800; letter-spacing:0.08em; text-transform:uppercase; color:#64748b;">Selected Period</div>
+                <div id="chatterfyFinancePeriodLabel" style="margin-top:8px; font-size:16px; font-weight:800; color:#1f2f4f;">{escape(safe_text(finance.get("period_label")) or safe_text(form_data.get("period_label")) or "—")}</div>
+            </div>
+        </div>
+        <div style="display:flex; gap:10px; margin-top:14px; flex-wrap:wrap;">
+            <div class="user-chip">Status: <span id="chatterfyFinanceStatusLabel" style="color:{escape(safe_text(finance.get("status_color")) or "#64748b")}; font-weight:900;">{escape(safe_text(finance.get("status_label")) or "Disabled")}</span></div>
+            <div class="user-chip">Last sync: <span id="chatterfyFinanceLastSuccess">{escape(safe_text(finance.get("last_success_at")) or "Never")}</span></div>
+            <div class="user-chip">Transactions: <span id="chatterfyFinanceTransactionCount">{int(safe_number(finance.get("transaction_count")))}</span></div>
+        </div>
+        {finance_error_html}
+    </div>
+    """
+
+
+def _inject_chatterfy_parser_finance_panel(html: str, panel_html: str) -> str:
+    if not html or not panel_html or 'id="chatterfyParserFinancePanel"' in html:
+        return html
+    target = '    <div class="panel compact-panel" style="margin-top:18px;">'
+    if target not in html:
+        return html
+    return html.replace(target, f"{panel_html}\n{target}", 1)
 
 
 def _strip_chatterfy_parser_pagination(html: str, total_count: int) -> str:
@@ -13018,6 +13372,11 @@ def _patched_chatterfy_parser_page(
     period_context = normalize_period_filter(period_view, period_label, default_view="period")
     period_view = period_context["period_view"]
     effective_period_label = period_context["effective_period_label"]
+    form_data = {
+        "bot_url": bot_url,
+        "period_view": period_view,
+        "period_label": effective_period_label,
+    }
 
     rows = get_chatterfy_parser_rows(
         status=status,
@@ -13030,11 +13389,7 @@ def _patched_chatterfy_parser_page(
     html = chatterfy_parser_page_html(
         user,
         rows,
-        form_data={
-            "bot_url": bot_url,
-            "period_view": period_view,
-            "period_label": effective_period_label,
-        },
+        form_data=form_data,
         status=status,
         search=search,
         date_filter=date_filter,
@@ -13048,7 +13403,20 @@ def _patched_chatterfy_parser_page(
         success_text=message,
     )
     html = _strip_chatterfy_parser_pagination(html, len(rows))
+    html = _inject_chatterfy_parser_finance_panel(
+        html,
+        _render_chatterfy_finance_panel(form_data=form_data, config=get_chatterfy_parser_config()),
+    )
     return _inject_chatterfy_parser_live_button_refresh(html)
+
+
+def _build_chatterfy_parser_redirect_url(form_data, message=""):
+    return (
+        f"/chatterfy-parser?bot_url={quote_plus(safe_text(form_data.get('bot_url')))}"
+        f"&period_view={quote_plus(safe_text(form_data.get('period_view')))}"
+        f"&period_label={quote_plus(safe_text(form_data.get('period_label')))}"
+        f"&message={quote_plus(safe_text(message))}"
+    )
 
 
 def _patched_toggle_chatterfy_parser(
@@ -13144,6 +13512,79 @@ def _patched_toggle_chatterfy_parser(
             ),
             status_code=400,
         )
+
+
+def _toggle_chatterfy_finance_parser(
+    request: Request,
+    bot_url: str = Form(default=""),
+    period_view: str = Form(default="period"),
+    period_label: str = Form(default=""),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "chatterfyparser")
+    existing_config = get_chatterfy_parser_config()
+    form_data = build_chatterfy_parser_config_payload(
+        bot_url=bot_url,
+        period_view=period_view,
+        period_label=period_label,
+        auto_sync_enabled=bool(existing_config.get("auto_sync_enabled")),
+        existing_config=existing_config,
+    )
+    updated = dict(existing_config or {})
+    updated.update(form_data)
+    if updated.get("finance_enabled"):
+        updated["finance_enabled"] = False
+        updated["finance_sync_state"] = "stopped"
+        updated["finance_last_error"] = ""
+        save_chatterfy_parser_config(updated)
+        message = "Chatterfy Finance disabled."
+    else:
+        updated["finance_enabled"] = True
+        updated["finance_sync_state"] = "running"
+        updated["finance_last_error"] = ""
+        updated["finance_period_label"] = safe_text(form_data.get("period_label"))
+        updated["finance_date_start"] = safe_text(form_data.get("date_start"))
+        updated["finance_date_end"] = safe_text(form_data.get("date_end"))
+        save_chatterfy_parser_config(updated)
+        run_chatterfy_finance_sync_async(updated, initiated_by="enable")
+        message = "Chatterfy Finance enabled. Billing sync has started."
+    return RedirectResponse(url=_build_chatterfy_parser_redirect_url(form_data, message), status_code=303)
+
+
+def _refresh_chatterfy_finance_parser(
+    request: Request,
+    bot_url: str = Form(default=""),
+    period_view: str = Form(default="period"),
+    period_label: str = Form(default=""),
+):
+    user = get_current_user(request)
+    if not user:
+        return auth_redirect_response()
+    enforce_page_access(user, "chatterfyparser")
+    existing_config = get_chatterfy_parser_config()
+    form_data = build_chatterfy_parser_config_payload(
+        bot_url=bot_url,
+        period_view=period_view,
+        period_label=period_label,
+        auto_sync_enabled=bool(existing_config.get("auto_sync_enabled")),
+        existing_config=existing_config,
+    )
+    updated = dict(existing_config or {})
+    updated.update(form_data)
+    updated["finance_enabled"] = True
+    updated["finance_sync_state"] = "running"
+    updated["finance_last_error"] = ""
+    updated["finance_period_label"] = safe_text(form_data.get("period_label"))
+    updated["finance_date_start"] = safe_text(form_data.get("date_start"))
+    updated["finance_date_end"] = safe_text(form_data.get("date_end"))
+    save_chatterfy_parser_config(updated)
+    run_chatterfy_finance_sync_async(updated, initiated_by="refresh")
+    return RedirectResponse(
+        url=_build_chatterfy_parser_redirect_url(form_data, "Chatterfy Finance sync started."),
+        status_code=303,
+    )
 
 
 _page_routes["chatterfy_parser_page"] = _patched_chatterfy_parser_page
