@@ -11413,7 +11413,7 @@ def _render_dashboard_page_v2(
         transition:font-weight .15s ease, color .15s ease;
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row-level-0 td {{
-        box-shadow:inset 0 -1px 0 rgba(101, 126, 168, 0.28);
+        box-shadow:inset 0 -1px 0 rgba(101, 126, 168, 0.34);
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr.dashboard-tree-row.dashboard-tree-row-active td {{
         font-weight:400;
