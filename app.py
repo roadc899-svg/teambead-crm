@@ -10631,6 +10631,7 @@ def _render_dashboard_page_v2(
         sort_by = "payout"
 
     base_rows = build_dashboard_rows_v2(user, buyer=buyer, period_label=effective_period_label)
+    dashboard_budget_map = load_dashboard_budget_map()
     dashboard_chatterfy_scope_maps = build_dashboard_chatterfy_scope_maps(period_label=effective_period_label)
     dashboard_players_scope_map = build_dashboard_players_scope_map(period_label=effective_period_label)
     dashboard_caps_scope_map = build_dashboard_caps_scope_map(period_label=effective_period_label)
@@ -10947,11 +10948,36 @@ def _render_dashboard_page_v2(
             })
         return result
 
-    def render_dashboard_metric_cells(values, hierarchy_column=""):
+    def build_dashboard_campaign_budget_key(sample_row, campaign_label):
+        return "|".join([
+            "dashboard-budget",
+            "campaign",
+            safe_text(sample_row.get("buyer")).strip() or "—",
+            safe_text(sample_row.get("platform")).strip() or "—",
+            safe_text(sample_row.get("geo")).strip() or "—",
+            safe_text(sample_row.get("manager")).strip() or "—",
+            safe_text(campaign_label).strip() or "—",
+            safe_text(sample_row.get("source_name")).strip() or "—",
+        ])
+
+    def render_dashboard_metric_cells(values, hierarchy_column="", budget_key="", budget_amount=0.0, budget_editable=False):
         hide_non_fb_metrics = hierarchy_column in {"campaign_name", "adset_name", "ad_name"}
         hide_budget_metric = hierarchy_column == "ad_name"
+        budget_html = ""
+        if hide_budget_metric:
+            budget_html = " "
+        elif budget_editable and budget_key:
+            budget_display = format_money(budget_amount) if budget_amount > 0 else ""
+            budget_html = (
+                f'<td class="dashboard-metric-cell dashboard-manual-budget-cell" '
+                f'data-col="budget" data-budget-key="{escape(budget_key)}" '
+                f'data-budget-raw="{escape(f"{budget_amount:.2f}" if budget_amount > 0 else "")}" '
+                f'contenteditable="true" spellcheck="false">{escape(budget_display)}</td>'
+            )
+        else:
+            budget_html = f'<td class="dashboard-metric-cell" data-col="budget">{format_money(values.get("budget", 0)) if safe_number(values.get("budget", 0)) > 0 else ""}</td>'
         return "".join([
-            f'<td class="dashboard-metric-cell" data-col="budget">{" " if hide_budget_metric else format_money(values.get("budget", 0)) if safe_number(values.get("budget", 0)) > 0 else ""}</td>',
+            budget_html,
             f'<td class="dashboard-metric-cell" data-col="chatterfy">{" " if hide_non_fb_metrics else format_int_or_float(values.get("chatterfy", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="chat_sub">{" " if hide_non_fb_metrics else format_int_or_float(values.get("chat_sub", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="chat_sub2con_rate">{" " if hide_non_fb_metrics else format_percent(values.get("chat_sub2con_rate", 0))}</td>',
@@ -11194,7 +11220,7 @@ def _render_dashboard_page_v2(
             <td data-col="adset_name"></td>
             <td data-col="ad_name"{ad_title_attr}>{escape(display_ad_name)}</td>
             <td data-col="buyer">{escape(row.get("buyer") or "—")}</td>
-            <td class="dashboard-metric-cell dashboard-manual-budget-cell" data-col="budget" data-budget-key="{escape(row_key)}" data-budget-raw="{escape(str(safe_number(row.get("budget", 0))) if safe_number(row.get("budget", 0)) > 0 else '')}" contenteditable="true" spellcheck="false">{escape(budget_display)}</td>
+            <td class="dashboard-metric-cell" data-col="budget"></td>
             <td class="dashboard-metric-cell" data-col="chatterfy"></td>
             <td class="dashboard-metric-cell" data-col="chat_sub"></td>
             <td class="dashboard-metric-cell" data-col="chat_sub2con_rate"></td>
@@ -11254,6 +11280,9 @@ def _render_dashboard_page_v2(
         for node in nodes:
             hidden_attr = ' hidden' if parent_id else ''
             current_ancestors = [*ancestors, node["id"]]
+            sample_row = (node.get("rows") or [None])[0] or {}
+            budget_key = build_dashboard_campaign_budget_key(sample_row, node.get("label")) if node["column"] == "campaign_name" else ""
+            budget_amount = safe_number(dashboard_budget_map.get(budget_key, 0)) if budget_key else 0.0
             html += f"""
             <tr class="dashboard-tree-row dashboard-tree-row-level-{level}" data-node-id="{escape(node["id"])}" data-node-field="{escape(node["field"])}" data-row-key="{escape(node["id"])}" data-parent-id="{escape(parent_id)}" data-ancestors="{escape(','.join(ancestors))}"{hidden_attr}>
                 <td data-col="platform">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "platform" else ""}</td>
@@ -11263,7 +11292,7 @@ def _render_dashboard_page_v2(
                 <td data-col="adset_name">{render_hierarchy_label(node, level, variant=variant) if node["column"] == "adset_name" else ""}</td>
                 <td data-col="ad_name">—</td>
                 <td data-col="buyer">—</td>
-                {render_dashboard_metric_cells(node["metrics"], node["column"])}
+                {render_dashboard_metric_cells(node["metrics"], node["column"], budget_key=budget_key, budget_amount=budget_amount, budget_editable=bool(budget_key))}
             </tr>
             """
             if node["children"]:
@@ -12738,26 +12767,30 @@ def _render_dashboard_page_v2(
         }};
         window.dashboardRefreshBudgetDisplay = (table) => {{
             if (!table) return;
-            const leafRows = Array.from(table.querySelectorAll('tbody tr.dashboard-leaf-row'));
+            const sourceCells = Array.from(table.querySelectorAll('tbody td[data-col="budget"][data-budget-key]'));
             let totalBudget = 0;
-            leafRows.forEach((row) => {{
-                const cell = row.querySelector('td[data-col="budget"][data-budget-key]');
+            sourceCells.forEach((cell) => {{
                 const amount = Number(cell?.dataset?.budgetRaw || '0');
                 if (Number.isFinite(amount)) totalBudget += amount;
+                cell.textContent = window.dashboardFormatBudgetMoney(amount);
             }});
             Array.from(table.querySelectorAll('tbody tr.dashboard-tree-row[data-node-id]')).forEach((row) => {{
                 const nodeId = row.dataset.nodeId || '';
                 const cell = row.querySelector('td[data-col="budget"]');
                 if (!nodeId || !cell) return;
                 let nodeBudget = 0;
-                leafRows.forEach((leafRow) => {{
-                    const ancestors = (leafRow.dataset.ancestors || '').split(',').filter(Boolean);
-                    if (!ancestors.includes(nodeId)) return;
-                    const leafCell = leafRow.querySelector('td[data-col="budget"][data-budget-key]');
-                    const amount = Number(leafCell?.dataset?.budgetRaw || '0');
+                sourceCells.forEach((sourceCell) => {{
+                    const sourceRow = sourceCell.closest('tr');
+                    if (!sourceRow) return;
+                    const sourceNodeId = sourceRow.dataset.nodeId || '';
+                    const ancestors = (sourceRow.dataset.ancestors || '').split(',').filter(Boolean);
+                    if (sourceNodeId !== nodeId && !ancestors.includes(nodeId)) return;
+                    const amount = Number(sourceCell?.dataset?.budgetRaw || '0');
                     if (Number.isFinite(amount)) nodeBudget += amount;
                 }});
-                cell.textContent = window.dashboardFormatBudgetMoney(nodeBudget);
+                if (!cell.dataset.budgetKey) {{
+                    cell.textContent = window.dashboardFormatBudgetMoney(nodeBudget);
+                }}
             }});
             const budgetSummary = document.querySelector('[data-summary-card="budget"] .value');
             if (budgetSummary) budgetSummary.textContent = window.dashboardFormatBudgetMoney(totalBudget) || '$0.00';
