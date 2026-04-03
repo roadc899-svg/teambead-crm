@@ -5425,6 +5425,15 @@ def get_chatterfy_parser_config():
         return {}
 
 
+def get_chatterfy_finance_period_spend(period_label=""):
+    config = get_chatterfy_parser_config()
+    finance_period_label = safe_text(config.get("finance_period_label")) or safe_text(config.get("period_label"))
+    target_period_label = safe_text(period_label)
+    if target_period_label and finance_period_label and target_period_label != finance_period_label:
+        return 0.0
+    return safe_number(config.get("finance_period_spend"))
+
+
 def save_chatterfy_parser_config(data):
     ensure_upload_dir()
     with CHATTERFY_CONFIG_LOCK:
@@ -10511,6 +10520,11 @@ def _render_dashboard_page_v2(
 
     base_rows = build_dashboard_rows_v2(user, buyer=buyer, period_label=effective_period_label)
     dashboard_chatterfy_scope_maps = build_dashboard_chatterfy_scope_maps(period_label=effective_period_label)
+    dashboard_chatterfy_total_sub = sum(
+        safe_number(item.get("chat_sub", 0))
+        for item in (dashboard_chatterfy_scope_maps.get("platform", {}) or {}).values()
+    )
+    dashboard_chatterfy_period_spend = get_chatterfy_finance_period_spend(effective_period_label)
     dashboard_players_scope_map = build_dashboard_players_scope_map(period_label=effective_period_label)
     dashboard_caps_scope_map = build_dashboard_caps_scope_map(period_label=effective_period_label)
     dashboard_hold_scope_map = build_dashboard_hold_scope_map(period_label=effective_period_label)
@@ -10777,17 +10791,23 @@ def _render_dashboard_page_v2(
             totals["cap_current_ftd"] = direct_cap_current_ftd
             totals["hold_count"] = direct_hold_count
 
+        totals.update(get_dashboard_chatterfy_metrics(hierarchy_field, items))
+        totals["costs_ai"] = (
+            dashboard_chatterfy_period_spend * (totals["chat_sub"] / dashboard_chatterfy_total_sub)
+            if dashboard_chatterfy_period_spend > 0 and dashboard_chatterfy_total_sub > 0 and totals["chat_sub"] > 0
+            else 0.0
+        )
+        totals["costs"] = totals["spend"] + totals["costs_ai"]
         totals["rate"] = (totals["payout"] / totals["qual_ftd"]) if totals["qual_ftd"] > 0 else 0.0
         totals["profit"] = totals["payout"] - totals["costs"]
         totals["roi"] = ((totals["profit"] / totals["costs"]) * 100) if totals["costs"] > 0 else 0.0
         totals["cap_fill"] = cap_fill_percent(totals["cap_current_ftd"], totals["cap_total"])
-        totals.update(get_dashboard_chatterfy_metrics(hierarchy_field, items))
         return totals
 
-    def hierarchy_bucket_sort_key(bucket_name, bucket_rows):
+    def hierarchy_bucket_sort_key(bucket_field, bucket_name, bucket_rows):
         text_value = safe_text(bucket_name).strip().lower()
         metric_field = sort_by if sort_by in dashboard_numeric_fields else "spend"
-        metric_value = sum(safe_number(item.get(metric_field, 0)) for item in bucket_rows)
+        metric_value = safe_number(aggregate_dashboard_metrics(bucket_rows, field=bucket_field).get(metric_field, 0))
         reverse_metric = -metric_value if safe_text(order).lower() != "asc" else metric_value
         return (reverse_metric, text_value)
 
@@ -10807,7 +10827,7 @@ def _render_dashboard_page_v2(
         result = []
         sorted_bucket_items = sorted(
             buckets.items(),
-            key=lambda item: hierarchy_bucket_sort_key(item[0], item[1]),
+            key=lambda item: hierarchy_bucket_sort_key(field, item[0], item[1]),
         )
         for bucket_name, bucket_rows in sorted_bucket_items:
             node_counter += 1
@@ -10875,7 +10895,7 @@ def _render_dashboard_page_v2(
             f'<td class="dashboard-metric-cell" data-col="cap_fill">{" " if hide_non_fb_metrics else format_percent(values.get("cap_fill", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="payout">{" " if hide_non_fb_metrics else format_money(values.get("payout", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="costs">{" " if hide_non_fb_metrics else format_money(values.get("costs", 0))}</td>',
-            f'<td class="dashboard-metric-cell" data-col="costs_ai"></td>',
+            f'<td class="dashboard-metric-cell" data-col="costs_ai">{" " if hide_non_fb_metrics else format_money(values.get("costs_ai", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="profit">{" " if hide_non_fb_metrics else format_money(values.get("profit", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="roi">{" " if hide_non_fb_metrics else format_percent(values.get("roi", 0))}</td>',
         ])
