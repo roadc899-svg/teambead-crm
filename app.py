@@ -10166,7 +10166,7 @@ def build_dashboard_rows_v2(user, buyer="", period_label=""):
             "ad_name": safe_text(item.get("ad_name")),
             "account_id": safe_text(item.get("account_id")),
             "launch_date": safe_text(item.get("launch_date")),
-            "budget": safe_number(item.get("budget", 0)),
+            "budget": None,
             "spend": safe_number(item.get("spend", 0)),
             "fb_material_views": safe_number(item.get("material_views", 0)),
             "fb_cost_per_content_view": safe_number(item.get("cost_per_content_view", 0)),
@@ -10873,7 +10873,7 @@ def _render_dashboard_page_v2(
         hide_non_fb_metrics = hierarchy_column in {"campaign_name", "adset_name", "ad_name"}
         hide_budget_metric = hierarchy_column == "ad_name"
         return "".join([
-            f'<td class="dashboard-metric-cell" data-col="budget">{" " if hide_budget_metric else format_money(values.get("budget", 0))}</td>',
+            f'<td class="dashboard-metric-cell dashboard-manual-budget-cell" data-col="budget" contenteditable="true" spellcheck="false">{" " if hide_budget_metric else ""}</td>',
             f'<td class="dashboard-metric-cell" data-col="chatterfy">{" " if hide_non_fb_metrics else format_int_or_float(values.get("chatterfy", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="chat_sub">{" " if hide_non_fb_metrics else format_int_or_float(values.get("chat_sub", 0))}</td>',
             f'<td class="dashboard-metric-cell" data-col="chat_sub2con_rate">{" " if hide_non_fb_metrics else format_percent(values.get("chat_sub2con_rate", 0))}</td>',
@@ -11113,7 +11113,7 @@ def _render_dashboard_page_v2(
             <td data-col="adset_name"></td>
             <td data-col="ad_name"{ad_title_attr}>{escape(display_ad_name)}</td>
             <td data-col="buyer">{escape(row.get("buyer") or "—")}</td>
-            <td class="dashboard-metric-cell" data-col="budget"></td>
+            <td class="dashboard-metric-cell dashboard-manual-budget-cell" data-col="budget" contenteditable="true" spellcheck="false"></td>
             <td class="dashboard-metric-cell" data-col="chatterfy"></td>
             <td class="dashboard-metric-cell" data-col="chat_sub"></td>
             <td class="dashboard-metric-cell" data-col="chat_sub2con_rate"></td>
@@ -11376,6 +11376,15 @@ def _render_dashboard_page_v2(
         text-overflow:ellipsis;
         color:#1e2d4a;
         background:#ffffff;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable tbody td.dashboard-manual-budget-cell {{
+        cursor:text;
+        overflow:visible;
+        text-overflow:clip;
+    }}
+    .dashboard-v2 #dashboardUnifiedTable tbody td.dashboard-manual-budget-cell:focus {{
+        outline:none;
+        box-shadow:inset 0 0 0 1px rgba(101, 126, 168, 0.32);
     }}
     .dashboard-v2 #dashboardUnifiedTable tbody tr:hover td {{
         background:#f6faff;
