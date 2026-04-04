@@ -48,6 +48,7 @@ STATIC_DIR = "./static"
 FINANCE_UPLOAD_PATH = os.path.join(DATA_UPLOAD_DIR, "finance_latest.csv")
 PARTNER_UPLOAD_DIR = os.path.join(DATA_UPLOAD_DIR, "partner_reports")
 PARTNER_IMPORT_API_KEY = os.getenv("TEAMBEAD_PARTNER_IMPORT_KEY", "8hF9sK2LmQpX91zA")
+CRM_BUILD_MARKER = os.getenv("TEAMBEAD_BUILD_MARKER", "partner-import-ua-columns-v3")
 CELLXPERT_EUR_TO_USD_RATE = float(os.getenv("CELLXPERT_EUR_TO_USD_RATE", "1.08").strip() or "1.08")
 CHATTERFY_API_BASE_URL = "https://api.chatterfy.ai/api"
 CHATTERFY_SIGNIN_URL = "https://new.chatterfy.ai/signin"
@@ -642,7 +643,18 @@ def api_live_version(request: Request, response: Response):
     if not get_current_user(request):
         raise HTTPException(status_code=401)
     response.headers["Cache-Control"] = "no-store, max-age=0"
-    return {"version": LIVE_DATA_VERSION}
+    return {"version": LIVE_DATA_VERSION, "build_marker": CRM_BUILD_MARKER}
+
+
+@app.get("/api/build-info")
+def api_build_info(response: Response):
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    return {
+        "build_marker": CRM_BUILD_MARKER,
+        "live_version": LIVE_DATA_VERSION,
+        "partner_import_api_enabled": True,
+        "partner_import_ua_columns_enabled": True,
+    }
 
 
 @app.get("/favicon.ico", include_in_schema=False)
