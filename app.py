@@ -14078,6 +14078,27 @@ def _build_partner_import_source_prefix(source_name="", cabinet_name="", partner
     return prefix
 
 
+def _partner_import_debug_payload(df, detected_period=None, cabinet_name="", partner_platform="1xbet", source_name=""):
+    payload = {
+        "columns": [safe_text(column) for column in list(getattr(df, "columns", []))],
+        "detected_period": detected_period or {},
+        "cabinet_name": safe_text(cabinet_name),
+        "partner_platform": normalize_partner_platform(partner_platform),
+        "source_name": safe_text(source_name),
+        "row_count_raw": int(len(getattr(df, "index", []))) if hasattr(df, "index") else 0,
+        "preview_rows": [],
+    }
+    try:
+        preview_limit = min(3, len(df.index))
+        for idx in range(preview_limit):
+            row = df.iloc[idx]
+            if hasattr(row, "tolist"):
+                payload["preview_rows"].append([safe_text(value) for value in row.tolist()[:18]])
+    except Exception:
+        pass
+    return payload
+
+
 async def _patched_api_partner_import_action(
     request: Request,
     file: UploadFile,
@@ -14145,7 +14166,20 @@ async def _patched_api_partner_import_action(
             upload_period_data=effective_period,
         )
         if not rows:
-            raise HTTPException(status_code=400, detail="Upload contains no partner rows")
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "detail": "Upload contains no partner rows",
+                    "debug": _partner_import_debug_payload(
+                        df,
+                        detected_period=detected_period,
+                        cabinet_name=clean_cabinet,
+                        partner_platform=resolved_platform,
+                        source_name=final_source_name,
+                    ),
+                },
+                status_code=400,
+            )
 
         # API/auto import should replace the whole cabinet slice for the resolved half-month period,
         # otherwise day-range source names accumulate inside the same visible CRM period.
