@@ -4675,7 +4675,16 @@ def detect_partner_header_index(df) -> int:
     preview_limit = min(len(df.index), 15)
     for idx in range(preview_limit):
         row_values = [normalize_dataframe_header(value) for value in df.iloc[idx].tolist()]
-        if "subid" in row_values and any(("игрок" in value) or ("player" in value) for value in row_values):
+        has_subid = "subid" in row_values
+        has_player = any(
+            ("игрок" in value) or ("гравц" in value) or ("player" in value)
+            for value in row_values
+        )
+        has_country = any(
+            ("страна" in value) or ("країна" in value) or ("country" in value)
+            for value in row_values
+        )
+        if has_subid and has_player and has_country:
             return idx
     return 0
 
