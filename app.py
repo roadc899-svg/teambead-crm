@@ -14123,7 +14123,9 @@ async def _patched_api_partner_import_action(
         if not rows:
             raise HTTPException(status_code=400, detail="Upload contains no partner rows")
 
-        replace_partner_rows(final_source_name, rows)
+        # API/auto import should replace the whole cabinet slice for the resolved half-month period,
+        # otherwise day-range source names accumulate inside the same visible CRM period.
+        replace_partner_rows("", rows)
         stored_period = build_partner_storage_period(effective_period)
         return JSONResponse(
             {
