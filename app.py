@@ -5083,6 +5083,53 @@ def replace_partner_rows(source_name, rows_to_insert):
     refresh_cap_current_ftd_from_partner()
 
 
+def replace_partner_rows_by_source_prefix(source_prefix, rows_to_insert):
+    ensure_partner_table()
+    clean_prefix = safe_text(source_prefix).strip()
+    if not clean_prefix:
+        replace_partner_rows("", rows_to_insert)
+        return
+
+    source_like = f"{clean_prefix}|%"
+    target_cabinet = ""
+    target_period_label = ""
+    if rows_to_insert:
+        target_cabinet = safe_text(getattr(rows_to_insert[0], "cabinet_name", ""))
+        target_period_label = safe_text(getattr(rows_to_insert[0], "period_label", ""))
+
+    db = SessionLocal()
+    try:
+        existing_rows = db.query(PartnerRow).filter(PartnerRow.source_name.like(source_like)).all()
+        manual_flags = {
+            build_partner_row_identity(item): {
+                "manual_hold": 1 if safe_number(getattr(item, "manual_hold", 0)) > 0 else 0,
+                "manual_blocked": 1 if safe_number(getattr(item, "manual_blocked", 0)) > 0 else 0,
+            }
+            for item in existing_rows
+        }
+        for item in rows_to_insert:
+            flags = manual_flags.get(build_partner_row_identity(item), {})
+            item.manual_hold = int(flags.get("manual_hold", 0))
+            item.manual_blocked = int(flags.get("manual_blocked", 0))
+
+        db.query(PartnerRow).filter(PartnerRow.source_name.like(source_like)).delete()
+        db.commit()
+        sync_postgres_sequence("partner_rows")
+        for item in rows_to_insert:
+            db.add(item)
+        db.commit()
+    finally:
+        db.close()
+
+    cleanup_partner_duplicates(
+        period_label=target_period_label,
+        preferred_source_name=safe_text(getattr(rows_to_insert[0], "source_name", "")) if rows_to_insert else "",
+        preferred_cabinet=target_cabinet,
+    )
+    clear_runtime_cache("stat_support::")
+    refresh_cap_current_ftd_from_partner()
+
+
 def import_chatterfy_dataframe(df, source_name=""):
     ensure_chatterfy_table()
     normalized_columns = normalize_dataframe_columns(df)
@@ -14080,11 +14127,23 @@ def _build_partner_import_source_prefix(source_name="", cabinet_name="", partner
     else:
         prefix = clean_cabinet or clean_source or "partner_players"
 
-    prefix = prefix.replace("|", "/")
     platform_key = normalize_partner_platform(partner_platform)
     if platform_key == "cellxpert" and clean_cabinet:
         prefix = f"cellxpert/{clean_cabinet.replace('|', '/')}"
     return prefix
+
+
+def _build_partner_replace_scope(source_prefix="", final_source_name=""):
+    clean_prefix = safe_text(source_prefix).strip()
+    clean_final = safe_text(final_source_name).strip()
+    if not clean_prefix and clean_final:
+        clean_prefix = clean_final.rsplit("|", 1)[0]
+
+    normalized_prefix = clean_prefix.lower()
+    if normalized_prefix.endswith("|history") or normalized_prefix.endswith("|today"):
+        return {"source_prefix": clean_prefix, "mode": "source_prefix"}
+
+    return {"source_prefix": "", "mode": "period"}
 
 
 def _partner_import_debug_payload(df, detected_period=None, cabinet_name="", partner_platform="1xbet", source_name=""):
@@ -14190,9 +14249,15 @@ async def _patched_api_partner_import_action(
                 status_code=400,
             )
 
-        # API/auto import should replace the whole cabinet slice for the resolved half-month period,
-        # otherwise day-range source names accumulate inside the same visible CRM period.
-        replace_partner_rows("", rows)
+        replace_scope = _build_partner_replace_scope(
+            source_prefix=source_prefix,
+            final_source_name=final_source_name,
+        )
+        if replace_scope["mode"] == "source_prefix":
+            replace_partner_rows_by_source_prefix(replace_scope["source_prefix"], rows)
+        else:
+            # Default API/auto import still replaces the whole cabinet slice for the resolved half-month period.
+            replace_partner_rows("", rows)
         stored_period = build_partner_storage_period(effective_period)
         return JSONResponse(
             {
