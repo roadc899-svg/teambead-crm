@@ -13978,6 +13978,173 @@ _domain_actions["delete_partner_upload"] = _patched_delete_partner_upload_action
 _domain_actions["upload_file"] = _patched_upload_file
 _domain_actions["export_grouped_csv"] = _patched_export_grouped_csv
 
+
+def _partner_import_has_access(request: Request, *api_key_values: str):
+    user = get_current_user(request)
+    if user:
+        require_any_role(user, "superadmin", "admin")
+        return
+    normalized = [safe_text(value).strip() for value in api_key_values if safe_text(value).strip()]
+    if safe_text(PARTNER_IMPORT_API_KEY).strip() not in normalized:
+        raise HTTPException(status_code=401, detail="Invalid api key")
+
+
+def _resolve_partner_import_platform(cabinet_name="", partner_platform="1xbet"):
+    clean_platform = safe_text(partner_platform).strip()
+    if clean_platform:
+        return normalize_partner_platform(clean_platform)
+    cabinet_platform = get_cabinet_platform_map().get(safe_text(cabinet_name).strip())
+    return normalize_partner_platform(cabinet_platform or "1xbet")
+
+
+def _resolve_partner_import_period(
+    date_start="",
+    date_end="",
+    period_view="current",
+    period_label="",
+    detected_period=None,
+):
+    clean_start = safe_text(date_start).strip()
+    clean_end = safe_text(date_end).strip()
+    if clean_start and clean_end:
+        return normalize_partner_period(clean_start, clean_end)
+
+    if isinstance(detected_period, dict):
+        detected_start = safe_text(detected_period.get("date_start")).strip()
+        detected_end = safe_text(detected_period.get("date_end")).strip()
+        if detected_start and detected_end:
+            detected_range = normalize_partner_period(detected_start, detected_end)
+            if safe_text(period_view).strip().lower() == "current" and not safe_text(period_label).strip():
+                return detected_range
+
+    effective_period_label = resolve_period_label(period_view, period_label) or safe_text(period_label).strip()
+    if effective_period_label:
+        return period_label_to_dates(effective_period_label)
+
+    if isinstance(detected_period, dict):
+        detected_start = safe_text(detected_period.get("date_start")).strip()
+        detected_end = safe_text(detected_period.get("date_end")).strip()
+        if detected_start and detected_end:
+            return normalize_partner_period(detected_start, detected_end)
+
+    return get_half_month_period()
+
+
+def _build_partner_import_source_prefix(source_name="", cabinet_name="", partner_platform="1xbet"):
+    clean_source = safe_text(source_name).strip()
+    clean_cabinet = safe_text(cabinet_name).strip()
+    generic_sources = {
+        "",
+        "partner_players",
+        "partner_players_auto",
+        "partner_players_api",
+        "partner_players_import",
+        "partner_players_upload",
+    }
+
+    if clean_source and clean_source not in generic_sources:
+        prefix = clean_source
+    else:
+        prefix = clean_cabinet or clean_source or "partner_players"
+
+    prefix = prefix.replace("|", "/")
+    platform_key = normalize_partner_platform(partner_platform)
+    if platform_key == "cellxpert" and clean_cabinet:
+        prefix = f"cellxpert/{clean_cabinet.replace('|', '/')}"
+    return prefix
+
+
+async def _patched_api_partner_import_action(
+    request: Request,
+    file: UploadFile,
+    source_name: str = "partner_players",
+    cabinet_name: str = "",
+    date_start: str = "",
+    date_end: str = "",
+    period_mode: str = "half_month",
+    api_key: str = "",
+    partner_platform: str = "1xbet",
+    period_view: str = "current",
+    period_label: str = "",
+    api_key_header: str = "",
+    api_key_alt_header: str = "",
+):
+    del period_mode
+    _partner_import_has_access(request, api_key, api_key_header, api_key_alt_header)
+    ensure_partner_table()
+
+    original_name = file.filename or ""
+    ext = os.path.splitext(original_name)[1].lower() or ".csv"
+    if ext not in {".csv", ".xlsx", ".xls"}:
+        raise HTTPException(status_code=400, detail="Unsupported file type")
+
+    temp_path = f"temp_partner_import_{uuid.uuid4().hex}{ext}"
+    clean_cabinet = safe_text(cabinet_name).strip()
+    resolved_platform = _resolve_partner_import_platform(clean_cabinet, partner_platform)
+
+    try:
+        with open(temp_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        if resolved_platform == "cellxpert":
+            df = read_cellxpert_uploaded_dataframe(temp_path, ext)
+        else:
+            df = read_partner_uploaded_dataframe(temp_path, ext)
+
+        detected_period = detect_partner_upload_period(
+            df,
+            partner_platform=resolved_platform,
+            fallback_text=original_name,
+        ) or {}
+        effective_period = _resolve_partner_import_period(
+            date_start=date_start,
+            date_end=date_end,
+            period_view=period_view,
+            period_label=period_label,
+            detected_period=detected_period,
+        )
+        source_prefix = _build_partner_import_source_prefix(
+            source_name=source_name,
+            cabinet_name=clean_cabinet,
+            partner_platform=resolved_platform,
+        )
+        final_source_name = build_partner_source_name(
+            safe_text(effective_period.get("date_start")),
+            safe_text(effective_period.get("date_end")),
+            prefix=source_prefix,
+        )
+        rows = parse_partner_dataframe(
+            df,
+            source_name=final_source_name,
+            cabinet_name=clean_cabinet,
+            partner_platform=resolved_platform,
+            upload_period_data=effective_period,
+        )
+        if not rows:
+            raise HTTPException(status_code=400, detail="Upload contains no partner rows")
+
+        replace_partner_rows(final_source_name, rows)
+        stored_period = build_partner_storage_period(effective_period)
+        return JSONResponse(
+            {
+                "ok": True,
+                "inserted": len(rows),
+                "source_name": final_source_name,
+                "cabinet_name": clean_cabinet,
+                "partner_platform": resolved_platform,
+                "date_start": safe_text(effective_period.get("date_start")),
+                "date_end": safe_text(effective_period.get("date_end")),
+                "period_label": safe_text(stored_period.get("period_label")),
+                "detected_period_label": safe_text(detected_period.get("period_label")),
+            }
+        )
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
+_domain_actions["api_partner_import"] = _patched_api_partner_import_action
+
 # =========================================
 # BLOCK 7.5 — USERS
 # =========================================
@@ -14672,9 +14839,28 @@ async def api_partner_import(
     date_start: str = Form(default=""),
     date_end: str = Form(default=""),
     period_mode: str = Form(default="half_month"),
+    partner_platform: str = Form(default="1xbet"),
+    period_view: str = Form(default="current"),
+    period_label: str = Form(default=""),
     api_key: str = Header(default="", alias="X-API-Key"),
+    api_key_header: str = Header(default="", alias="api-key"),
+    api_key_alt_header: str = Header(default="", alias="api_key"),
 ):
-    return await _domain_actions["api_partner_import"](request, file, source_name, cabinet_name, date_start, date_end, period_mode, api_key)
+    return await _domain_actions["api_partner_import"](
+        request,
+        file,
+        source_name,
+        cabinet_name,
+        date_start,
+        date_end,
+        period_mode,
+        api_key,
+        partner_platform,
+        period_view,
+        period_label,
+        api_key_header,
+        api_key_alt_header,
+    )
 
 
 @app.get("/cabinets", response_class=HTMLResponse)
@@ -14744,6 +14930,39 @@ def partner_report_page(
         sort_by,
         order,
         message,
+    )
+
+
+@app.post("/partner-report")
+async def api_partner_report_import(
+    request: Request,
+    file: UploadFile = File(...),
+    source_name: str = Form(default="partner_players"),
+    cabinet_name: str = Form(default=""),
+    date_start: str = Form(default=""),
+    date_end: str = Form(default=""),
+    period_mode: str = Form(default="half_month"),
+    partner_platform: str = Form(default="1xbet"),
+    period_view: str = Form(default="current"),
+    period_label: str = Form(default=""),
+    api_key: str = Header(default="", alias="X-API-Key"),
+    api_key_header: str = Header(default="", alias="api-key"),
+    api_key_alt_header: str = Header(default="", alias="api_key"),
+):
+    return await _domain_actions["api_partner_import"](
+        request,
+        file,
+        source_name,
+        cabinet_name,
+        date_start,
+        date_end,
+        period_mode,
+        api_key,
+        partner_platform,
+        period_view,
+        period_label,
+        api_key_header,
+        api_key_alt_header,
     )
 
 
