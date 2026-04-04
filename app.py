@@ -4476,15 +4476,15 @@ def parse_1xbet_partner_dataframe(df, source_name="", cabinet_name="", upload_pe
     alias_map = build_dataframe_column_alias_map(df)
     row_number_col = resolve_dataframe_column(alias_map, ["№", "#", "No", "Row", "Row Number"])
     sub_id_col = resolve_dataframe_column(alias_map, ["SubId", "SubID", "Sub Id", "Sub ID"])
-    player_id_col = resolve_dataframe_column(alias_map, ["ID игрока", "Player ID", "ID Player", "PlayerId"])
-    country_col = resolve_dataframe_column(alias_map, ["Страна", "Country", "Geo"])
-    deposit_col = resolve_dataframe_column(alias_map, ["Сумма депозитов", "Deposit Sum", "Deposits", "First Time Deposit Amount"])
-    bet_col = resolve_dataframe_column(alias_map, ["Сумма ставок", "Bet Sum", "Betting Sum", "Bets"])
-    income_col = resolve_dataframe_column(alias_map, ["Доход компании (общий)", "NGR", "Income", "Commissions"])
+    player_id_col = resolve_dataframe_column(alias_map, ["ID игрока", "ID гравця", "Player ID", "ID Player", "PlayerId"])
+    country_col = resolve_dataframe_column(alias_map, ["Страна", "Країна", "Country", "Geo"])
+    deposit_col = resolve_dataframe_column(alias_map, ["Сумма депозитов", "Сума депозитів", "Deposit Sum", "Deposits", "First Time Deposit Amount"])
+    bet_col = resolve_dataframe_column(alias_map, ["Сумма ставок", "Сума ставок", "Bet Sum", "Betting Sum", "Bets"])
+    income_col = resolve_dataframe_column(alias_map, ["Доход компании (общий)", "Дохід компанії (загальний)", "NGR", "Income", "Commissions"])
     cpa_col = resolve_dataframe_column(alias_map, ["CPA"])
-    registration_col = resolve_dataframe_column(alias_map, ["Дата регистрации", "Registration Date", "Reg Date"])
+    registration_col = resolve_dataframe_column(alias_map, ["Дата регистрации", "Дата реєстрації", "Registration Date", "Reg Date"])
     hold_col = resolve_dataframe_column(alias_map, ["Hold time", "Hold Time", "Activity Count"])
-    blocked_col = resolve_dataframe_column(alias_map, ["Заблокирован", "Blocked", "Status"])
+    blocked_col = resolve_dataframe_column(alias_map, ["Заблокирован", "Заблокований", "Blocked", "Status"])
     upload_period = build_partner_storage_period(upload_period_data or get_dataframe_detected_period(df))
     raw_period = upload_period_data if isinstance(upload_period_data, dict) else get_dataframe_detected_period(df)
 
@@ -4494,13 +4494,25 @@ def parse_1xbet_partner_dataframe(df, source_name="", cabinet_name="", upload_pe
         sub_id = safe_text(row.get(sub_id_col)) if sub_id_col else ""
         player_id = safe_text(row.get(player_id_col)) if player_id_col else ""
         country = normalize_geo_value(row.get(country_col)) if country_col else ""
-        if sub_id in {"SUBID", "ID ПАРТНЕРА", "ПЕРИОД", "ВАЛЮТА", "КАМПАНИЯ", "ТОЛЬКО НОВЫЕ ИГРОКИ", "ТОЛЬКО ИГРОКИ БЕЗ ДЕПОЗИТОВ"}:
+        if sub_id in {
+            "SUBID",
+            "ID ПАРТНЕРА",
+            "ID ПАРТНЕРА",
+            "ПЕРИОД",
+            "ВАЛЮТА",
+            "КАМПАНИЯ",
+            "КАМПАНІЯ",
+            "ТОЛЬКО НОВЫЕ ИГРОКИ",
+            "ТІЛЬКИ НОВІ ГРАВЦІ",
+            "ТОЛЬКО ИГРОКИ БЕЗ ДЕПОЗИТОВ",
+            "ТІЛЬКИ ГРАВЦІ БЕЗ ДЕПОЗИТІВ",
+        }:
             continue
         if row_number in {"№", "#", "NO", "ROW", "ROW NUMBER"}:
             continue
-        if not player_id or player_id == "ID игрока":
+        if not player_id or player_id in {"ID игрока", "ID гравця"}:
             continue
-        if not country or country in {"СТРАНА"}:
+        if not country or country in {"СТРАНА", "КРАЇНА"}:
             continue
         deposit_amount = safe_number(row.get(deposit_col)) if deposit_col else 0.0
         company_income = safe_number(row.get(income_col)) if income_col else 0.0
